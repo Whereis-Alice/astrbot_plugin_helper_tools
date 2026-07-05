@@ -1,7 +1,7 @@
 name: astrbot_plugin_helper_tools
 display_name: 辅助工具合集
-desc: 为 AstrBot LLM 注册可主动调用的小工具，当前支持查看 QQ 用户头像。
-version: v0.1.0
+desc: 为 AstrBot 注册一组可由 LLM 主动调用的 QQ、Anime1、收款码、随机语音、Steam 等辅助工具。
+version: v0.2.0
 author: Huli3
 repo: https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 astrbot_version: ">=4.16,<5"
