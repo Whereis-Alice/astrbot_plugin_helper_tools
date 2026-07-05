@@ -14,66 +14,408 @@
     "type": "object",
     "description": "QQ 头像工具",
     "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 QQ 头像模块",
+        "default": true
+      },
       "llm_tool_enabled": {
         "type": "bool",
-        "description": "启用 QQ 头像 LLM 工具",
+        "description": "注册 get_qq_avatar LLM 工具",
         "default": true
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 /qq_avatar 测试命令",
+        "description": "启用 /qq_avatar 命令",
         "default": true
       },
       "download_image_for_llm": {
         "type": "bool",
-        "description": "工具调用时下载头像并返回图片内容给模型",
+        "description": "工具调用时下载头像并把图片内容返回给模型",
         "default": true,
-        "hint": "开启后，支持图片输入的模型可以直接查看头像画面；下载失败时会自动降级为仅返回 URL。"
+        "hint": "关闭后只返回头像 URL。下载失败时会自动降级为 URL。"
       },
       "default_size": {
         "type": "string",
         "description": "默认头像尺寸",
         "default": "640",
-        "options": [
-          "40",
-          "100",
-          "140",
-          "640"
-        ],
-        "labels": [
-          "40",
-          "100",
-          "140",
-          "640"
-        ]
+        "options": ["40", "100", "140", "640"]
       },
       "download_timeout_seconds": {
         "type": "int",
         "description": "头像下载超时秒数",
         "default": 8,
         "min": 1,
-        "max": 60,
-        "condition": {
-          "download_image_for_llm": true
-        }
+        "max": 60
       },
       "max_download_bytes": {
         "type": "int",
-        "description": "头像下载最大字节数",
+        "description": "头像最大下载字节数",
         "default": 2097152,
         "min": 65536,
-        "max": 10485760,
-        "condition": {
-          "download_image_for_llm": true
-        }
+        "max": 10485760
+      }
+    }
+  },
+  "qq_member": {
+    "type": "object",
+    "description": "QQ群成员信息",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用群成员信息模块",
+        "default": true
       },
-      "tool_description": {
-        "type": "text",
-        "description": "LLM 工具说明",
-        "default": "获取 QQ 用户头像，并在可能时把头像图片内容返回给模型查看。当用户要求查看某个 QQ 号的头像、让你描述头像、比较头像，或需要当前发言者头像时使用。参数 qq_id 是 QQ 号；如果用户没有给 QQ 号，可以留空，工具会尝试使用当前消息发送者的 QQ 号。",
-        "hint": "这段说明会展示给 LLM，用于判断何时调用 get_qq_avatar。"
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 get_qq_group_member_info LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用 /qq_member 命令",
+        "default": true
+      },
+      "include_raw_extra_fields": {
+        "type": "bool",
+        "description": "附带 OneBot 返回的其它原始字段",
+        "default": true
+      }
+    }
+  },
+  "qq_profile": {
+    "type": "object",
+    "description": "QQ 用户资料 / box",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 QQ 资料模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 get_qq_profile LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用 /qq_profile、/box、/盒、/开盒 命令",
+        "default": true
+      },
+      "admin_only_other_users": {
+        "type": "bool",
+        "description": "仅管理员可查询他人资料",
+        "default": false
+      },
+      "protected_ids": {
+        "type": "list",
+        "description": "保护名单 QQ 号",
+        "default": [],
+        "hint": "列表里的 QQ 号只允许本人查询。"
+      },
+      "send_avatar_in_command": {
+        "type": "bool",
+        "description": "命令查询时附带头像图片",
+        "default": true
+      },
+      "include_raw_extra_fields": {
+        "type": "bool",
+        "description": "资料查询结果附带原始字段",
+        "default": false
+      },
+      "max_text_chars": {
+        "type": "int",
+        "description": "资料文本最大长度",
+        "default": 4000,
+        "min": 500,
+        "max": 20000
+      }
+    }
+  },
+  "payqr": {
+    "type": "object",
+    "description": "收款码",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用收款码模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 send_payment_qr LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用 /payqr、/收款码、/打钱 命令",
+        "default": true
+      },
+      "payment_qr": {
+        "type": "file",
+        "description": "收款码图片",
+        "default": [],
+        "file_types": [".png", ".jpg", ".jpeg", ".webp", ".gif"]
+      },
+      "caption": {
+        "type": "string",
+        "description": "发送收款码时附带的文字",
+        "default": "给我打钱！"
+      }
+    }
+  },
+  "anime1": {
+    "type": "object",
+    "description": "Anime1 番剧更新",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 Anime1 模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 get_anime1_updates / get_anime1_watch_url LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用 /anime1、/anime1_update、/anime1_url 命令",
+        "default": true
+      },
+      "update_on_start": {
+        "type": "bool",
+        "description": "插件启动时立即刷新缓存",
+        "default": false
+      },
+      "update_times": {
+        "type": "list",
+        "description": "每日自动更新时间点（小时 0-23）",
+        "default": ["1"],
+        "hint": "例如 [\"1\", \"13\", \"22\"] 表示每天 1:00、13:00、22:00 更新。"
+      },
+      "timeout_seconds": {
+        "type": "int",
+        "description": "请求超时秒数",
+        "default": 20,
+        "min": 3,
+        "max": 120
+      },
+      "default_limit": {
+        "type": "int",
+        "description": "默认返回条数",
+        "default": 20,
+        "min": 1,
+        "max": 200
+      }
+    }
+  },
+  "voice": {
+    "type": "object",
+    "description": "随机语音",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用随机语音模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 send_random_voice LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用可配置指令前缀",
+        "default": true
+      },
+      "api_url": {
+        "type": "string",
+        "description": "随机语音 API URL",
+        "default": "http://api.ocoa.cn/api/hjm.php?type=audio"
+      },
+      "command_prefixes": {
+        "type": "list",
+        "description": "随机语音指令前缀",
+        "default": ["/voice_meme", "/随机语音"]
+      },
+      "auto_trigger_enabled": {
+        "type": "bool",
+        "description": "启用关键词自动触发",
+        "default": true
+      },
+      "trigger_keywords": {
+        "type": "list",
+        "description": "自动触发关键词",
+        "default": ["哈基米"]
+      },
+      "stop_event_after_response": {
+        "type": "bool",
+        "description": "发送语音后阻止后续处理",
+        "default": true
+      },
+      "timeout_seconds": {
+        "type": "int",
+        "description": "语音下载超时秒数",
+        "default": 15,
+        "min": 3,
+        "max": 120
+      },
+      "max_download_bytes": {
+        "type": "int",
+        "description": "语音最大下载字节数",
+        "default": 8388608,
+        "min": 65536,
+        "max": 52428800
+      },
+      "cache_max_files": {
+        "type": "int",
+        "description": "本地语音缓存最多保留文件数",
+        "default": 30,
+        "min": 1,
+        "max": 500
+      }
+    }
+  },
+  "steam": {
+    "type": "object",
+    "description": "Steam 游戏查询",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 Steam 模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 search_steam_game LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用可配置查询指令",
+        "default": true
+      },
+      "command_prefixes": {
+        "type": "list",
+        "description": "Steam 查询指令前缀",
+        "default": ["/steam", "/查找"]
+      },
+      "auto_parse_links": {
+        "type": "bool",
+        "description": "自动解析 Steam 商店链接",
+        "default": true
+      },
+      "country_code": {
+        "type": "string",
+        "description": "Steam 区域代码",
+        "default": "CN"
+      },
+      "show_header_image": {
+        "type": "bool",
+        "description": "发送/返回封面图",
+        "default": true
+      },
+      "show_type": {
+        "type": "bool",
+        "description": "显示类型",
+        "default": true
+      },
+      "show_release_date": {
+        "type": "bool",
+        "description": "显示发售日期",
+        "default": true
+      },
+      "show_developers_publishers": {
+        "type": "bool",
+        "description": "显示开发商和发行商",
+        "default": true
+      },
+      "show_genres": {
+        "type": "bool",
+        "description": "显示分类",
+        "default": true
+      },
+      "show_short_description": {
+        "type": "bool",
+        "description": "显示简介",
+        "default": true
+      },
+      "show_content_descriptors": {
+        "type": "bool",
+        "description": "显示内容提示",
+        "default": true
+      },
+      "max_description_chars": {
+        "type": "int",
+        "description": "简介最大字符数",
+        "default": 500,
+        "min": 80,
+        "max": 3000
+      },
+      "max_search_results": {
+        "type": "int",
+        "description": "关键词搜索候选数量",
+        "default": 5,
+        "min": 1,
+        "max": 20
+      },
+      "http_timeout_seconds": {
+        "type": "float",
+        "description": "Steam 请求超时秒数",
+        "default": 8.0,
+        "min": 2,
+        "max": 60
+      },
+      "rate_window_seconds": {
+        "type": "int",
+        "description": "限速窗口秒数",
+        "default": 600,
+        "min": 1
+      },
+      "rate_max_requests": {
+        "type": "int",
+        "description": "限速窗口内最大请求数",
+        "default": 300,
+        "min": 1
+      },
+      "rate_limited_text": {
+        "type": "string",
+        "description": "触发限速时的提示",
+        "default": "Steam 查询太频繁了，请 {seconds}s 后再试。"
+      },
+      "stop_event_after_response": {
+        "type": "bool",
+        "description": "自动解析 Steam 链接后阻止后续处理",
+        "default": false
+      }
+    }
+  },
+  "bot_profile": {
+    "type": "object",
+    "description": "Bot QQ 资料管理",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 Bot QQ 资料管理模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 set_bot_qq_profile LLM 工具",
+        "default": false,
+        "hint": "该工具会修改 bot 的 QQ 资料，默认关闭；开启后也仅允许管理员会话调用。"
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用设置头像/昵称/签名/状态、切换人格等管理员命令",
+        "default": true
+      },
+      "sync_name_with_persona": {
+        "type": "bool",
+        "description": "切换人格时同步 bot 昵称与已缓存的人格头像",
+        "default": false
       }
     }
   }
 }
-
