@@ -1,0 +1,79 @@
+{
+  "general": {
+    "type": "object",
+    "description": "基础设置",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用插件",
+        "default": true
+      }
+    }
+  },
+  "qq_avatar": {
+    "type": "object",
+    "description": "QQ 头像工具",
+    "items": {
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "启用 QQ 头像 LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用 /qq_avatar 测试命令",
+        "default": true
+      },
+      "download_image_for_llm": {
+        "type": "bool",
+        "description": "工具调用时下载头像并返回图片内容给模型",
+        "default": true,
+        "hint": "开启后，支持图片输入的模型可以直接查看头像画面；下载失败时会自动降级为仅返回 URL。"
+      },
+      "default_size": {
+        "type": "string",
+        "description": "默认头像尺寸",
+        "default": "640",
+        "options": [
+          "40",
+          "100",
+          "140",
+          "640"
+        ],
+        "labels": [
+          "40",
+          "100",
+          "140",
+          "640"
+        ]
+      },
+      "download_timeout_seconds": {
+        "type": "int",
+        "description": "头像下载超时秒数",
+        "default": 8,
+        "min": 1,
+        "max": 60,
+        "condition": {
+          "download_image_for_llm": true
+        }
+      },
+      "max_download_bytes": {
+        "type": "int",
+        "description": "头像下载最大字节数",
+        "default": 2097152,
+        "min": 65536,
+        "max": 10485760,
+        "condition": {
+          "download_image_for_llm": true
+        }
+      },
+      "tool_description": {
+        "type": "text",
+        "description": "LLM 工具说明",
+        "default": "获取 QQ 用户头像，并在可能时把头像图片内容返回给模型查看。当用户要求查看某个 QQ 号的头像、让你描述头像、比较头像，或需要当前发言者头像时使用。参数 qq_id 是 QQ 号；如果用户没有给 QQ 号，可以留空，工具会尝试使用当前消息发送者的 QQ 号。",
+        "hint": "这段说明会展示给 LLM，用于判断何时调用 get_qq_avatar。"
+      }
+    }
+  }
+}
+
