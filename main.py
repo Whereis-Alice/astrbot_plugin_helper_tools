@@ -23,7 +23,7 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 PLUGIN_ID = "astrbot_plugin_helper_tools"
 PLUGIN_VERSION = "0.1.0"
 PLUGIN_DESC = "辅助工具合集：为 LLM 注册可主动调用的小工具，当前支持查看 QQ 用户头像。"
-PLUGIN_REPO = ""
+PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 QQ_AVATAR_TOOL_NAME = "get_qq_avatar"
 ALLOWED_AVATAR_SIZES = ("40", "100", "140", "640")
@@ -406,4 +406,3 @@ class HelperToolsPlugin(Star):
         current_prompt = _clean_text(getattr(request, "system_prompt", ""))
         if QQ_AVATAR_TOOL_NAME not in current_prompt:
             request.system_prompt = f"{current_prompt}{hint}" if current_prompt else hint.strip()
-
