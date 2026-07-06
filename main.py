@@ -34,7 +34,7 @@ from .wallpaper_service import WallpaperService
 
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.3.0"
+PLUGIN_VERSION = "0.4.0"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -383,7 +383,7 @@ class HelperToolsPlugin(Star):
         self.voice = VoiceService(self.config, self.data_dir)
         self.steam = SteamService(self.config)
         self.bot_profile = BotProfileService(self.config, self.context, self.data_dir)
-        self.wake = WakeService(self.config)
+        self.wake = WakeService(self.config, self.context)
         self.wallpaper = WallpaperService(self.config, self.data_dir)
 
         self.context.add_llm_tools(*self._build_tools())
@@ -394,6 +394,7 @@ class HelperToolsPlugin(Star):
 
     async def terminate(self) -> None:
         await self.anime1.stop()
+        await self.wake.stop()
         logger.info("[%s] terminated", PLUGIN_ID)
 
     def enabled(self) -> bool:
@@ -422,7 +423,13 @@ class HelperToolsPlugin(Star):
     async def wake_enhance_handler(self, event: AstrMessageEvent):
         if not self.enabled():
             return
-        self.wake.apply(event)
+        await self.wake.apply(event)
+
+    @filter.on_decorating_result(priority=20)
+    async def wake_after_result(self, event: AstrMessageEvent):
+        if not self.enabled():
+            return
+        await self.wake.on_decorating_result(event)
 
     @filter.command("qq_avatar", alias={"qq头像", "头像"})
     async def qq_avatar_command(
