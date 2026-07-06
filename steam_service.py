@@ -14,6 +14,8 @@ from .helper_utils import (
     RollingRateLimiter,
     cfg,
     clean_text,
+    core_wake_prefixes,
+    expand_wake_prefixed_commands,
     fetch_bytes,
     fetch_json,
     parse_dynamic_command,
@@ -74,8 +76,9 @@ def format_price(item: dict[str, Any]) -> str:
 
 
 class SteamService:
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: Any, context: Any | None = None) -> None:
         self.config = config
+        self.context = context
         self._limiter = RollingRateLimiter(
             window_seconds=read_int(cfg(config, "steam", "rate_window_seconds", 600), 600, minimum=1),
             max_requests=read_int(cfg(config, "steam", "rate_max_requests", 300), 300, minimum=1),
@@ -103,10 +106,13 @@ class SteamService:
         return clean_text(cfg(self.config, "steam", "country_code", "CN"), "CN")
 
     def command_prefixes(self) -> list[str]:
-        value = cfg(self.config, "steam", "command_prefixes", ["/steam", "/查找"])
+        value = cfg(self.config, "steam", "command_prefixes", ["steam", "查找"])
         if isinstance(value, list):
-            return [clean_text(item) for item in value if clean_text(item)] or ["/steam"]
-        return ["/steam"]
+            return [clean_text(item) for item in value if clean_text(item)] or ["steam"]
+        return ["steam"]
+
+    def command_aliases(self) -> list[str]:
+        return expand_wake_prefixed_commands(self.command_prefixes(), core_wake_prefixes(self.context))
 
     def show_header_image(self) -> bool:
         return read_bool(cfg(self.config, "steam", "show_header_image", True), True)
@@ -292,8 +298,8 @@ class SteamService:
     def should_handle_message(self, text: str) -> tuple[bool, str]:
         if not self.enabled():
             return False, ""
-        if self.commands_enabled() and parse_dynamic_command(text, self.command_prefixes()):
-            parsed = parse_dynamic_command(text, self.command_prefixes())
+        if self.commands_enabled() and parse_dynamic_command(text, self.command_aliases()):
+            parsed = parse_dynamic_command(text, self.command_aliases())
             return True, parsed[1] if parsed else ""
         if self.auto_parse_links():
             appid = extract_steam_appid(text)

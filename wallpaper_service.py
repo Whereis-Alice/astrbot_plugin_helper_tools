@@ -15,7 +15,18 @@ import astrbot.api.message_components as Comp
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
 
-from .helper_utils import cfg, clean_text, fetch_bytes, parse_dynamic_command, read_bool, read_int, read_list
+from .helper_utils import (
+    cfg,
+    clean_text,
+    core_wake_prefixes,
+    expand_wake_prefixed_commands,
+    fetch_bytes,
+    parse_dynamic_command,
+    read_bool,
+    read_int,
+    read_list,
+    section,
+)
 from .qq_features import call_onebot
 
 
@@ -23,6 +34,8 @@ DEFAULT_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".gif"]
 SEND_MODE_TOGETHER = "together"
 SEND_MODE_CAPTION_FIRST = "caption_first"
 SEND_MODE_IMAGE_ONLY = "image_only"
+DEFAULT_WALLPAPER_CAPTION = "随机给你摸一张 {library}。"
+DEFAULT_WALLPAPER_SEND_MODE_LABEL = "同一条消息"
 
 
 @dataclass(slots=True)
@@ -112,9 +125,10 @@ def _sha256_file(path: Path) -> str:
 
 
 class WallpaperService:
-    def __init__(self, config: Any, data_dir: Path) -> None:
+    def __init__(self, config: Any, data_dir: Path, context: Any | None = None) -> None:
         self.config = config
         self.data_dir = data_dir
+        self.context = context
         self.registry_path = self.data_dir / "wallpaper_sent_images.json"
 
     def enabled(self) -> bool:
@@ -138,6 +152,9 @@ class WallpaperService:
     def deduplicate_on_add(self) -> bool:
         return read_bool(cfg(self.config, "wallpaper", "deduplicate_on_add", True), True)
 
+    def auto_create_library_on_add(self) -> bool:
+        return read_bool(cfg(self.config, "wallpaper", "auto_create_library_on_add", True), True)
+
     def max_add_bytes(self) -> int:
         return read_int(
             cfg(self.config, "wallpaper", "max_add_bytes", 20 * 1024 * 1024),
@@ -151,6 +168,12 @@ class WallpaperService:
 
     def delete_commands(self) -> list[str]:
         return read_list(cfg(self.config, "wallpaper", "delete_commands", ["删图", "/删图"]), ["删图", "/删图"])
+
+    def add_command_aliases(self) -> list[str]:
+        return expand_wake_prefixed_commands(self.add_commands(), core_wake_prefixes(self.context), include_plain=True)
+
+    def delete_command_aliases(self) -> list[str]:
+        return expand_wake_prefixed_commands(self.delete_commands(), core_wake_prefixes(self.context), include_plain=True)
 
     def allowed_extensions(self) -> set[str]:
         values = read_list(cfg(self.config, "wallpaper", "allowed_extensions", DEFAULT_IMAGE_EXTENSIONS), DEFAULT_IMAGE_EXTENSIONS)
@@ -168,15 +191,15 @@ class WallpaperService:
             if not name:
                 continue
             path = self._resolve_library_path(name, clean_text(item.get("path")))
-            commands = read_list(item.get("commands"), [f"/{name}"])
-            caption = clean_text(item.get("caption"), "随机给你摸一张 {library}。")
+            commands = read_list(item.get("commands"), [name])
+            caption = clean_text(item.get("caption"), DEFAULT_WALLPAPER_CAPTION)
             send_mode = _normalize_send_mode(item.get("send_mode"))
             recursive = read_bool(item.get("recursive"), False)
             libraries.append(
                 WallpaperLibrary(
                     name=name,
                     path=path,
-                    commands=commands or [f"/{name}"],
+                    commands=commands or [name],
                     caption=caption,
                     send_mode=send_mode,
                     recursive=recursive,
@@ -194,13 +217,13 @@ class WallpaperService:
         if not self.enabled() or not self.commands_enabled():
             return WallpaperHandleResult(False)
 
-        delete_match = parse_dynamic_command(text, self.delete_commands())
+        delete_match = parse_dynamic_command(text, self.delete_command_aliases())
         if delete_match:
             if not self.delete_enabled():
                 return WallpaperHandleResult(True, "删图功能当前未启用。")
             return WallpaperHandleResult(True, await self.delete_replied_wallpaper(event))
 
-        add_match = parse_dynamic_command(text, self.add_commands())
+        add_match = parse_dynamic_command(text, self.add_command_aliases())
         if add_match:
             if not self.add_enabled():
                 return WallpaperHandleResult(True, "存图功能当前未启用。")
@@ -215,7 +238,8 @@ class WallpaperService:
 
     def match_random_command(self, text: str) -> WallpaperLibrary | None:
         for library in self.libraries():
-            if parse_dynamic_command(text, library.commands):
+            aliases = expand_wake_prefixed_commands(library.commands, core_wake_prefixes(self.context))
+            if parse_dynamic_command(text, aliases):
                 return library
         return None
 
@@ -223,11 +247,15 @@ class WallpaperService:
         needle = clean_text(value)
         if not needle:
             return None
+        aliases = set(expand_wake_prefixed_commands([needle], core_wake_prefixes(self.context), include_plain=True))
         normalized = needle.lstrip("/")
         for library in self.libraries():
             if needle == library.name or normalized == library.name:
                 return library
-            if any(needle == command or normalized == command.lstrip("/") for command in library.commands):
+            command_aliases = set(
+                expand_wake_prefixed_commands(library.commands, core_wake_prefixes(self.context), include_plain=True)
+            )
+            if aliases & command_aliases:
                 return library
         return None
 
@@ -341,12 +369,19 @@ class WallpaperService:
     async def add_images_from_event(self, event: Any, library_name: str) -> str:
         if not self._can_mutate(event):
             return "只有管理员可以添加壁纸。"
-        library = self.find_library(library_name)
-        if library is None:
+        library_name = clean_text(library_name)
+        if not library_name:
             return "请提供要存入的壁纸库名称，例如：存图 卡比壁纸。"
         refs = await self.extract_image_refs(event, include_direct=True, include_reply=True)
         if not refs:
             return "没有找到可保存的图片。请随指令发送图片，或引用一张图片后发送存图指令。"
+        library = self.find_library(library_name)
+        created_library = False
+        if library is None:
+            if not self.auto_create_library_on_add():
+                return f"壁纸库「{library_name}」不存在。请先在配置里添加这个图库，或开启自动新建图库。"
+            library = self.create_library(library_name)
+            created_library = True
         library.path.mkdir(parents=True, exist_ok=True)
         saved: list[Path] = []
         skipped = 0
@@ -373,11 +408,62 @@ class WallpaperService:
             detail = f": {'; '.join(errors[:3])}" if errors else "。"
             return f"保存失败{detail}"
         message = f"已保存 {len(saved)} 张图片到「{library.name}」。"
+        if created_library:
+            message += " 已自动新建这个壁纸库，并写入配置。"
         if skipped:
             message += f" 跳过 {skipped} 张重复图片。"
         if errors:
             message += f" 另有 {len(errors)} 张失败。"
         return message
+
+    def create_library(self, name: str) -> WallpaperLibrary:
+        clean_name = clean_text(name)
+        entry = {
+            "__template_key": "library",
+            "name": clean_name,
+            "path": "",
+            "commands": [clean_name],
+            "caption": DEFAULT_WALLPAPER_CAPTION,
+            "send_mode": DEFAULT_WALLPAPER_SEND_MODE_LABEL,
+            "recursive": False,
+        }
+        wallpaper_config = self._wallpaper_config()
+        libraries = wallpaper_config.get("libraries")
+        if not isinstance(libraries, list):
+            libraries = []
+            wallpaper_config["libraries"] = libraries
+        libraries.append(entry)
+        self._save_config()
+        return WallpaperLibrary(
+            name=clean_name,
+            path=self._resolve_library_path(clean_name, ""),
+            commands=[clean_name],
+            caption=DEFAULT_WALLPAPER_CAPTION,
+            send_mode=SEND_MODE_TOGETHER,
+            recursive=False,
+        )
+
+    def _wallpaper_config(self) -> dict[str, Any]:
+        if isinstance(self.config, dict):
+            value = self.config.setdefault("wallpaper", {})
+            if isinstance(value, dict):
+                return value
+        value = section(self.config, "wallpaper")
+        if value:
+            return value
+        try:
+            self.config["wallpaper"] = {}
+            return self.config["wallpaper"]
+        except Exception:
+            return {}
+
+    def _save_config(self) -> None:
+        saver = getattr(self.config, "save_config", None)
+        if callable(saver):
+            try:
+                saver()
+            except Exception:
+                pass
 
     def find_duplicate(self, library: WallpaperLibrary, data: bytes) -> Path | None:
         digest = _sha256_bytes(data)

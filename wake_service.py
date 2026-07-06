@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 import astrbot.api.message_components as Comp
 
-from .helper_utils import cfg, clean_text, read_bool, read_float, read_int, read_list
+from .helper_utils import cfg, clean_text, core_wake_prefixes, read_bool, read_float, read_int, read_list, section
 
 
 WAKE_MODE_CONTAINS = "contains"
@@ -150,6 +150,7 @@ class WakeService:
         self._pending_lock = asyncio.Lock()
         self._commands_cache: set[str] | None = None
         self._default_block_keywords_cache: list[str] | None = None
+        self._migrate_editable_block_keywords()
 
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "wake", "enabled", True), True)
@@ -179,14 +180,7 @@ class WakeService:
         return set(read_list(cfg(self.config, "wake", "global_blacklist", []), []))
 
     def wake_prefixes(self) -> list[str]:
-        core_config = {}
-        getter = getattr(self.context, "get_config", None)
-        if callable(getter):
-            try:
-                core_config = getter() or {}
-            except Exception:
-                core_config = {}
-        return read_list(core_config.get("wake_prefix"), ["/"]) or ["/"]
+        return core_wake_prefixes(self.context)
 
     def block_enabled(self) -> bool:
         return read_bool(cfg(self.config, "wake", "block_enabled", True), True)
@@ -200,9 +194,6 @@ class WakeService:
     def block_reread(self) -> bool:
         return read_bool(cfg(self.config, "wake", "block_reread", True), True)
 
-    def use_default_block_keywords(self) -> bool:
-        return read_bool(cfg(self.config, "wake", "use_default_block_keywords", True), True)
-
     def default_block_keywords(self) -> list[str]:
         if self._default_block_keywords_cache is not None:
             return self._default_block_keywords_cache
@@ -214,11 +205,30 @@ class WakeService:
         return self._default_block_keywords_cache
 
     def block_keywords(self) -> list[str]:
-        words: list[str] = []
-        if self.use_default_block_keywords():
-            words.extend(self.default_block_keywords())
-        words.extend(read_list(cfg(self.config, "wake", "block_keywords", []), []))
-        return self._dedupe_words(words)
+        raw = cfg(self.config, "wake", "block_keywords", None)
+        if raw is None:
+            return self.default_block_keywords()
+        if isinstance(raw, list):
+            return self._dedupe_words(raw)
+        return self._dedupe_words(read_list(raw, []))
+
+    def _migrate_editable_block_keywords(self) -> None:
+        wake_config = section(self.config, "wake")
+        if not isinstance(wake_config, dict) or "use_default_block_keywords" not in wake_config:
+            return
+        use_defaults = read_bool(wake_config.pop("use_default_block_keywords"), True)
+        current = wake_config.get("block_keywords", [])
+        current_words = self._dedupe_words(current if isinstance(current, list) else read_list(current, []))
+        if use_defaults:
+            wake_config["block_keywords"] = self._dedupe_words([*self.default_block_keywords(), *current_words])
+        else:
+            wake_config["block_keywords"] = current_words
+        saver = getattr(self.config, "save_config", None)
+        if callable(saver):
+            try:
+                saver()
+            except Exception:
+                pass
 
     @staticmethod
     def _dedupe_words(values: list[Any]) -> list[str]:

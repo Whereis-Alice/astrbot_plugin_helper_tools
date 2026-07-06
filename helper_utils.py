@@ -107,6 +107,61 @@ def read_list(value: Any, default: list[str] | None = None) -> list[str]:
     return fallback
 
 
+def core_wake_prefixes(context: Any, default: list[str] | None = None) -> list[str]:
+    fallback = default or ["/"]
+    core_config: dict[str, Any] = {}
+    getter = getattr(context, "get_config", None)
+    if callable(getter):
+        try:
+            value = getter() or {}
+            if isinstance(value, dict):
+                core_config = value
+        except Exception:
+            core_config = {}
+    return read_list(core_config.get("wake_prefix"), fallback) or fallback
+
+
+def expand_wake_prefixed_commands(
+    commands: Iterable[str],
+    wake_prefixes: Iterable[str],
+    *,
+    include_plain: bool = False,
+) -> list[str]:
+    prefixes = [clean_text(prefix) for prefix in wake_prefixes if clean_text(prefix)]
+    expanded: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        value = clean_text(value)
+        if value and value not in seen:
+            seen.add(value)
+            expanded.append(value)
+
+    for command in commands:
+        command = clean_text(command)
+        if not command:
+            continue
+        matched_prefix = next((prefix for prefix in prefixes if command.startswith(prefix)), "")
+        if matched_prefix:
+            body = command[len(matched_prefix) :].lstrip()
+            add(command)
+            if include_plain and body:
+                add(body)
+        elif command.startswith("/"):
+            body = command[1:].lstrip()
+            add(command)
+            if include_plain and body:
+                add(body)
+        else:
+            body = command
+            if include_plain:
+                add(command)
+        if body:
+            for prefix in prefixes:
+                add(f"{prefix}{body}")
+    return expanded
+
+
 def first_non_empty(*values: Any) -> str:
     for value in values:
         text = clean_text(value)

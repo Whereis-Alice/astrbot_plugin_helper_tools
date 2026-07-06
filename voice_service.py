@@ -8,15 +8,26 @@ from typing import Any
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
 
-from .helper_utils import cfg, clean_text, fetch_bytes, parse_dynamic_command, read_bool, read_int, read_list
+from .helper_utils import (
+    cfg,
+    clean_text,
+    core_wake_prefixes,
+    expand_wake_prefixed_commands,
+    fetch_bytes,
+    parse_dynamic_command,
+    read_bool,
+    read_int,
+    read_list,
+)
 
 
 VOICE_TOOL_NAME = "send_random_voice"
 
 
 class VoiceService:
-    def __init__(self, config: Any, data_dir: Path) -> None:
+    def __init__(self, config: Any, data_dir: Path, context: Any | None = None) -> None:
         self.config = config
+        self.context = context
         self.cache_dir = data_dir / "voice_cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -39,7 +50,10 @@ class VoiceService:
         return read_int(cfg(self.config, "voice", "max_download_bytes", 8 * 1024 * 1024), 8 * 1024 * 1024, minimum=64 * 1024, maximum=50 * 1024 * 1024)
 
     def command_prefixes(self) -> list[str]:
-        return read_list(cfg(self.config, "voice", "command_prefixes", ["/voice_meme", "/随机语音"]), ["/voice_meme"])
+        return read_list(cfg(self.config, "voice", "command_prefixes", ["voice_meme", "随机语音"]), ["voice_meme"])
+
+    def command_aliases(self) -> list[str]:
+        return expand_wake_prefixed_commands(self.command_prefixes(), core_wake_prefixes(self.context))
 
     def trigger_keywords(self) -> list[str]:
         return read_list(cfg(self.config, "voice", "trigger_keywords", ["哈基米"]), ["哈基米"])
@@ -56,7 +70,7 @@ class VoiceService:
     def should_handle_message(self, text: str) -> bool:
         if not self.enabled():
             return False
-        if self.commands_enabled() and parse_dynamic_command(text, self.command_prefixes()):
+        if self.commands_enabled() and parse_dynamic_command(text, self.command_aliases()):
             return True
         if not self.auto_trigger_enabled():
             return False

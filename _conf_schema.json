@@ -49,17 +49,286 @@
         "description": "屏蔽复读 bot 最近发言",
         "default": true
       },
-      "use_default_block_keywords": {
-        "type": "bool",
-        "description": "启用 wakepro 默认屏蔽词",
-        "default": true,
-        "hint": "开启后，wakepro 自带的默认屏蔽词会自动参与唤醒拦截；不想使用这批默认词时关闭即可。"
-      },
       "block_keywords": {
         "type": "list",
-        "description": "额外唤醒屏蔽词",
-        "default": [],
-        "hint": "这里填你自己要补充的词。消息包含默认屏蔽词或这里的词时，会拦住本次唤醒。"
+        "description": "唤醒屏蔽词",
+        "default": [
+          "政治",
+          "键证",
+          "党",
+          "福音会",
+          "教徒",
+          "统一教",
+          "观音法门",
+          "清海无上师",
+          "轮功",
+          "法轮",
+          "轮法功",
+          "新唐人",
+          "伪火",
+          "退党",
+          "自杀",
+          "枪出售",
+          "枪的制",
+          "枪货到",
+          "枪决",
+          "枪模",
+          "枪手",
+          "枪销售",
+          "枪械制",
+          "枪子弹",
+          "售步枪",
+          "售纯度",
+          "售单管",
+          "售弹簧刀",
+          "售防身",
+          "售狗子",
+          "售虎头",
+          "售火药",
+          "售假币",
+          "售健卫",
+          "售军用",
+          "售猎枪",
+          "售氯胺",
+          "售麻醉",
+          "售枪支",
+          "售热武",
+          "售三棱",
+          "售手枪",
+          "售五四",
+          "售一元硬",
+          "售子弹",
+          "售左轮",
+          "亚砷（酸）酐",
+          "亚砷酸钾",
+          "亚砷酸钠",
+          "亚硒酸",
+          "亚硒酸二钠",
+          "亚硒酸镁",
+          "亚硒酸钠",
+          "亚硒酸氢钠",
+          "亚硝酸乙酯",
+          "亚硝酰乙氧",
+          "氧化二丁基锡",
+          "氧化汞",
+          "氧化铊",
+          "氧化亚铊",
+          "氧氯化磷",
+          "原装弹",
+          "原子弹方法",
+          "原子弹清单",
+          "安眠酮",
+          "代血浆",
+          "普萘洛尔",
+          "呋塞米",
+          "西布曲明",
+          "胰岛素样生长因子",
+          "促红细胞生成素",
+          "地西泮",
+          "尼可刹米",
+          "甲睾酮",
+          "地奈德",
+          "莫达非尼",
+          "氯噻嗪",
+          "苯巴比妥",
+          "促性腺激素",
+          "泼尼松",
+          "麻黄草",
+          "雄烯二醇",
+          "地塞米松",
+          "新型毒品",
+          "杜冷丁",
+          "兴奋剂",
+          "海洛因",
+          "海luo因",
+          "鸦片",
+          "阿芙蓉",
+          "咖啡因",
+          "cocain",
+          "三唑仑",
+          "美沙酮",
+          "麻古",
+          "k粉",
+          "凯他敏",
+          "ketamine",
+          "冰毒",
+          "苯丙胺",
+          "大麻",
+          "爱他死",
+          "氯胺酮",
+          "甲基安非他明",
+          "吗啡",
+          "安非他命",
+          "腐败",
+          "四人帮",
+          "上海帮",
+          "北京帮",
+          "清华帮",
+          "警匪",
+          "官匪",
+          "官商",
+          "执法",
+          "毒豺",
+          "反共",
+          "抗议",
+          "亢议",
+          "血书",
+          "灭共",
+          "反分裂",
+          "三硝基甲苯",
+          "六氟化铀",
+          "解放军",
+          "兵力部署",
+          "部队",
+          "集团军",
+          "军区",
+          "颜色革命",
+          "塔利班",
+          "基地组织",
+          "恐怖分子",
+          "印尼屠华",
+          "印尼事件",
+          "蒋公",
+          "马英九",
+          "台独",
+          "光复民国",
+          "台湾",
+          "台海",
+          "日本万岁",
+          "疆独",
+          "解放组织",
+          "分裂分子",
+          "藏独",
+          "麻醉",
+          "中共",
+          "黑手党",
+          "钓鱼岛",
+          "钓鱼台",
+          "摩门教",
+          "三水法轮",
+          "三唑仑",
+          "天皇",
+          "基督",
+          "护法",
+          "回教",
+          "教徒",
+          "主席",
+          "摇头丸",
+          "迷药",
+          "乖乖粉",
+          "麻醉药",
+          "精神药品",
+          "专制",
+          "土共",
+          "共狗",
+          "共匪",
+          "政府",
+          "中央",
+          "国务院",
+          "中华帝国",
+          "大陆官方",
+          "贪财",
+          "贪腐",
+          "落马",
+          "高官",
+          "贪污",
+          "玩忽职守",
+          "受贿",
+          "滥用职权",
+          "违纪",
+          "开除党籍",
+          "撤销职务",
+          "徒刑",
+          "徇私舞弊",
+          "以权谋私",
+          "撤职",
+          "死刑",
+          "判处",
+          "剥夺",
+          "没收",
+          "叛逃",
+          "屄",
+          "被插",
+          "被操",
+          "被干",
+          "逼奸",
+          "插暴",
+          "操逼",
+          "操烂",
+          "肏你",
+          "肏死",
+          "操死",
+          "操我",
+          "厕奴",
+          "插比",
+          "插b",
+          "插逼",
+          "插进",
+          "插你",
+          "插我",
+          "插阴",
+          "潮吹",
+          "潮喷",
+          "抽插",
+          "春药",
+          "肛交",
+          "龟头",
+          "黑逼",
+          "后庭",
+          "后穴",
+          "几吧",
+          "鸡吧",
+          "鸡巴",
+          "精液",
+          "巨屌",
+          "口爆",
+          "口交",
+          "口射",
+          "口淫",
+          "裤袜",
+          "狂操",
+          "狂插",
+          "乱交",
+          "乱伦",
+          "轮暴",
+          "轮操",
+          "轮奸",
+          "强暴",
+          "强奸",
+          "肉棒",
+          "乳沟",
+          "乳交",
+          "自慰",
+          "下体",
+          "裸露",
+          "乱奸",
+          "乱伦",
+          "伦理",
+          "裸聊",
+          "裸体",
+          "裸照",
+          "裸体",
+          "迷幻药",
+          "迷昏",
+          "迷魂",
+          "迷奸",
+          "迷情",
+          "迷药",
+          "迷藥",
+          "谜奸药",
+          "色情",
+          "性交",
+          "性奴",
+          "性虐",
+          "阴唇",
+          "阴道",
+          "阴蒂",
+          "阴户",
+          "阴茎",
+          "阴毛",
+          "淫"
+        ],
+        "hint": "默认填入 wakepro 的屏蔽词列表。你可以在这里自由删除、修改或新增；实际拦截只按这份配置列表生效。清空列表就表示不使用屏蔽词。"
       },
       "command_block_enabled": {
         "type": "bool",
@@ -102,15 +371,15 @@
       },
       "block_prefix_commands": {
         "type": "bool",
-        "description": "屏蔽前缀命令消息",
+        "description": "屏蔽唤醒词缀命令消息",
         "default": false,
-        "hint": "开启后，像 /qq_avatar 这类使用全局唤醒前缀并命中指令的消息，会被本模块直接拦截：不执行后续指令，也不交给 LLM。"
+        "hint": "开启后，像「当前 AstrBot 唤醒词缀 + qq_avatar」这类命中指令的消息，会被本模块直接拦截：不执行后续指令，也不交给 LLM。唤醒词缀不固定是 /。"
       },
       "block_prefix_llm": {
         "type": "bool",
-        "description": "屏蔽前缀普通消息",
+        "description": "屏蔽唤醒词缀普通消息",
         "default": false,
-        "hint": "开启后，像 /帮我写个文案 这种带全局唤醒前缀、但不是任何指令的消息，不会交给 LLM；/qq_avatar 这类真指令不受这个开关影响。"
+        "hint": "开启后，像「当前 AstrBot 唤醒词缀 + 帮我写个文案」这种没有命中任何指令的普通消息，不会交给 LLM；真正的指令不受这个开关影响。"
       },
       "debounce_enabled": {
         "type": "bool",
@@ -136,8 +405,17 @@
       "debounce_message_types": {
         "type": "list",
         "description": "参与防抖的消息类型",
-        "options": ["normal", "at", "reply", "command"],
-        "default": ["normal", "at", "reply"],
+        "options": [
+          "normal",
+          "at",
+          "reply",
+          "command"
+        ],
+        "default": [
+          "normal",
+          "at",
+          "reply"
+        ],
         "hint": "normal: 普通消息；at: @bot；reply: 引用 bot；command: 指令。"
       },
       "at_wake_enabled": {
@@ -159,13 +437,22 @@
       "admin_wake_words": {
         "type": "list",
         "description": "管理员专属唤醒词",
-        "default": ["宝贝", "宝宝"]
+        "default": [
+          "宝贝",
+          "宝宝"
+        ]
       },
       "trigger_modes": {
         "type": "list",
         "description": "唤醒词触发方式",
-        "options": ["自由触发", "前缀触发", "后缀触发"],
-        "default": ["自由触发"],
+        "options": [
+          "自由触发",
+          "前缀触发",
+          "后缀触发"
+        ],
+        "default": [
+          "自由触发"
+        ],
         "hint": "自由触发：消息包含唤醒词即可；前缀触发：消息以唤醒词开头；后缀触发：消息以唤醒词结尾。可多选。"
       },
       "strip_prefix_suffix_wake_word": {
@@ -208,17 +495,29 @@
       "add_commands": {
         "type": "list",
         "description": "存图指令",
-        "default": ["存图", "/存图"]
+        "default": [
+          "存图"
+        ],
+        "hint": "可直接用「存图 图库名」，也可使用「当前 AstrBot 唤醒词缀 + 存图 图库名」。旧配置里带 / 的写法也会兼容。"
       },
       "delete_commands": {
         "type": "list",
         "description": "删图指令",
-        "default": ["删图", "/删图"]
+        "default": [
+          "删图"
+        ],
+        "hint": "可直接用「删图」，也可使用「当前 AstrBot 唤醒词缀 + 删图」。旧配置里带 / 的写法也会兼容。"
       },
       "allowed_extensions": {
         "type": "list",
         "description": "允许的图片扩展名",
-        "default": [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+        "default": [
+          ".jpg",
+          ".jpeg",
+          ".png",
+          ".webp",
+          ".gif"
+        ]
       },
       "max_add_bytes": {
         "type": "int",
@@ -258,7 +557,10 @@
               "commands": {
                 "type": "list",
                 "description": "随机抽图指令",
-                "default": ["/卡比壁纸"]
+                "default": [
+                  "卡比壁纸"
+                ],
+                "hint": "填写命令名即可，例如「卡比壁纸」。发送时使用当前 AstrBot 唤醒词缀触发，例如全局唤醒词缀是 / 时发送 /卡比壁纸，是 ! 时发送 !卡比壁纸。旧配置里带 / 的写法也会兼容。"
               },
               "caption": {
                 "type": "string",
@@ -269,7 +571,11 @@
               "send_mode": {
                 "type": "string",
                 "description": "文案发送方式",
-                "options": ["同一条消息", "先发文案再发图", "只发图片"],
+                "options": [
+                  "同一条消息",
+                  "先发文案再发图",
+                  "只发图片"
+                ],
                 "default": "同一条消息"
               },
               "recursive": {
@@ -285,12 +591,20 @@
             "__template_key": "library",
             "name": "卡比壁纸",
             "path": "",
-            "commands": ["/卡比壁纸"],
+            "commands": [
+              "卡比壁纸"
+            ],
             "caption": "随机给你摸一张 {library}。",
             "send_mode": "同一条消息",
             "recursive": false
           }
         ]
+      },
+      "auto_create_library_on_add": {
+        "type": "bool",
+        "description": "存图到不存在的图库时自动新建",
+        "default": true,
+        "hint": "开启后，带图发送「存图 新图库名」会自动创建图库目录，并把图库条目写入配置。没带图时不会创建。"
       }
     }
   },
@@ -310,8 +624,9 @@
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 /qq_avatar 命令",
-        "default": true
+        "description": "启用 qq_avatar 命令",
+        "default": true,
+        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定，例如 /qq_avatar 或 !qq_avatar。"
       },
       "download_image_for_llm": {
         "type": "bool",
@@ -323,7 +638,12 @@
         "type": "string",
         "description": "默认头像尺寸",
         "default": "640",
-        "options": ["40", "100", "140", "640"]
+        "options": [
+          "40",
+          "100",
+          "140",
+          "640"
+        ]
       },
       "download_timeout_seconds": {
         "type": "int",
@@ -357,8 +677,9 @@
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 /qq_member 命令",
-        "default": true
+        "description": "启用 qq_member 命令",
+        "default": true,
+        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
       },
       "include_raw_extra_fields": {
         "type": "bool",
@@ -383,8 +704,9 @@
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 /qq_profile、/box、/盒、/开盒 命令",
-        "default": true
+        "description": "启用 qq_profile、box、盒、开盒 命令",
+        "default": true,
+        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
       },
       "admin_only_other_users": {
         "type": "bool",
@@ -432,14 +754,21 @@
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 /payqr、/收款码、/打钱 命令",
-        "default": true
+        "description": "启用 payqr、收款码、打钱 命令",
+        "default": true,
+        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
       },
       "payment_qr": {
         "type": "file",
         "description": "收款码图片",
         "default": [],
-        "file_types": [".png", ".jpg", ".jpeg", ".webp", ".gif"]
+        "file_types": [
+          ".png",
+          ".jpg",
+          ".jpeg",
+          ".webp",
+          ".gif"
+        ]
       },
       "caption": {
         "type": "string",
@@ -464,8 +793,9 @@
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 /anime1、/anime1_update、/anime1_url 命令",
-        "default": true
+        "description": "启用 anime1、anime1_update、anime1_url 命令",
+        "default": true,
+        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
       },
       "update_on_start": {
         "type": "bool",
@@ -475,7 +805,9 @@
       "update_times": {
         "type": "list",
         "description": "每日自动更新时间点（小时 0-23）",
-        "default": ["1"],
+        "default": [
+          "1"
+        ],
         "hint": "例如 [\"1\", \"13\", \"22\"] 表示每天 1:00、13:00、22:00 更新。"
       },
       "timeout_seconds": {
@@ -510,7 +842,7 @@
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用可配置指令前缀",
+        "description": "启用可配置指令名",
         "default": true
       },
       "api_url": {
@@ -520,8 +852,12 @@
       },
       "command_prefixes": {
         "type": "list",
-        "description": "随机语音指令前缀",
-        "default": ["/voice_meme", "/随机语音"]
+        "description": "随机语音指令名",
+        "default": [
+          "voice_meme",
+          "随机语音"
+        ],
+        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /voice_meme 或 !voice_meme。旧配置里带 / 的写法也会兼容。"
       },
       "auto_trigger_enabled": {
         "type": "bool",
@@ -531,7 +867,9 @@
       "trigger_keywords": {
         "type": "list",
         "description": "自动触发关键词",
-        "default": ["哈基米"]
+        "default": [
+          "哈基米"
+        ]
       },
       "stop_event_after_response": {
         "type": "bool",
@@ -577,13 +915,17 @@
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用可配置查询指令",
+        "description": "启用可配置查询指令名",
         "default": true
       },
       "command_prefixes": {
         "type": "list",
-        "description": "Steam 查询指令前缀",
-        "default": ["/steam", "/查找"]
+        "description": "Steam 查询指令名",
+        "default": [
+          "steam",
+          "查找"
+        ],
+        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /steam 或 !steam。旧配置里带 / 的写法也会兼容。"
       },
       "auto_parse_links": {
         "type": "bool",
