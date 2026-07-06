@@ -936,7 +936,19 @@
       "auto_parse_links": {
         "type": "bool",
         "description": "自动解析 Steam 商店链接",
-        "default": true
+        "default": true,
+        "hint": "只解析 store.steampowered.com/app/... 这类链接；纯数字 AppID 的自动触发由下面的选项控制。"
+      },
+      "appid_auto_parse_mode": {
+        "type": "string",
+        "description": "纯数字 AppID 自动触发方式",
+        "options": [
+          "关闭",
+          "需要唤醒词缀",
+          "直接触发"
+        ],
+        "default": "需要唤醒词缀",
+        "hint": "推荐保持“需要唤醒词缀”：例如全局唤醒词缀是 / 时，发送 /778666 才会查 Steam；单独发送 778666 不会触发。"
       },
       "country_code": {
         "type": "string",

@@ -30,6 +30,17 @@ from .helper_utils import (
 STEAM_TOOL_NAME = "search_steam_game"
 STEAM_APP_URL_RE = re.compile(r"https?://store\.steampowered\.com/app/(\d+)(?:/|$|\?)", re.IGNORECASE)
 HTML_TAG_RE = re.compile(r"<[^>]+>")
+APPID_AUTO_OFF = "off"
+APPID_AUTO_WAKE_PREFIX = "wake_prefix"
+APPID_AUTO_ANY = "any"
+
+
+def extract_steam_link_appid(value: Any) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+    match = STEAM_APP_URL_RE.search(text)
+    return match.group(1) if match else ""
 
 
 def extract_steam_appid(value: Any) -> str:
@@ -38,8 +49,7 @@ def extract_steam_appid(value: Any) -> str:
         return ""
     if text.isdigit():
         return text
-    match = STEAM_APP_URL_RE.search(text)
-    return match.group(1) if match else ""
+    return extract_steam_link_appid(text)
 
 
 def strip_html(value: Any) -> str:
@@ -95,6 +105,14 @@ class SteamService:
 
     def auto_parse_links(self) -> bool:
         return read_bool(cfg(self.config, "steam", "auto_parse_links", True), True)
+
+    def appid_auto_parse_mode(self) -> str:
+        text = clean_text(cfg(self.config, "steam", "appid_auto_parse_mode", "需要唤醒词缀"), "需要唤醒词缀").lower()
+        if text in {APPID_AUTO_OFF, "false", "disabled", "disable", "关闭", "不启用"}:
+            return APPID_AUTO_OFF
+        if text in {APPID_AUTO_ANY, "direct", "free", "自由触发", "直接触发", "不需要唤醒词缀"}:
+            return APPID_AUTO_ANY
+        return APPID_AUTO_WAKE_PREFIX
 
     def stop_after_response(self) -> bool:
         return read_bool(cfg(self.config, "steam", "stop_event_after_response", False), False)
@@ -302,7 +320,29 @@ class SteamService:
             parsed = parse_dynamic_command(text, self.command_aliases())
             return True, parsed[1] if parsed else ""
         if self.auto_parse_links():
-            appid = extract_steam_appid(text)
+            appid = extract_steam_link_appid(text)
+            if appid:
+                return True, appid
+        appid_auto_mode = self.appid_auto_parse_mode()
+        if appid_auto_mode == APPID_AUTO_ANY and clean_text(text).isdigit():
+            return True, clean_text(text)
+        if appid_auto_mode == APPID_AUTO_WAKE_PREFIX:
+            appid = self._wake_prefixed_appid(text)
             if appid:
                 return True, appid
         return False, ""
+
+    def _wake_prefixed_appid(self, text: str) -> str:
+        stripped = clean_text(text)
+        if not stripped:
+            return ""
+        for prefix in sorted(core_wake_prefixes(self.context), key=len, reverse=True):
+            prefix = clean_text(prefix)
+            if not prefix or not stripped.startswith(prefix):
+                continue
+            rest = stripped
+            while rest.startswith(prefix):
+                rest = rest[len(prefix) :].strip()
+            if rest.isdigit():
+                return rest
+        return ""
