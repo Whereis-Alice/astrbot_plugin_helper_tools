@@ -34,7 +34,7 @@ from .wallpaper_service import WallpaperService
 
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.4.5"
+PLUGIN_VERSION = "0.4.6"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -440,6 +440,7 @@ class HelperToolsPlugin(Star):
     ):
         if not self.enabled() or not _module_commands_enabled(self.config, "qq_avatar"):
             yield event.plain_result("QQ 头像命令当前未启用。")
+            event.stop_event()
             return
         requested_qq_id = clean_text(qq_id)
         requested_size = clean_text(size)
@@ -449,10 +450,12 @@ class HelperToolsPlugin(Star):
         resolved_qq_id, error = self.qq.resolve_qq_id(event, requested_qq_id)
         if error:
             yield event.plain_result(error)
+            event.stop_event()
             return
         assert resolved_qq_id is not None
         avatar_size = normalize_avatar_size(requested_size, self.qq.avatar_default_size())
         yield event.chain_result(self.qq.command_avatar_chain(resolved_qq_id, avatar_size))
+        event.stop_event()
 
     @filter.command("qq_member", alias={"群成员信息", "qq成员"})
     async def qq_member_command(
@@ -463,6 +466,7 @@ class HelperToolsPlugin(Star):
     ):
         if not self.enabled() or not _module_commands_enabled(self.config, "qq_member"):
             yield event.plain_result("QQ群成员信息命令当前未启用。")
+            event.stop_event()
             return
         result = await self.qq.get_group_member_result(
             event=event,
@@ -470,6 +474,7 @@ class HelperToolsPlugin(Star):
             group_id=clean_text(group_id),
         )
         yield event.plain_result(result)
+        event.stop_event()
 
     @filter.command("qq_profile", alias={"qq资料", "box", "盒", "开盒"})
     async def qq_profile_command(
@@ -480,10 +485,12 @@ class HelperToolsPlugin(Star):
     ):
         if not self.enabled() or not _module_commands_enabled(self.config, "qq_profile"):
             yield event.plain_result("QQ 资料命令当前未启用。")
+            event.stop_event()
             return
         resolved_qq_id, error = self.qq.resolve_qq_id(event, clean_text(qq_id))
         if error:
             yield event.plain_result(error)
+            event.stop_event()
             return
         assert resolved_qq_id is not None
         result = await self.qq.get_profile_result(
@@ -495,36 +502,44 @@ class HelperToolsPlugin(Star):
         )
         if not isinstance(result, str):
             yield event.plain_result("QQ 资料结果格式异常。")
+            event.stop_event()
             return
         chain: list[Any] = []
         if read_bool(cfg(self.config, "qq_profile", "send_avatar_in_command", True), True):
             chain.append(Comp.Image.fromURL(build_qq_avatar_url(resolved_qq_id, self.qq.avatar_default_size())))
         chain.append(Comp.Plain(result))
         yield event.chain_result(chain)
+        event.stop_event()
 
     @filter.command("payqr", alias={"收款码", "打钱"})
     async def payqr_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "payqr"):
             yield event.plain_result("收款码命令当前未启用。")
+            event.stop_event()
             return
         chain, error = self.payqr.build_chain()
         if error:
             yield event.plain_result(error)
+            event.stop_event()
             return
         assert chain is not None
         yield event.chain_result(chain)
+        event.stop_event()
 
     @filter.command("anime1_update", alias={"anime_update", "更新anime1"})
     async def anime1_update_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "anime1"):
             yield event.plain_result("Anime1 命令当前未启用。")
+            event.stop_event()
             return
         try:
             count = await self.anime1.update_cache()
         except Exception as exc:
             yield event.plain_result(f"Anime1 更新失败: {exc}")
+            event.stop_event()
             return
         yield event.plain_result(f"Anime1 缓存已更新，共 {count} 条。")
+        event.stop_event()
 
     @filter.command("anime1", alias={"番剧更新"})
     async def anime1_command(
@@ -536,6 +551,7 @@ class HelperToolsPlugin(Star):
     ):
         if not self.enabled() or not _module_commands_enabled(self.config, "anime1"):
             yield event.plain_result("Anime1 命令当前未启用。")
+            event.stop_event()
             return
         query, time_range, limit = self._parse_anime_args(arg1, arg2, arg3)
         result = await self.anime1.get_updates(
@@ -545,69 +561,86 @@ class HelperToolsPlugin(Star):
             limit=limit,
         )
         yield event.plain_result(result)
+        event.stop_event()
 
     @filter.command("anime1_url", alias={"番剧链接"})
     async def anime1_url_command(self, event: AstrMessageEvent, anime_id: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "anime1"):
             yield event.plain_result("Anime1 命令当前未启用。")
+            event.stop_event()
             return
         yield event.plain_result(await self.anime1.get_watch_url(anime_id))
+        event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("设置头像")
     async def set_bot_avatar_command(self, event: AstrMessageEvent, image_url: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.set_avatar(event, clean_text(image_url)))
+        event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("设置昵称")
     async def set_bot_nickname_command(self, event: AstrMessageEvent, nickname: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.set_nickname(event, clean_text(nickname)))
+        event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("设置签名")
     async def set_bot_signature_command(self, event: AstrMessageEvent, signature: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.set_signature(event, clean_text(signature)))
+        event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("设置状态")
     async def set_bot_status_command(self, event: AstrMessageEvent, status_name: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.set_status(event, clean_text(status_name)))
+        event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("切换人格")
     async def switch_persona_command(self, event: AstrMessageEvent, persona_id: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.switch_persona(event, clean_text(persona_id)))
+        event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("同步人格")
     async def sync_persona_command(self, event: AstrMessageEvent, persona_id: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.sync_with_persona(event, clean_text(persona_id)))
+        event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("人格列表", alias={"查看人格列表"})
     async def list_persona_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            event.stop_event()
             return
         yield event.plain_result(self.bot_profile.list_personas())
+        event.stop_event()
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def dynamic_message_handler(self, event: AstrMessageEvent):
@@ -616,6 +649,9 @@ class HelperToolsPlugin(Star):
         text = clean_text(getattr(event, "message_str", ""))
         if not text:
             return
+        wake_triggered = bool(
+            getattr(event, "is_at_or_wake_command", False) or getattr(event, "is_wake", False)
+        )
 
         wallpaper_result = await self.wallpaper.handle_message(event, text)
         if wallpaper_result.handled:
@@ -625,27 +661,33 @@ class HelperToolsPlugin(Star):
                 event.stop_event()
             return
 
-        steam_handled, steam_query = self.steam.should_handle_message(text)
-        if steam_handled:
+        steam_match = self.steam.match_message(text, wake_triggered=wake_triggered)
+        if steam_match.handled:
             try:
-                chain, error = await self.steam.build_chain_for_message(steam_query)
+                chain, error = await self.steam.build_chain_for_message(steam_match.query)
             except Exception as exc:
                 yield event.plain_result(f"Steam 查询失败: {exc}")
+                if steam_match.stop_event:
+                    event.stop_event()
                 return
             if error:
                 yield event.plain_result(error)
+                if steam_match.stop_event:
+                    event.stop_event()
                 return
             assert chain is not None
             yield event.chain_result(chain)
-            if self.steam.stop_after_response():
+            if steam_match.stop_event:
                 event.stop_event()
             return
 
-        if self.voice.should_handle_message(text):
+        if self.voice.should_handle_message(text, wake_triggered=wake_triggered):
             try:
                 chain = await self.voice.build_chain()
             except Exception as exc:
                 yield event.plain_result(f"随机语音发送失败: {exc}")
+                if self.voice.stop_after_response():
+                    event.stop_event()
                 return
             yield event.chain_result(chain)
             if self.voice.stop_after_response():

@@ -52,8 +52,12 @@ class VoiceService:
     def command_prefixes(self) -> list[str]:
         return read_list(cfg(self.config, "voice", "command_prefixes", ["voice_meme", "随机语音"]), ["voice_meme"])
 
-    def command_aliases(self) -> list[str]:
-        return expand_wake_prefixed_commands(self.command_prefixes(), core_wake_prefixes(self.context))
+    def command_aliases(self, *, include_plain: bool = False) -> list[str]:
+        return expand_wake_prefixed_commands(
+            self.command_prefixes(),
+            core_wake_prefixes(self.context),
+            include_plain=include_plain,
+        )
 
     def trigger_keywords(self) -> list[str]:
         return read_list(cfg(self.config, "voice", "trigger_keywords", ["哈基米"]), ["哈基米"])
@@ -67,10 +71,10 @@ class VoiceService:
     def cache_max_files(self) -> int:
         return read_int(cfg(self.config, "voice", "cache_max_files", 30), 30, minimum=1, maximum=500)
 
-    def should_handle_message(self, text: str) -> bool:
+    def should_handle_message(self, text: str, *, wake_triggered: bool = False) -> bool:
         if not self.enabled():
             return False
-        if self.commands_enabled() and parse_dynamic_command(text, self.command_aliases()):
+        if self.commands_enabled() and parse_dynamic_command(text, self.command_aliases(include_plain=wake_triggered)):
             return True
         if not self.auto_trigger_enabled():
             return False

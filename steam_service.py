@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import html
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from mcp.types import CallToolResult, ImageContent, TextContent
@@ -33,6 +34,13 @@ HTML_TAG_RE = re.compile(r"<[^>]+>")
 APPID_AUTO_OFF = "off"
 APPID_AUTO_WAKE_PREFIX = "wake_prefix"
 APPID_AUTO_ANY = "any"
+
+
+@dataclass(slots=True)
+class SteamMessageMatch:
+    handled: bool = False
+    query: str = ""
+    stop_event: bool = False
 
 
 def extract_steam_link_appid(value: Any) -> str:
@@ -129,8 +137,12 @@ class SteamService:
             return [clean_text(item) for item in value if clean_text(item)] or ["steam"]
         return ["steam"]
 
-    def command_aliases(self) -> list[str]:
-        return expand_wake_prefixed_commands(self.command_prefixes(), core_wake_prefixes(self.context))
+    def command_aliases(self, *, include_plain: bool = False) -> list[str]:
+        return expand_wake_prefixed_commands(
+            self.command_prefixes(),
+            core_wake_prefixes(self.context),
+            include_plain=include_plain,
+        )
 
     def show_header_image(self) -> bool:
         return read_bool(cfg(self.config, "steam", "show_header_image", True), True)
@@ -313,24 +325,31 @@ class SteamService:
         chain.append(Comp.Plain(text))
         return chain, ""
 
-    def should_handle_message(self, text: str) -> tuple[bool, str]:
+    def match_message(self, text: str, *, wake_triggered: bool = False) -> SteamMessageMatch:
         if not self.enabled():
-            return False, ""
-        if self.commands_enabled() and parse_dynamic_command(text, self.command_aliases()):
-            parsed = parse_dynamic_command(text, self.command_aliases())
-            return True, parsed[1] if parsed else ""
+            return SteamMessageMatch()
+        if self.commands_enabled():
+            parsed = parse_dynamic_command(text, self.command_aliases(include_plain=wake_triggered))
+            if parsed:
+                return SteamMessageMatch(True, parsed[1], True)
         if self.auto_parse_links():
             appid = extract_steam_link_appid(text)
             if appid:
-                return True, appid
+                return SteamMessageMatch(True, appid, self.stop_after_response())
         appid_auto_mode = self.appid_auto_parse_mode()
         if appid_auto_mode == APPID_AUTO_ANY and clean_text(text).isdigit():
-            return True, clean_text(text)
+            return SteamMessageMatch(True, clean_text(text), True)
         if appid_auto_mode == APPID_AUTO_WAKE_PREFIX:
+            if wake_triggered and clean_text(text).isdigit():
+                return SteamMessageMatch(True, clean_text(text), True)
             appid = self._wake_prefixed_appid(text)
             if appid:
-                return True, appid
-        return False, ""
+                return SteamMessageMatch(True, appid, True)
+        return SteamMessageMatch()
+
+    def should_handle_message(self, text: str, *, wake_triggered: bool = False) -> tuple[bool, str]:
+        match = self.match_message(text, wake_triggered=wake_triggered)
+        return match.handled, match.query
 
     def _wake_prefixed_appid(self, text: str) -> str:
         stripped = clean_text(text)
