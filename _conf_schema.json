@@ -10,6 +10,175 @@
       }
     }
   },
+  "wake": {
+    "type": "object",
+    "description": "唤醒增强",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用唤醒增强模块",
+        "default": true
+      },
+      "global_blacklist": {
+        "type": "list",
+        "description": "全局黑名单会话/群号/用户号",
+        "default": [],
+        "hint": "命中后会直接停止事件传播。"
+      },
+      "at_wake_enabled": {
+        "type": "bool",
+        "description": "允许 @ bot 唤醒",
+        "default": true
+      },
+      "disable_reply_wake": {
+        "type": "bool",
+        "description": "禁用纯引用唤醒",
+        "default": true,
+        "hint": "引用 bot 消息时不会唤醒 LLM，除非同一条消息里同时 @ bot 或命中唤醒词。"
+      },
+      "wake_words": {
+        "type": "list",
+        "description": "通用唤醒词",
+        "default": []
+      },
+      "admin_wake_words": {
+        "type": "list",
+        "description": "管理员专属唤醒词",
+        "default": ["宝贝", "宝宝"]
+      },
+      "trigger_modes": {
+        "type": "list",
+        "description": "唤醒词触发方式",
+        "options": ["自由触发", "前缀触发", "后缀触发"],
+        "default": ["自由触发"],
+        "hint": "自由触发：消息包含唤醒词即可；前缀触发：消息以唤醒词开头；后缀触发：消息以唤醒词结尾。可多选。"
+      },
+      "strip_prefix_suffix_wake_word": {
+        "type": "bool",
+        "description": "前缀/后缀触发后移除唤醒词",
+        "default": false,
+        "hint": "只对前缀触发和后缀触发生效；自由触发不会改写消息文本。"
+      }
+    }
+  },
+  "wallpaper": {
+    "type": "object",
+    "description": "本地随机壁纸",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用本地随机壁纸模块",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用壁纸库随机发送指令",
+        "default": true
+      },
+      "add_enabled": {
+        "type": "bool",
+        "description": "启用存图功能",
+        "default": true
+      },
+      "delete_enabled": {
+        "type": "bool",
+        "description": "启用删图功能",
+        "default": true
+      },
+      "mutate_admin_only": {
+        "type": "bool",
+        "description": "只有管理员可以存图/删图",
+        "default": true
+      },
+      "add_commands": {
+        "type": "list",
+        "description": "存图指令",
+        "default": ["存图", "/存图"]
+      },
+      "delete_commands": {
+        "type": "list",
+        "description": "删图指令",
+        "default": ["删图", "/删图"]
+      },
+      "allowed_extensions": {
+        "type": "list",
+        "description": "允许的图片扩展名",
+        "default": [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+      },
+      "max_add_bytes": {
+        "type": "int",
+        "description": "单张图片最大保存字节数",
+        "default": 20971520,
+        "min": 65536,
+        "max": 209715200
+      },
+      "deduplicate_on_add": {
+        "type": "bool",
+        "description": "存图时按 SHA256 去重",
+        "default": true
+      },
+      "stop_event_after_response": {
+        "type": "bool",
+        "description": "壁纸命令响应后阻止后续处理",
+        "default": true
+      },
+      "libraries": {
+        "type": "template_list",
+        "description": "壁纸库列表",
+        "templates": {
+          "library": {
+            "name": "壁纸库",
+            "items": {
+              "name": {
+                "type": "string",
+                "description": "壁纸库名称",
+                "default": "卡比壁纸"
+              },
+              "path": {
+                "type": "string",
+                "description": "本地图片目录",
+                "default": "",
+                "hint": "留空时使用插件数据目录下的 wallpapers/<库名>。相对路径也会按插件数据目录解析。"
+              },
+              "commands": {
+                "type": "list",
+                "description": "随机抽图指令",
+                "default": ["/卡比壁纸"]
+              },
+              "caption": {
+                "type": "string",
+                "description": "发送图片时附带的文案",
+                "default": "随机给你摸一张 {library}。",
+                "hint": "可用占位符：{library}、{filename}、{path}"
+              },
+              "send_mode": {
+                "type": "string",
+                "description": "文案发送方式",
+                "options": ["同一条消息", "先发文案再发图", "只发图片"],
+                "default": "同一条消息"
+              },
+              "recursive": {
+                "type": "bool",
+                "description": "递归扫描子目录",
+                "default": false
+              }
+            }
+          }
+        },
+        "default": [
+          {
+            "__template_key": "library",
+            "name": "卡比壁纸",
+            "path": "",
+            "commands": ["/卡比壁纸"],
+            "caption": "随机给你摸一张 {library}。",
+            "send_mode": "同一条消息",
+            "recursive": false
+          }
+        ]
+      }
+    }
+  },
   "qq_avatar": {
     "type": "object",
     "description": "QQ 头像工具",
