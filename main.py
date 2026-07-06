@@ -15,7 +15,7 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 
 from .anime1_service import Anime1Service
 from .bot_profile_service import BOT_PROFILE_TOOL_NAME, BotProfileService
-from .helper_utils import cfg, clean_text, parse_dynamic_command, read_bool
+from .helper_utils import cfg, clean_text, read_bool
 from .payqr_service import PAYQR_TOOL_NAME, PayQRService
 from .qq_features import (
     ALLOWED_AVATAR_SIZES,
@@ -29,11 +29,13 @@ from .qq_features import (
 )
 from .steam_service import STEAM_TOOL_NAME, SteamService
 from .voice_service import VOICE_TOOL_NAME, VoiceService
+from .wake_service import WakeService
+from .wallpaper_service import WallpaperService
 
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.2.0"
-PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam 等 LLM 工具。"
+PLUGIN_VERSION = "0.3.0"
+PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
@@ -381,6 +383,8 @@ class HelperToolsPlugin(Star):
         self.voice = VoiceService(self.config, self.data_dir)
         self.steam = SteamService(self.config)
         self.bot_profile = BotProfileService(self.config, self.context, self.data_dir)
+        self.wake = WakeService(self.config)
+        self.wallpaper = WallpaperService(self.config, self.data_dir)
 
         self.context.add_llm_tools(*self._build_tools())
 
@@ -413,6 +417,12 @@ class HelperToolsPlugin(Star):
             SteamSearchTool(plugin=self, active=self._tool_active("steam")),
             BotQQProfileTool(plugin=self, active=self._tool_active("bot_profile", False)),
         ]
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=99998)
+    async def wake_enhance_handler(self, event: AstrMessageEvent):
+        if not self.enabled():
+            return
+        self.wake.apply(event)
 
     @filter.command("qq_avatar", alias={"qq头像", "头像"})
     async def qq_avatar_command(
@@ -598,6 +608,14 @@ class HelperToolsPlugin(Star):
             return
         text = clean_text(getattr(event, "message_str", ""))
         if not text:
+            return
+
+        wallpaper_result = await self.wallpaper.handle_message(event, text)
+        if wallpaper_result.handled:
+            if wallpaper_result.message:
+                yield event.plain_result(wallpaper_result.message)
+            if self.wallpaper.stop_after_response():
+                event.stop_event()
             return
 
         steam_handled, steam_query = self.steam.should_handle_message(text)
