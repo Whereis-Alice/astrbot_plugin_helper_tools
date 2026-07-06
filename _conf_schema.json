@@ -25,6 +25,114 @@
         "default": [],
         "hint": "命中后会直接停止事件传播。"
       },
+      "block_enabled": {
+        "type": "bool",
+        "description": "启用阻塞判断",
+        "default": true
+      },
+      "wake_cd": {
+        "type": "float",
+        "description": "唤醒冷却秒数",
+        "default": 0.5,
+        "min": 0,
+        "max": 60,
+        "hint": "每个会话里的每个用户单独计时。设为 0 表示关闭冷却。"
+      },
+      "block_qqbot": {
+        "type": "bool",
+        "description": "屏蔽 QQ 机器人账号段",
+        "default": true,
+        "hint": "仅在 aiocqhttp/OneBot 平台上按常见 QQ 机器人账号段判断。"
+      },
+      "block_reread": {
+        "type": "bool",
+        "description": "屏蔽复读 bot 最近发言",
+        "default": true
+      },
+      "block_keywords": {
+        "type": "list",
+        "description": "唤醒屏蔽词",
+        "default": [],
+        "hint": "消息包含这些词时会停止事件传播，阻止唤醒。"
+      },
+      "command_block_enabled": {
+        "type": "bool",
+        "description": "启用指令屏蔽",
+        "default": true
+      },
+      "builtin_commands": {
+        "type": "list",
+        "description": "内置指令列表",
+        "default": [
+          "llm",
+          "t2i",
+          "tts",
+          "sid",
+          "op",
+          "wl",
+          "dashboard_update",
+          "alter_cmd",
+          "provider",
+          "model",
+          "plugin",
+          "plugin ls",
+          "new",
+          "switch",
+          "rename",
+          "del",
+          "reset",
+          "history",
+          "persona",
+          "tool ls",
+          "key",
+          "websearch"
+        ]
+      },
+      "block_builtin_commands": {
+        "type": "bool",
+        "description": "禁止内置指令触发",
+        "default": false,
+        "hint": "开启后，命中 builtin_commands 的消息会被停止传播。"
+      },
+      "block_prefix_commands": {
+        "type": "bool",
+        "description": "禁止 wake_prefix 前缀触发指令",
+        "default": false
+      },
+      "block_prefix_llm": {
+        "type": "bool",
+        "description": "禁止 wake_prefix 前缀触发 LLM",
+        "default": false,
+        "hint": "开启后，使用 AstrBot 全局 wake_prefix 但没有命中插件指令的消息不会唤醒 LLM。"
+      },
+      "debounce_enabled": {
+        "type": "bool",
+        "description": "启用消息防抖",
+        "default": true
+      },
+      "debounce_listen_seconds": {
+        "type": "float",
+        "description": "防抖监听时长秒数",
+        "default": 3.0,
+        "min": 0,
+        "max": 60,
+        "hint": "bot 被唤醒后，同一用户在窗口内连续发言会尝试合并到上一轮请求。设为 0 表示关闭。"
+      },
+      "debounce_max_merge_count": {
+        "type": "int",
+        "description": "最多合并消息数",
+        "default": 3,
+        "min": 0,
+        "max": 50,
+        "hint": "设为 0 表示不限制。达到上限后不再继续监听下一条。"
+      },
+      "debounce_message_types": {
+        "type": "list",
+        "description": "参与防抖的消息类型",
+        "options": ["normal", "at", "reply", "command"],
+        "default": ["normal", "at", "reply"],
+        "hint": "normal: 普通消息；at: @bot；reply: 引用 bot；command: 指令。"
+      },
       "at_wake_enabled": {
         "type": "bool",
         "description": "允许 @ bot 唤醒",
