@@ -15,7 +15,7 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 
 from .anime1_service import Anime1Service
 from .bot_profile_service import BOT_PROFILE_TOOL_NAME, BotProfileService
-from .helper_utils import cfg, clean_text, read_bool
+from .helper_utils import cfg, clean_text, core_wake_prefixes, read_bool
 from .payqr_service import PAYQR_TOOL_NAME, PayQRService
 from .qq_features import (
     ALLOWED_AVATAR_SIZES,
@@ -34,7 +34,7 @@ from .wallpaper_service import WallpaperService
 
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.4.6"
+PLUGIN_VERSION = "0.4.7"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -400,6 +400,18 @@ class HelperToolsPlugin(Star):
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "general", "enabled", True), True)
 
+    def _message_has_wake_prefix(self, event: AstrMessageEvent) -> bool:
+        message_obj = getattr(event, "message_obj", None)
+        raw_text = clean_text(getattr(message_obj, "message_str", "")) or clean_text(
+            getattr(event, "message_str", ""),
+        )
+        if not raw_text:
+            return False
+        return any(
+            prefix and raw_text.startswith(prefix)
+            for prefix in sorted(core_wake_prefixes(self.context), key=len, reverse=True)
+        )
+
     def _tool_active(self, module: str, default: bool = True) -> bool:
         return self.enabled() and _module_enabled(self.config, module, default) and read_bool(
             cfg(self.config, module, "llm_tool_enabled", default),
@@ -649,9 +661,7 @@ class HelperToolsPlugin(Star):
         text = clean_text(getattr(event, "message_str", ""))
         if not text:
             return
-        wake_triggered = bool(
-            getattr(event, "is_at_or_wake_command", False) or getattr(event, "is_wake", False)
-        )
+        wake_triggered = self._message_has_wake_prefix(event)
 
         wallpaper_result = await self.wallpaper.handle_message(event, text)
         if wallpaper_result.handled:
