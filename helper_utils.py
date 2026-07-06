@@ -159,6 +159,8 @@ def expand_wake_prefixed_commands(
         if body:
             for prefix in prefixes:
                 add(f"{prefix}{body}")
+                if include_plain:
+                    add(f"{prefix}{prefix}{body}")
     return expanded
 
 

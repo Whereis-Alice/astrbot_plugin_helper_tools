@@ -238,7 +238,11 @@ class WallpaperService:
 
     def match_random_command(self, text: str) -> WallpaperLibrary | None:
         for library in self.libraries():
-            aliases = expand_wake_prefixed_commands(library.commands, core_wake_prefixes(self.context))
+            aliases = expand_wake_prefixed_commands(
+                library.commands,
+                core_wake_prefixes(self.context),
+                include_plain=True,
+            )
             if parse_dynamic_command(text, aliases):
                 return library
         return None

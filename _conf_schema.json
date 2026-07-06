@@ -330,6 +330,12 @@
         ],
         "hint": "默认填入 wakepro 的屏蔽词列表。你可以在这里自由删除、修改或新增；实际拦截只按这份配置列表生效。清空列表就表示不使用屏蔽词。"
       },
+      "block_keywords_initialized": {
+        "type": "bool",
+        "description": "唤醒屏蔽词已初始化",
+        "default": false,
+        "invisible": true
+      },
       "command_block_enabled": {
         "type": "bool",
         "description": "启用指令屏蔽",

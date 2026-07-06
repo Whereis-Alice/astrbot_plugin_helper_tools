@@ -214,21 +214,36 @@ class WakeService:
 
     def _migrate_editable_block_keywords(self) -> None:
         wake_config = section(self.config, "wake")
-        if not isinstance(wake_config, dict) or "use_default_block_keywords" not in wake_config:
+        if not isinstance(wake_config, dict):
             return
-        use_defaults = read_bool(wake_config.pop("use_default_block_keywords"), True)
-        current = wake_config.get("block_keywords", [])
+        changed = False
+
+        if "use_default_block_keywords" in wake_config:
+            use_defaults = read_bool(wake_config.pop("use_default_block_keywords"), True)
+            current = wake_config.get("block_keywords", [])
+            current_words = self._dedupe_words(current if isinstance(current, list) else read_list(current, []))
+            if use_defaults:
+                wake_config["block_keywords"] = self._dedupe_words([*self.default_block_keywords(), *current_words])
+            else:
+                wake_config["block_keywords"] = current_words
+            wake_config["block_keywords_initialized"] = True
+            changed = True
+
+        initialized = read_bool(wake_config.get("block_keywords_initialized"), False)
+        current = wake_config.get("block_keywords", None)
         current_words = self._dedupe_words(current if isinstance(current, list) else read_list(current, []))
-        if use_defaults:
-            wake_config["block_keywords"] = self._dedupe_words([*self.default_block_keywords(), *current_words])
-        else:
-            wake_config["block_keywords"] = current_words
-        saver = getattr(self.config, "save_config", None)
-        if callable(saver):
-            try:
-                saver()
-            except Exception:
-                pass
+        if not initialized:
+            wake_config["block_keywords"] = current_words or list(self.default_block_keywords())
+            wake_config["block_keywords_initialized"] = True
+            changed = True
+
+        if changed:
+            saver = getattr(self.config, "save_config", None)
+            if callable(saver):
+                try:
+                    saver()
+                except Exception:
+                    pass
 
     @staticmethod
     def _dedupe_words(values: list[Any]) -> list[str]:
