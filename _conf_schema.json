@@ -49,11 +49,17 @@
         "description": "屏蔽复读 bot 最近发言",
         "default": true
       },
+      "use_default_block_keywords": {
+        "type": "bool",
+        "description": "启用 wakepro 默认屏蔽词",
+        "default": true,
+        "hint": "开启后，wakepro 自带的默认屏蔽词会自动参与唤醒拦截；不想使用这批默认词时关闭即可。"
+      },
       "block_keywords": {
         "type": "list",
-        "description": "唤醒屏蔽词",
+        "description": "额外唤醒屏蔽词",
         "default": [],
-        "hint": "消息包含这些词时会停止事件传播，阻止唤醒。"
+        "hint": "这里填你自己要补充的词。消息包含默认屏蔽词或这里的词时，会拦住本次唤醒。"
       },
       "command_block_enabled": {
         "type": "bool",
@@ -96,14 +102,15 @@
       },
       "block_prefix_commands": {
         "type": "bool",
-        "description": "禁止 wake_prefix 前缀触发指令",
-        "default": false
+        "description": "屏蔽前缀命令消息",
+        "default": false,
+        "hint": "开启后，像 /qq_avatar 这类使用全局唤醒前缀并命中指令的消息，会被本模块直接拦截：不执行后续指令，也不交给 LLM。"
       },
       "block_prefix_llm": {
         "type": "bool",
-        "description": "禁止 wake_prefix 前缀触发 LLM",
+        "description": "屏蔽前缀普通消息",
         "default": false,
-        "hint": "开启后，使用 AstrBot 全局 wake_prefix 但没有命中插件指令的消息不会唤醒 LLM。"
+        "hint": "开启后，像 /帮我写个文案 这种带全局唤醒前缀、但不是任何指令的消息，不会交给 LLM；/qq_avatar 这类真指令不受这个开关影响。"
       },
       "debounce_enabled": {
         "type": "bool",

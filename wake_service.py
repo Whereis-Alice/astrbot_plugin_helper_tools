@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from collections import defaultdict, deque
@@ -50,6 +51,8 @@ DEFAULT_BUILTIN_COMMANDS = [
     "key",
     "websearch",
 ]
+
+DEFAULT_BLOCK_WORDS_PATH = Path(__file__).with_name("default_wake_block_words.json")
 
 
 @dataclass(slots=True)
@@ -146,6 +149,7 @@ class WakeService:
         self._pending: dict[str, PendingWakeRequest] = {}
         self._pending_lock = asyncio.Lock()
         self._commands_cache: set[str] | None = None
+        self._default_block_keywords_cache: list[str] | None = None
 
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "wake", "enabled", True), True)
@@ -196,8 +200,36 @@ class WakeService:
     def block_reread(self) -> bool:
         return read_bool(cfg(self.config, "wake", "block_reread", True), True)
 
+    def use_default_block_keywords(self) -> bool:
+        return read_bool(cfg(self.config, "wake", "use_default_block_keywords", True), True)
+
+    def default_block_keywords(self) -> list[str]:
+        if self._default_block_keywords_cache is not None:
+            return self._default_block_keywords_cache
+        try:
+            raw = json.loads(DEFAULT_BLOCK_WORDS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            raw = []
+        self._default_block_keywords_cache = self._dedupe_words(raw if isinstance(raw, list) else [])
+        return self._default_block_keywords_cache
+
     def block_keywords(self) -> list[str]:
-        return read_list(cfg(self.config, "wake", "block_keywords", []), [])
+        words: list[str] = []
+        if self.use_default_block_keywords():
+            words.extend(self.default_block_keywords())
+        words.extend(read_list(cfg(self.config, "wake", "block_keywords", []), []))
+        return self._dedupe_words(words)
+
+    @staticmethod
+    def _dedupe_words(values: list[Any]) -> list[str]:
+        seen: set[str] = set()
+        words: list[str] = []
+        for value in values:
+            word = clean_text(value)
+            if word and word not in seen:
+                seen.add(word)
+                words.append(word)
+        return words
 
     def command_block_enabled(self) -> bool:
         return read_bool(cfg(self.config, "wake", "command_block_enabled", True), True)
@@ -498,21 +530,37 @@ class WakeService:
         return commands
 
     def _detect_command(self, event: Any) -> str:
-        message = clean_text(getattr(event, "message_str", ""))
-        if not message:
-            return ""
-        first_arg = message.split(None, 1)[0]
-        return first_arg if first_arg in self._registered_commands() else ""
+        registered_commands = self._registered_commands()
+        for message in self._command_message_candidates(event):
+            first_arg = message.split(None, 1)[0]
+            if first_arg in registered_commands:
+                return first_arg
+        return ""
 
     def _detect_builtin_command(self, event: Any) -> str:
+        for message in self._command_message_candidates(event):
+            for command in sorted(self.builtin_commands(), key=len, reverse=True):
+                command = clean_text(command)
+                if command and (message == command or message.startswith(command + " ")):
+                    return command
+        return ""
+
+    def _command_message_candidates(self, event: Any) -> list[str]:
         message = clean_text(getattr(event, "message_str", ""))
         if not message:
-            return ""
-        for command in sorted(self.builtin_commands(), key=len, reverse=True):
-            command = clean_text(command)
-            if command and (message == command or message.startswith(command + " ")):
-                return command
-        return ""
+            return []
+        candidates = [message]
+        stripped = self._strip_wake_prefix(message)
+        if stripped and stripped != message:
+            candidates.append(stripped)
+        return candidates
+
+    def _strip_wake_prefix(self, message: str) -> str:
+        for prefix in sorted(self.wake_prefixes(), key=len, reverse=True):
+            prefix = clean_text(prefix)
+            if prefix and message.startswith(prefix):
+                return message[len(prefix) :].lstrip()
+        return message
 
     def _is_prefix_triggered(self, event: Any) -> bool:
         first_plain = ""
