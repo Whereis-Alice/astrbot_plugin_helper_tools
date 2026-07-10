@@ -14,6 +14,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 from .anime1_service import Anime1Service
+from .avatar_rotation_service import AvatarRotationService
 from .bot_profile_service import BOT_PROFILE_TOOL_NAME, BotProfileService
 from .helper_utils import cfg, clean_text, core_wake_prefixes, read_bool
 from .payqr_service import PAYQR_TOOL_NAME, PayQRService
@@ -34,7 +35,7 @@ from .wallpaper_service import WallpaperService
 
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.4.7"
+PLUGIN_VERSION = "0.4.8"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -383,6 +384,7 @@ class HelperToolsPlugin(Star):
         self.voice = VoiceService(self.config, self.data_dir, self.context)
         self.steam = SteamService(self.config, self.context)
         self.bot_profile = BotProfileService(self.config, self.context, self.data_dir)
+        self.avatar_rotation = AvatarRotationService(self.config, self.data_dir, self.context)
         self.wake = WakeService(self.config, self.context)
         self.wallpaper = WallpaperService(self.config, self.data_dir, self.context)
 
@@ -390,9 +392,12 @@ class HelperToolsPlugin(Star):
 
     async def initialize(self) -> None:
         await self.anime1.start()
+        if self.enabled():
+            await self.avatar_rotation.start()
         logger.info("[%s] initialized", PLUGIN_ID)
 
     async def terminate(self) -> None:
+        await self.avatar_rotation.stop()
         await self.anime1.stop()
         await self.wake.stop()
         logger.info("[%s] terminated", PLUGIN_ID)
@@ -467,6 +472,20 @@ class HelperToolsPlugin(Star):
         assert resolved_qq_id is not None
         avatar_size = normalize_avatar_size(requested_size, self.qq.avatar_default_size())
         yield event.chain_result(self.qq.command_avatar_chain(resolved_qq_id, avatar_size))
+        event.stop_event()
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("random_avatar", alias={"随机头像", "换随机头像", "换头像"})
+    async def random_avatar_command(self, event: AstrMessageEvent):
+        if not self.enabled() or not _module_commands_enabled(self.config, "qq_avatar"):
+            yield event.plain_result("QQ 头像命令当前未启用。")
+            event.stop_event()
+            return
+        if not self.avatar_rotation.manual_command_enabled():
+            yield event.plain_result("QQ 头像随机更换手动命令当前未启用。")
+            event.stop_event()
+            return
+        yield event.plain_result(await self.avatar_rotation.change_once(event, reason="manual"))
         event.stop_event()
 
     @filter.command("qq_member", alias={"群成员信息", "qq成员"})

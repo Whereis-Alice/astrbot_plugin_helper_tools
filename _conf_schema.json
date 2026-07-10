@@ -664,6 +664,75 @@
         "default": 2097152,
         "min": 65536,
         "max": 10485760
+      },
+      "auto_change": {
+        "type": "object",
+        "description": "自动更换 bot QQ 头像",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "启用自动随机更换 bot QQ 头像",
+            "default": false,
+            "hint": "开启后会按下面的 cron 时间表，从头像池目录随机选择一张图片并调用 OneBot 的 set_qq_avatar。"
+          },
+          "image_dir": {
+            "type": "string",
+            "description": "头像池目录",
+            "default": "",
+            "hint": "留空时使用插件数据目录下的 avatar_pool。也可以填绝对路径，或相对插件数据目录的路径。"
+          },
+          "recursive": {
+            "type": "bool",
+            "description": "递归扫描子目录",
+            "default": false,
+            "hint": "开启后头像池目录下面的子文件夹也会一起参与随机抽取。"
+          },
+          "cron_expression": {
+            "type": "string",
+            "description": "更换时间表",
+            "default": "0 8 * * *",
+            "hint": "使用 5 段 cron：分 时 日 月 周。例如每天 8 点是 0 8 * * *，每 6 小时是 0 */6 * * *。"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "时间表时区",
+            "default": "Asia/Shanghai",
+            "hint": "国内通常保持 Asia/Shanghai 即可。"
+          },
+          "run_on_start": {
+            "type": "bool",
+            "description": "插件启动时立刻换一次",
+            "default": false,
+            "hint": "适合测试，日常使用建议关闭，避免每次重载插件都换头像。"
+          },
+          "avoid_repeat": {
+            "type": "bool",
+            "description": "尽量避免连续两次抽到同一张",
+            "default": true
+          },
+          "allowed_extensions": {
+            "type": "list",
+            "description": "允许参与随机的图片后缀",
+            "default": [
+              ".jpg",
+              ".jpeg",
+              ".png",
+              ".webp"
+            ]
+          },
+          "platform_id": {
+            "type": "string",
+            "description": "指定 QQ 平台 ID",
+            "default": "",
+            "hint": "留空时使用第一个 aiocqhttp/OneBot 平台。如果你接了多个 QQ 号，可以填 AstrBot 平台 ID 精确指定。"
+          },
+          "manual_command_enabled": {
+            "type": "bool",
+            "description": "启用管理员手动随机换头像命令",
+            "default": true,
+            "hint": "命令名：random_avatar、随机头像、换随机头像、换头像；实际触发仍由 AstrBot 全局唤醒词缀决定。"
+          }
+        }
       }
     }
   },
