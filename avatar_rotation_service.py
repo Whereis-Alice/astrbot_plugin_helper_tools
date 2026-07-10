@@ -22,6 +22,35 @@ CRON_JOB_NAME = "astrbot_plugin_helper_tools:qq_avatar:auto_change"
 STATE_FILENAME = "avatar_rotation_state.json"
 
 
+def normalize_cron_expression(value: Any) -> str:
+    text = " ".join(clean_text(value, DEFAULT_CRON_EXPRESSION).split())
+    parts = text.split()
+    if len(parts) == 5:
+        return text
+    if len(parts) == 4:
+        normalized = f"{text} *"
+        logger.warning(
+            "[HelperTools] avatar rotation cron has 4 fields, normalized %r to %r",
+            text,
+            normalized,
+        )
+        return normalized
+    if len(parts) == 6 and parts[0] == "0":
+        normalized = " ".join(parts[1:])
+        logger.warning(
+            "[HelperTools] avatar rotation cron has 6 fields, normalized %r to %r",
+            text,
+            normalized,
+        )
+        return normalized
+    logger.warning(
+        "[HelperTools] invalid avatar rotation cron %r, fallback to %r",
+        text,
+        DEFAULT_CRON_EXPRESSION,
+    )
+    return DEFAULT_CRON_EXPRESSION
+
+
 class AvatarRotationService:
     def __init__(self, config: Any, data_dir: Path, context: Any) -> None:
         self.config = config
@@ -54,7 +83,7 @@ class AvatarRotationService:
         return read_bool(self._config().get("avoid_repeat"), True)
 
     def cron_expression(self) -> str:
-        return clean_text(self._config().get("cron_expression"), DEFAULT_CRON_EXPRESSION)
+        return normalize_cron_expression(self._config().get("cron_expression"))
 
     def timezone(self) -> str:
         return clean_text(self._config().get("timezone"), DEFAULT_TIMEZONE)
@@ -134,11 +163,12 @@ class AvatarRotationService:
             logger.warning("[HelperTools] cron_manager unavailable; avatar rotation was not scheduled")
             return
         await self._delete_existing_jobs_by_name(cron_mgr, CRON_JOB_NAME)
+        cron_expression = self.cron_expression()
         try:
             job = await self._maybe_await(
                 cron_mgr.add_basic_job(
                     name=CRON_JOB_NAME,
-                    cron_expression=self.cron_expression(),
+                    cron_expression=cron_expression,
                     timezone=self.timezone(),
                     handler=self._run_scheduled_rotation,
                     payload={"reason": "schedule"},
@@ -149,11 +179,12 @@ class AvatarRotationService:
             )
         except Exception as exc:
             logger.error("[HelperTools] register avatar rotation cron job failed: %r", exc, exc_info=True)
+            await self._delete_existing_jobs_by_name(cron_mgr, CRON_JOB_NAME)
             return
         self._cron_job_id = clean_text(self._job_value(job, "job_id", "id"))
         logger.info(
             "[HelperTools] avatar rotation scheduled cron=%s timezone=%s job=%s",
-            self.cron_expression(),
+            cron_expression,
             self.timezone(),
             self._cron_job_id,
         )

@@ -35,7 +35,7 @@ from .wallpaper_service import WallpaperService
 
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.4.8"
+PLUGIN_VERSION = "0.4.9"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
