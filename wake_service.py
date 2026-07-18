@@ -53,6 +53,7 @@ DEFAULT_BUILTIN_COMMANDS = [
 ]
 
 DEFAULT_BLOCK_WORDS_PATH = Path(__file__).with_name("default_wake_block_words.json")
+LLM_REQUEST_BLOCK_EXTRA_KEY = "helper_tools_wake_block_llm_request"
 
 
 @dataclass(slots=True)
@@ -340,6 +341,12 @@ class WakeService:
         if blacklist_result:
             return blacklist_result
 
+        # Evaluate prefix command/LLM blocking before debounce. Otherwise a message
+        # sent during the debounce window can be merged into an LLM request first.
+        command_reason = self._apply_command_block(event)
+        if command_reason:
+            return command_reason
+
         debounce = await self._try_debounce_follow_up(event)
         if debounce.merged:
             await self._activate_debounce_window(event, debounce.merged_count)
@@ -358,10 +365,6 @@ class WakeService:
             event.is_at_or_wake_command = True
             if match.matched and self.strip_prefix_suffix_word():
                 self._strip_matched_word(event, match)
-
-        command_reason = self._apply_command_block(event)
-        if command_reason:
-            return command_reason
 
         if self.disable_reply_wake() and self.has_reply_to_bot(event) and not has_at and not match.matched:
             event.is_at_or_wake_command = False
@@ -463,6 +466,7 @@ class WakeService:
             # Keep the event flowing so dynamically matched commands (wallpaper,
             # Steam, voice, etc.) can still run, while blocking AstrBot's default LLM.
             self._suppress_default_llm(event)
+            self._mark_llm_request_blocked(event)
             return "prefix_llm"
         return ""
 
@@ -759,6 +763,24 @@ class WakeService:
             setter(True)
         else:
             event.call_llm = True
+
+    @staticmethod
+    def _mark_llm_request_blocked(event: Any) -> None:
+        setter = getattr(event, "set_extra", None)
+        if callable(setter):
+            setter(LLM_REQUEST_BLOCK_EXTRA_KEY, True)
+        else:
+            setattr(event, LLM_REQUEST_BLOCK_EXTRA_KEY, True)
+
+    @staticmethod
+    def is_llm_request_blocked(event: Any) -> bool:
+        getter = getattr(event, "get_extra", None)
+        if callable(getter):
+            try:
+                return bool(getter(LLM_REQUEST_BLOCK_EXTRA_KEY, False))
+            except TypeError:
+                pass
+        return bool(getattr(event, LLM_REQUEST_BLOCK_EXTRA_KEY, False))
 
     def _pending_key(self, event: Any) -> str:
         return f"{clean_text(getattr(event, 'unified_msg_origin', ''))}:{_event_sender_id(event)}"

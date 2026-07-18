@@ -35,7 +35,7 @@ from .wallpaper_service import WallpaperService
 
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.4.10"
+PLUGIN_VERSION = "0.4.11"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -440,7 +440,25 @@ class HelperToolsPlugin(Star):
     async def wake_enhance_handler(self, event: AstrMessageEvent):
         if not self.enabled():
             return
-        await self.wake.apply(event)
+        result = await self.wake.apply(event)
+        if result == "prefix_llm":
+            logger.info(
+                "[%s] blocked wake-prefixed ordinary message from default LLM (session=%s)",
+                PLUGIN_ID,
+                clean_text(getattr(event, "unified_msg_origin", "")),
+            )
+
+    @filter.on_llm_request(priority=99998)
+    async def wake_llm_request_guard(self, event: AstrMessageEvent, _request: Any):
+        """Last-resort guard for a wake-prefixed ordinary message."""
+        if not self.enabled() or not self.wake.is_llm_request_blocked(event):
+            return
+        logger.warning(
+            "[%s] blocked a late LLM request for wake-prefixed ordinary message (session=%s)",
+            PLUGIN_ID,
+            clean_text(getattr(event, "unified_msg_origin", "")),
+        )
+        event.stop_event()
 
     @filter.on_decorating_result(priority=20)
     async def wake_after_result(self, event: AstrMessageEvent):
