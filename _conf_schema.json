@@ -377,15 +377,21 @@
       },
       "block_prefix_commands": {
         "type": "bool",
-        "description": "屏蔽唤醒词缀命令消息",
+        "description": "屏蔽所有唤醒词缀指令",
         "default": false,
-        "hint": "开启后，像「当前 AstrBot 唤醒词缀 + qq_avatar」这类命中指令的消息，会被本模块直接拦截：不执行后续指令，也不交给 LLM。唤醒词缀不固定是 /。"
+        "hint": "开启后，像「当前 AstrBot 唤醒词缀 + qq_avatar」这类命中指令会被直接拦截：本插件和其它已注册插件的指令都会失效，也不会交给 LLM。一般保持关闭。唤醒词缀不固定是 /。"
       },
       "block_prefix_llm": {
         "type": "bool",
         "description": "屏蔽唤醒词缀普通消息",
         "default": false,
         "hint": "开启后，像「当前 AstrBot 唤醒词缀 + 帮我写个文案」这种没有命中任何指令的普通消息，不会交给 LLM；真正的指令不受这个开关影响。"
+      },
+      "suppress_llm_after_command": {
+        "type": "bool",
+        "description": "命令执行后不再调用 LLM",
+        "default": true,
+        "hint": "开启后，已识别的 AstrBot 指令（包括别名）只由指令处理，不会在指令结束后再额外让 LLM 回复。"
       },
       "debounce_enabled": {
         "type": "bool",

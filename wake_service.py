@@ -64,6 +64,13 @@ class WakeMatch:
 
 
 @dataclass(slots=True)
+class WakePrefixMatch:
+    matched: bool = False
+    prefix: str = ""
+    text: str = ""
+
+
+@dataclass(slots=True)
 class PendingWakeRequest:
     event: Any
     chain: list[Any]
@@ -271,6 +278,9 @@ class WakeService:
     def block_prefix_llm(self) -> bool:
         return read_bool(cfg(self.config, "wake", "block_prefix_llm", False), False)
 
+    def suppress_llm_after_command(self) -> bool:
+        return read_bool(cfg(self.config, "wake", "suppress_llm_after_command", True), True)
+
     def debounce_enabled(self) -> bool:
         return read_bool(cfg(self.config, "wake", "debounce_enabled", True), True)
 
@@ -438,12 +448,21 @@ class WakeService:
             self._stop_event(event)
             return "builtin_command"
 
-        prefix_triggered = self._is_prefix_triggered(event)
-        if prefix_triggered and command and self.block_prefix_commands():
+        is_command = bool(command or builtin_command)
+        prefix_match = self._find_wake_prefix(event)
+        if prefix_match.matched and is_command and self.block_prefix_commands():
             self._stop_event(event)
             return "prefix_command"
-        if prefix_triggered and not command and self.block_prefix_llm():
-            self._stop_event(event)
+
+        # Command handlers should own their reply. Prevent the default LLM fallback
+        # even when a third-party command handler does not call stop_event itself.
+        if is_command and self.suppress_llm_after_command():
+            self._suppress_default_llm(event)
+
+        if prefix_match.matched and not is_command and self.block_prefix_llm():
+            # Keep the event flowing so dynamically matched commands (wallpaper,
+            # Steam, voice, etc.) can still run, while blocking AstrBot's default LLM.
+            self._suppress_default_llm(event)
             return "prefix_llm"
         return ""
 
@@ -544,15 +563,26 @@ class WakeService:
         for handler in star_handlers_registry:
             for flt in getattr(handler, "event_filters", []):
                 if isinstance(flt, CommandFilter):
-                    commands.add(clean_text(getattr(flt, "command_name", "")))
+                    commands.update(self._command_filter_names(flt))
                     break
                 if isinstance(flt, CommandGroupFilter):
-                    commands.add(clean_text(getattr(flt, "group_name", "")))
+                    commands.update(self._command_filter_names(flt, name_attr="group_name"))
                     break
         commands.update(self.builtin_commands())
         commands.discard("")
         self._commands_cache = commands
         return commands
+
+    @staticmethod
+    def _command_filter_names(flt: Any, *, name_attr: str = "command_name") -> set[str]:
+        names = {clean_text(getattr(flt, name_attr, ""))}
+        aliases = getattr(flt, "alias", ())
+        if isinstance(aliases, str):
+            aliases = (aliases,)
+        if isinstance(aliases, (list, tuple, set)):
+            names.update(clean_text(alias) for alias in aliases)
+        names.discard("")
+        return names
 
     def _detect_command(self, event: Any) -> str:
         registered_commands = self._registered_commands()
@@ -571,13 +601,19 @@ class WakeService:
         return ""
 
     def _command_message_candidates(self, event: Any) -> list[str]:
-        message = clean_text(getattr(event, "message_str", ""))
-        if not message:
-            return []
-        candidates = [message]
-        stripped = self._strip_wake_prefix(message)
-        if stripped and stripped != message:
-            candidates.append(stripped)
+        candidates: list[str] = []
+
+        def add(value: Any) -> None:
+            value = clean_text(value)
+            if value and value not in candidates:
+                candidates.append(value)
+
+        add(getattr(event, "message_str", ""))
+        for message in self._message_text_candidates(event):
+            add(message)
+            stripped = self._strip_wake_prefix(message)
+            if stripped != message:
+                add(stripped)
         return candidates
 
     def _strip_wake_prefix(self, message: str) -> str:
@@ -587,13 +623,37 @@ class WakeService:
                 return message[len(prefix) :].lstrip()
         return message
 
-    def _is_prefix_triggered(self, event: Any) -> bool:
-        first_plain = ""
-        messages = _event_messages(event)
-        if messages and isinstance(messages[0], Comp.Plain):
-            first_plain = clean_text(getattr(messages[0], "text", ""))
-        text = first_plain or clean_text(getattr(event, "message_str", ""))
-        return bool(text) and any(prefix and text.startswith(prefix) for prefix in self.wake_prefixes())
+    def _find_wake_prefix(self, event: Any) -> WakePrefixMatch:
+        prefixes = sorted(
+            (clean_text(prefix) for prefix in self.wake_prefixes()),
+            key=len,
+            reverse=True,
+        )
+        for text in self._message_text_candidates(event):
+            for prefix in prefixes:
+                if prefix and text.startswith(prefix):
+                    return WakePrefixMatch(True, prefix, text)
+        return WakePrefixMatch()
+
+    @staticmethod
+    def _message_text_candidates(event: Any) -> list[str]:
+        candidates: list[str] = []
+
+        def add(value: Any) -> None:
+            value = clean_text(value)
+            if value and value not in candidates:
+                candidates.append(value)
+
+        message_obj = getattr(event, "message_obj", None)
+        add(getattr(message_obj, "message_str", ""))
+        plain_parts = [
+            clean_text(getattr(segment, "text", ""))
+            for segment in _event_messages(event)
+            if isinstance(segment, Comp.Plain)
+        ]
+        add(" ".join(part for part in plain_parts if part))
+        add(getattr(event, "message_str", ""))
+        return candidates
 
     def _detect_message_type(self, event: Any) -> str:
         if self._detect_command(event):
@@ -691,6 +751,14 @@ class WakeService:
         stopper = getattr(event, "stop_event", None)
         if callable(stopper):
             stopper()
+
+    @staticmethod
+    def _suppress_default_llm(event: Any) -> None:
+        setter = getattr(event, "should_call_llm", None)
+        if callable(setter):
+            setter(True)
+        else:
+            event.call_llm = True
 
     def _pending_key(self, event: Any) -> str:
         return f"{clean_text(getattr(event, 'unified_msg_origin', ''))}:{_event_sender_id(event)}"
