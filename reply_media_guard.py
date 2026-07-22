@@ -8,7 +8,10 @@ import astrbot.api.message_components as Comp
 from .helper_utils import cfg, clean_text, read_bool
 
 
-BOT_REPLY_IMAGE_MARKER = "[图片来源说明：这是你先前发出的图，不是当前用户上传的图片。]"
+BOT_REPLY_IMAGE_MARKER = (
+    "[图片来源说明：这是你先前发出，或者自带插件自动发出的图，"
+    "不是当前用户上传的图片。]"
+)
 
 
 @dataclass(frozen=True, slots=True)
