@@ -1,7 +1,7 @@
 name: astrbot_plugin_helper_tools
 display_name: 辅助工具合集
 desc: 为 AstrBot 注册一组可由 LLM 主动调用的 QQ、Anime1、收款码、随机语音、Steam、唤醒增强、壁纸图库等辅助工具。
-version: v0.4.11
+version: v0.4.12
 author: Huli3
 repo: https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 astrbot_version: ">=4.16,<5"

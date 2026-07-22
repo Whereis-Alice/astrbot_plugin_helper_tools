@@ -10,6 +10,18 @@
       }
     }
   },
+  "reply_media_guard": {
+    "type": "object",
+    "description": "引用机器人图片保护",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "不把引用的机器人图片当作用户图片传给 LLM",
+        "default": true,
+        "hint": "用户引用 bot 自己或其它插件发出的图片时，保留引用文字，但图片不会作为本次用户上传的图片传给模型。"
+      }
+    }
+  },
   "wake": {
     "type": "object",
     "description": "唤醒增强",
