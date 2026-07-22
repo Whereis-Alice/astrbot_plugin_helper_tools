@@ -28,7 +28,7 @@ class DummyEvent:
 
 
 class ReplyMediaGuardTests(unittest.TestCase):
-    def test_removes_only_images_from_a_bot_authored_quote(self) -> None:
+    def test_marks_a_bot_authored_quote_without_removing_images(self) -> None:
         direct_image = Comp.Image.fromURL("https://example.com/user.png")
         bot_reply = Comp.Reply(
             id="123",
@@ -45,14 +45,14 @@ class ReplyMediaGuardTests(unittest.TestCase):
         )
         event = DummyEvent([direct_image, bot_reply, user_reply])
 
-        result = ReplyMediaGuard({"reply_media_guard": {"enabled": True}}).protect_bot_reply_images(event)
+        result = ReplyMediaGuard({"reply_media_guard": {"enabled": True}}).mark_bot_reply_images(event)
 
-        self.assertEqual(result.protected_reply_count, 1)
-        self.assertEqual(result.removed_image_count, 1)
+        self.assertEqual(result.marked_reply_count, 1)
+        self.assertEqual(result.marked_image_count, 1)
         self.assertIs(event.get_messages()[0], direct_image)
-        self.assertEqual(bot_reply.id, "")
+        self.assertEqual(bot_reply.id, "123")
         self.assertTrue(any(isinstance(item, Comp.Plain) and item.text == BOT_REPLY_IMAGE_MARKER for item in bot_reply.chain or []))
-        self.assertFalse(any(isinstance(item, Comp.Image) for item in bot_reply.chain or []))
+        self.assertTrue(any(isinstance(item, Comp.Image) for item in bot_reply.chain or []))
         self.assertEqual(user_reply.id, "456")
         self.assertTrue(any(isinstance(item, Comp.Image) for item in user_reply.chain or []))
 
@@ -64,8 +64,8 @@ class ReplyMediaGuardTests(unittest.TestCase):
         )
         event = DummyEvent([bot_reply])
 
-        result = ReplyMediaGuard({"reply_media_guard": {"enabled": False}}).protect_bot_reply_images(event)
+        result = ReplyMediaGuard({"reply_media_guard": {"enabled": False}}).mark_bot_reply_images(event)
 
-        self.assertEqual(result.protected_reply_count, 0)
+        self.assertEqual(result.marked_reply_count, 0)
         self.assertEqual(bot_reply.id, "123")
         self.assertTrue(any(isinstance(item, Comp.Image) for item in bot_reply.chain or []))

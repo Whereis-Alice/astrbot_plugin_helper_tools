@@ -36,7 +36,7 @@ from .wallpaper_service import WallpaperService
 
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.4.12"
+PLUGIN_VERSION = "0.4.13"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -470,16 +470,16 @@ class HelperToolsPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=-99998)
     async def reply_bot_image_guard_handler(self, event: AstrMessageEvent):
-        """Keep quoted bot images out of the user image attachments sent to LLMs."""
+        """Label quoted bot images so LLMs keep their real source context."""
         if not self.enabled():
             return
-        result = self.reply_media_guard.protect_bot_reply_images(event)
-        if result.removed_image_count:
+        result = self.reply_media_guard.mark_bot_reply_images(event)
+        if result.marked_image_count:
             logger.info(
-                "[%s] protected %d bot-authored quote(s), removed %d quoted image(s)",
+                "[%s] labeled %d bot-authored quote(s) containing %d image(s)",
                 PLUGIN_ID,
-                result.protected_reply_count,
-                result.removed_image_count,
+                result.marked_reply_count,
+                result.marked_image_count,
             )
 
     @filter.command("qq_avatar", alias={"qq头像", "头像"})

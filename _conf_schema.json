@@ -12,13 +12,13 @@
   },
   "reply_media_guard": {
     "type": "object",
-    "description": "引用机器人图片保护",
+    "description": "引用自身图片来源标记",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "不把引用的机器人图片当作用户图片传给 LLM",
+        "description": "标记引用图片为你先前发出",
         "default": true,
-        "hint": "用户引用 bot 自己或其它插件发出的图片时，保留引用文字，但图片不会作为本次用户上传的图片传给模型。"
+        "hint": "用户引用你先前发出的图片时，图片仍会正常传给模型识图，同时模型会知道这不是当前用户上传的图片。"
       }
     }
   },
