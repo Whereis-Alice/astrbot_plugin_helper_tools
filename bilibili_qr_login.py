@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gzip
 import json
 import os
 import re
 import time
 import urllib.parse
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -488,6 +490,8 @@ class BilibiliQrLoginService:
             "User-Agent": _USER_AGENT,
             "Referer": "https://www.bilibili.com/",
             "Accept": "application/json, text/plain, */*",
+            # Some AstrBot environments advertise Brotli without a decoder.
+            "Accept-Encoding": "gzip, deflate",
         }
 
     @staticmethod
@@ -503,9 +507,31 @@ class BilibiliQrLoginService:
                 f"B 站二维码接口返回 HTTP {response.status}，请稍后重试。"
             )
         try:
-            payload = json.loads(body.decode("utf-8-sig"))
+            payload = BilibiliQrLoginService._load_json_body(body)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            kind = BilibiliQrLoginService._invalid_response_kind(response, body)
+            parse_error = exc
+            decompressed_body, decode_issue = (
+                BilibiliQrLoginService._try_decompress_response_body(
+                    body,
+                    response.headers.get("Content-Encoding"),
+                )
+            )
+            if decompressed_body is not None:
+                try:
+                    payload = BilibiliQrLoginService._load_json_body(decompressed_body)
+                except (UnicodeDecodeError, json.JSONDecodeError) as decompressed_exc:
+                    parse_error = decompressed_exc
+                else:
+                    if not isinstance(payload, dict):
+                        raise BilibiliQrLoginApiResponseError(
+                            "B 站二维码接口返回格式不正确。"
+                        )
+                    return payload
+            kind = BilibiliQrLoginService._invalid_response_kind(
+                response,
+                body,
+                decode_issue,
+            )
             BilibiliQrLoginService._log_invalid_api_response(response, body, kind)
             if kind == "html":
                 message = (
@@ -514,15 +540,66 @@ class BilibiliQrLoginService:
                 )
             elif kind == "empty":
                 message = "B 站二维码接口返回空内容，通常是网络连接或中转服务异常。"
+            elif kind == "brotli_unavailable":
+                message = (
+                    "B 站返回了 Brotli（br）压缩的 JSON，但当前环境缺少 Brotli "
+                    "解压支持，请重新更新或重载插件依赖。"
+                )
+            elif kind == "compressed_response":
+                message = "B 站返回了无法解压的压缩数据，通常是网络代理或中转服务异常。"
             else:
                 message = "B 站二维码接口返回了非 JSON 数据，通常是网络代理或风控拦截。"
-            raise BilibiliQrLoginApiResponseError(message) from exc
+            raise BilibiliQrLoginApiResponseError(message) from parse_error
         if not isinstance(payload, dict):
             raise BilibiliQrLoginApiResponseError("B 站二维码接口返回格式不正确。")
         return payload
 
     @staticmethod
-    def _invalid_response_kind(response: aiohttp.ClientResponse, body: bytes) -> str:
+    def _load_json_body(body: bytes) -> Any:
+        return json.loads(body.decode("utf-8-sig"))
+
+    @staticmethod
+    def _try_decompress_response_body(
+        body: bytes,
+        raw_content_encoding: str | None,
+    ) -> tuple[bytes | None, str]:
+        content_encoding = clean_text(raw_content_encoding).lower()
+        encoding = content_encoding.split(",", 1)[0].split(";", 1)[0].strip()
+        if not encoding or encoding == "identity":
+            return None, ""
+        try:
+            if encoding == "gzip":
+                decoded = gzip.decompress(body)
+            elif encoding == "deflate":
+                try:
+                    decoded = zlib.decompress(body)
+                except zlib.error:
+                    decoded = zlib.decompress(body, -zlib.MAX_WBITS)
+            elif encoding == "br":
+                try:
+                    import brotli
+                except ImportError:
+                    return None, "brotli_unavailable"
+                try:
+                    decoded = brotli.decompress(body)
+                except brotli.error:
+                    return None, "compressed_response"
+            else:
+                return None, "compressed_response"
+        except (EOFError, OSError, zlib.error):
+            return None, "compressed_response"
+        if len(decoded) > MAX_RESPONSE_BYTES:
+            return None, "compressed_response"
+        return decoded, ""
+
+    @staticmethod
+    def _invalid_response_kind(
+        response: aiohttp.ClientResponse,
+        body: bytes,
+        decode_issue: str = "",
+    ) -> str:
+        if decode_issue in {"brotli_unavailable", "compressed_response"}:
+            return decode_issue
         content_type = clean_text(response.headers.get("Content-Type")).lower()
         stripped = body.lstrip(b"\xef\xbb\xbf \t\r\n")
         if not stripped:

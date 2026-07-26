@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import brotli
 from aiohttp import web
 
 from astrbot_plugin_helper_tools.bilibili_qr_login import (
@@ -56,6 +58,32 @@ class BilibiliQrLoginTests(unittest.IsolatedAsyncioTestCase):
         site = web.TCPSite(runner, "127.0.0.1", 0)
         await site.start()
         return runner, site._server.sockets[0].getsockname()[1]
+
+    async def test_decodes_brotli_json_when_transport_does_not(self) -> None:
+        payload = {"code": 0, "data": {"code": 86101, "message": "not scanned"}}
+        body = brotli.compress(json.dumps(payload).encode("utf-8"))
+
+        class ResponseContent:
+            async def read(self, _limit: int) -> bytes:
+                return body
+
+        class Response:
+            status = 200
+
+            def __init__(self) -> None:
+                self.headers = {
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Content-Encoding": "br",
+                }
+                self.content = ResponseContent()
+
+        parsed = await BilibiliQrLoginService._read_json_response(Response())
+
+        self.assertEqual(parsed, payload)
+        self.assertEqual(
+            BilibiliQrLoginService._request_headers()["Accept-Encoding"],
+            "gzip, deflate",
+        )
 
     async def test_qr_login_saves_cookies_without_sending_existing_cookie(self) -> None:
         requests: list[tuple[str, str]] = []

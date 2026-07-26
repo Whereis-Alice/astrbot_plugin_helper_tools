@@ -133,7 +133,7 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 | `/helper_bili_login_cancel` | 取消正在等待确认的二维码，不删除已有凭据 |
 | `/helper_bili_logout` | 删除本插件扫码保存的凭据，不修改配置页的 Cookie 文本或 cookies.txt |
 
-`qr_login.direct_retry_on_invalid_response` 默认开启。二维码请求会先遵循服务器的 `HTTP_PROXY` / `HTTPS_PROXY` 设置；如果代理或网络中转返回网页、空内容或其它非 JSON 数据，插件会自动再试一次不使用系统代理的直连。两次都失败时，日志会明确说明是网页拦截、空内容还是 HTTP 拒绝，不会输出二维码内容或 Cookie。
+二维码请求会明确只请求 `gzip` / `deflate` 压缩，避免部分环境收到无法自动解压的 Brotli（`br`）数据；即使中转仍返回 `br`，插件也会使用 `Brotli` 依赖兜底解压。`qr_login.direct_retry_on_invalid_response` 默认开启：如果代理或网络中转返回网页、空内容或其它非 JSON 数据，插件会自动再试一次不使用系统代理的直连。两次都失败时，日志会明确说明是网页拦截、压缩异常、空内容还是 HTTP 拒绝，不会输出二维码内容或 Cookie。
 
 #### 与 `astrbot_plugin_bilibili` 同时使用
 
