@@ -28,7 +28,7 @@ _BCUT_HEADERS = {
     "User-Agent": "Bilibili/1.0.0 (https://www.bilibili.com)",
     "Content-Type": "application/json",
 }
-_SUBTITLE_HOST_SUFFIXES = ("bilibili.com", "hdslb.com")
+_SUBTITLE_HOST_SUFFIXES = ("bilibili.com", "hdslb.com", "bilivideo.com")
 _BCUT_UPLOAD_HOST_SUFFIXES = ("biliapi.net", "bilivideo.com", "hdslb.com")
 
 
@@ -135,16 +135,40 @@ class BilibiliTranscriptService:
         )
         if not candidates:
             return None
-        candidate = self._choose_subtitle(candidates)
-        subtitle_url = clean_text(candidate.get("subtitle_url"))
-        if subtitle_url.startswith("//"):
-            subtitle_url = f"https:{subtitle_url}"
-        if not _is_allowed_subtitle_url(subtitle_url):
-            raise BilibiliError("subtitle API returned a non-Bilibili URL")
+        candidate: dict[str, Any] | None = None
+        subtitle_url = ""
+        rejected_origins: list[str] = []
+        for possible_candidate in self._ordered_subtitles(candidates):
+            raw_url = clean_text(possible_candidate.get("subtitle_url"))
+            if not raw_url:
+                continue
+            try:
+                subtitle_url = _secure_subtitle_url(raw_url)
+            except BilibiliError:
+                rejected_origins.append(_subtitle_url_origin(raw_url))
+                continue
+            candidate = possible_candidate
+            break
+        if candidate is None:
+            if rejected_origins:
+                origins = ", ".join(sorted(set(rejected_origins))[:3])
+                raise BilibiliError(
+                    "subtitle API returned no trusted Bilibili CDN URL "
+                    f"({origins})"
+                )
+            return None
+
+        # Subtitle links are signed CDN URLs. Login cookies are only needed for
+        # the player API and must not be forwarded to the CDN request.
+        subtitle_headers = {
+            name: value
+            for name, value in request_headers.items()
+            if name.casefold() != "cookie"
+        }
 
         async with session.get(
             subtitle_url,
-            headers=request_headers,
+            headers=subtitle_headers,
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as response:
             subtitle_payload = await _bounded_json(response, max_bytes=8 * 1024 * 1024)
@@ -172,7 +196,7 @@ class BilibiliTranscriptService:
         source = f"B 站{'AI ' if ai_type else '官方'}字幕（{language or '未知语言'}）"
         return TranscriptResult(source, language, tuple(segments))
 
-    def _choose_subtitle(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    def _ordered_subtitles(self, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         preferred = read_list(
             self._setting(
                 "subtitle_languages",
@@ -197,7 +221,7 @@ class BilibiliTranscriptService:
                 )
             return rank, _safe_int(candidate.get("ai_type"))
 
-        return min(candidates, key=score)
+        return sorted(candidates, key=score)
 
     async def _transcribe_with_bcut(
         self,
@@ -410,16 +434,39 @@ async def _bounded_json(
     return payload
 
 
-def _is_allowed_subtitle_url(url: str) -> bool:
+def _secure_subtitle_url(url: str) -> str:
+    url = clean_text(url)
+    if url.startswith("//"):
+        url = f"https:{url}"
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError as exc:
+        raise BilibiliError("subtitle API returned an invalid URL") from exc
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme not in {"http", "https"} or not any(
+        host == suffix or host.endswith(f".{suffix}")
+        for suffix in _SUBTITLE_HOST_SUFFIXES
+    ):
+        raise BilibiliError(
+            "subtitle API returned URL outside the Bilibili CDN allowlist "
+            f"(scheme={parsed.scheme or 'none'}, host={host or 'none'})"
+        )
+    if parsed.scheme == "http":
+        parsed = parsed._replace(scheme="https")
+    return parsed.geturl()
+
+
+def _subtitle_url_origin(url: str) -> str:
+    url = clean_text(url)
+    if url.startswith("//"):
+        url = f"https:{url}"
     try:
         parsed = urllib.parse.urlparse(url)
     except ValueError:
-        return False
-    host = (parsed.hostname or "").lower().rstrip(".")
-    return parsed.scheme == "https" and any(
-        host == suffix or host.endswith(f".{suffix}")
-        for suffix in _SUBTITLE_HOST_SUFFIXES
-    )
+        return "invalid"
+    scheme = parsed.scheme or "none"
+    host = (parsed.hostname or "").lower().rstrip(".") or "none"
+    return f"{scheme}://{host}"
 
 
 def _secure_bcut_upload_url(url: str) -> str:

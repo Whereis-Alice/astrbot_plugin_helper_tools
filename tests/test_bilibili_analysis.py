@@ -9,8 +9,10 @@ from astrbot_plugin_helper_tools.bilibili_gemini import (
     _extract_gemini_text,
 )
 from astrbot_plugin_helper_tools.bilibili_transcript import (
+    BilibiliTranscriptService,
     _sample_timeline,
     _secure_bcut_upload_url,
+    _secure_subtitle_url,
 )
 from astrbot_plugin_helper_tools.bilibili_types import (
     BilibiliError,
@@ -42,6 +44,122 @@ class TranscriptSamplingTests(unittest.TestCase):
         self.assertTrue(secured.startswith("https://jssz-boss.biliapi.net/"))
         with self.assertRaises(BilibiliError):
             _secure_bcut_upload_url("http://127.0.0.1/private")
+
+    def test_subtitle_url_accepts_known_bilibili_cdns_and_upgrades_https(self) -> None:
+        secured = _secure_subtitle_url(
+            "http://aisubtitle.bilivideo.com/bfs/ai_subtitle/test.json"
+        )
+
+        self.assertEqual(
+            secured,
+            "https://aisubtitle.bilivideo.com/bfs/ai_subtitle/test.json",
+        )
+        self.assertEqual(
+            _secure_subtitle_url("//aisubtitle.hdslb.com/bfs/test.json"),
+            "https://aisubtitle.hdslb.com/bfs/test.json",
+        )
+        with self.assertRaises(BilibiliError):
+            _secure_subtitle_url("https://hdslb.com.example.invalid/test.json")
+
+
+class OfficialSubtitleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_uses_next_trusted_subtitle_and_omits_cookie_for_cdn(self) -> None:
+        class Content:
+            def __init__(self, body: bytes) -> None:
+                self.body = body
+
+            async def iter_chunked(self, _size: int):
+                yield self.body
+
+        class Response:
+            def __init__(self, payload: dict) -> None:
+                import json
+
+                self.status = 200
+                self.headers: dict[str, str] = {}
+                self.content = Content(json.dumps(payload).encode("utf-8"))
+
+        class RequestContext:
+            def __init__(self, response: Response) -> None:
+                self.response = response
+
+            async def __aenter__(self) -> Response:
+                return self.response
+
+            async def __aexit__(self, _exc_type, _exc, _traceback) -> bool:
+                return False
+
+        class Session:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict]] = []
+
+            def get(self, url: str, **kwargs):
+                self.calls.append((url, kwargs))
+                if "x/player/v2" in url:
+                    return RequestContext(
+                        Response(
+                            {
+                                "code": 0,
+                                "data": {
+                                    "subtitle": {
+                                        "subtitles": [
+                                            {
+                                                "lan": "zh-CN",
+                                                "subtitle_url": "https://example.invalid/bad.json",
+                                            },
+                                            {
+                                                "lan": "en",
+                                                "subtitle_url": (
+                                                    "http://aisubtitle.bilivideo.com/"
+                                                    "bfs/good.json"
+                                                ),
+                                            },
+                                        ]
+                                    }
+                                },
+                            }
+                        )
+                    )
+                return RequestContext(
+                    Response(
+                        {
+                            "body": [
+                                {"from": 0, "to": 1, "content": "hello"}
+                            ]
+                        }
+                    )
+                )
+
+        info = VideoInfo(
+            aid=1,
+            bvid="BV1GJ411x7h7",
+            cid=2,
+            page=1,
+            page_count=1,
+            part_title="test",
+            title="test",
+            description="",
+            owner_name="",
+            owner_mid="",
+            duration=1,
+            pubdate=0,
+            cover_url="",
+            category="",
+        )
+        session = Session()
+        transcript = await BilibiliTranscriptService({}, object())._fetch_official_subtitle(
+            info,
+            session,
+            {"User-Agent": "test", "Cookie": "SESSDATA=secret"},
+        )
+
+        self.assertIsNotNone(transcript)
+        self.assertEqual(transcript.segments[0].text, "hello")
+        self.assertEqual(
+            session.calls[1][0],
+            "https://aisubtitle.bilivideo.com/bfs/good.json",
+        )
+        self.assertNotIn("Cookie", session.calls[1][1]["headers"])
 
 
 class GeminiResponseTests(unittest.TestCase):
