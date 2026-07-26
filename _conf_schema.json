@@ -70,13 +70,13 @@
             "type": "bool",
             "description": "启用 B站扫码登录",
             "default": true,
-            "hint": "管理员使用 /bili_login 获取二维码；扫码成功后的凭据会自动保存到插件数据目录。"
+            "hint": "管理员使用 /helper_bili_login 获取二维码；扫码成功后的凭据会自动保存到插件数据目录。"
           },
           "commands_enabled": {
             "type": "bool",
             "description": "启用扫码登录相关命令",
             "default": true,
-            "hint": "控制 /bili_login、/bili_login_status、/bili_login_cancel 和 /bili_logout。"
+            "hint": "控制 /helper_bili_login、/helper_bili_login_status、/helper_bili_login_cancel 和 /helper_bili_logout。这样可与 astrbot_plugin_bilibili 共存。"
           },
           "private_chat_only": {
             "type": "bool",

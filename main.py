@@ -691,7 +691,10 @@ class HelperToolsPlugin(Star):
             event.should_call_llm(True)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("bili_login", alias={"B站登录", "B站扫码登录", "哔哩登录"})
+    @filter.command(
+        "helper_bili_login",
+        alias={"助手B站登录", "助手B站扫码登录", "助手哔哩登录"},
+    )
     async def bilibili_login_command(self, event: AstrMessageEvent):
         """Send an administrator a Bilibili QR code and persist the resulting cookies."""
 
@@ -746,7 +749,10 @@ class HelperToolsPlugin(Star):
         yield event.plain_result(f"{outcome.message}\n{verification.message}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("bili_login_status", alias={"B站登录状态", "哔哩登录状态"})
+    @filter.command(
+        "helper_bili_login_status",
+        alias={"助手B站登录状态", "助手哔哩登录状态"},
+    )
     async def bilibili_login_status_command(self, event: AstrMessageEvent):
         """Check the active Bilibili credentials without exposing their contents."""
 
@@ -758,7 +764,10 @@ class HelperToolsPlugin(Star):
         yield event.plain_result(verification.message)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("bili_login_cancel", alias={"取消B站登录", "取消哔哩登录"})
+    @filter.command(
+        "helper_bili_login_cancel",
+        alias={"助手取消B站登录", "助手取消哔哩登录"},
+    )
     async def bilibili_login_cancel_command(self, event: AstrMessageEvent):
         """Cancel the active QR-login poll without deleting existing credentials."""
 
@@ -772,7 +781,10 @@ class HelperToolsPlugin(Star):
         yield event.plain_result("当前没有正在等待确认的 B 站登录二维码。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("bili_logout", alias={"B站退出", "B站登出", "哔哩退出"})
+    @filter.command(
+        "helper_bili_logout",
+        alias={"助手B站退出", "助手B站登出", "助手哔哩退出"},
+    )
     async def bilibili_logout_command(self, event: AstrMessageEvent):
         """Remove only the credentials obtained through this plugin's QR login."""
 

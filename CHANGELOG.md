@@ -2,6 +2,13 @@
 
 本项目按语义化版本记录用户可见变更。
 
+## [v0.5.4] - 2026-07-26
+
+### 修复
+
+- B 站扫码登录命令改为独立的 `helper_bili_*` 命名空间：`/helper_bili_login`、`/helper_bili_login_status`、`/helper_bili_login_cancel` 和 `/helper_bili_logout`。
+- 不再注册通用的 `/bili_login`、`/bili_logout` 及未加“助手”前缀的中文别名，避免与 `Soulter/astrbot_plugin_bilibili` 同时安装时抢占同一条指令。
+
 ## [v0.5.3] - 2026-07-26
 
 ### 新增

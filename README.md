@@ -119,7 +119,7 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 默认开启 `bilibili_video.qr_login` 后，管理员可在**私聊**中发送：
 
 ```text
-/bili_login
+/helper_bili_login
 ```
 
 插件会发送 B 站登录二维码，使用哔哩哔哩 App 扫码并在手机确认后，会自动取得登录凭据、写入插件数据目录，并立即向 B 站检查是否已登录。整个过程不会在聊天或日志里输出 Cookie。
@@ -128,10 +128,21 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 
 | 命令 | 作用 |
 | --- | --- |
-| `/bili_login` | 获取或继续等待当前登录二维码 |
-| `/bili_login_status` | 不暴露 Cookie 内容地检查当前登录状态 |
-| `/bili_login_cancel` | 取消正在等待确认的二维码，不删除已有凭据 |
-| `/bili_logout` | 删除本插件扫码保存的凭据，不修改配置页的 Cookie 文本或 cookies.txt |
+| `/helper_bili_login` | 获取或继续等待当前登录二维码 |
+| `/helper_bili_login_status` | 不暴露 Cookie 内容地检查当前登录状态 |
+| `/helper_bili_login_cancel` | 取消正在等待确认的二维码，不删除已有凭据 |
+| `/helper_bili_logout` | 删除本插件扫码保存的凭据，不修改配置页的 Cookie 文本或 cookies.txt |
+
+#### 与 `astrbot_plugin_bilibili` 同时使用
+
+本插件刻意使用 `helper_bili_*` 命名空间，不占用 `/bili_login` 和 `/bili_logout`。因此同时安装 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili) 时：
+
+| 命令 | 由哪个插件处理 |
+| --- | --- |
+| `/bili_login`、`/bili_logout` | `astrbot_plugin_bilibili` |
+| `/helper_bili_login`、`/helper_bili_login_status`、`/helper_bili_login_cancel`、`/helper_bili_logout` | 本插件 |
+
+本插件的中文别名也都以“助手”开头，例如 `/助手B站登录`，避免与其它 B 站插件的常用中文指令重名。
 
 二维码登录凭据保存为插件数据目录下的 `bilibili_qr_credentials.json`；支持文件权限的系统会限制为当前用户可读写。它不是加密文件，因此仍应保护 AstrBot 数据目录，不要把该文件提交、上传或分享。
 
@@ -185,10 +196,10 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 /anime1 [关键词] [年|月|周|日|全部] [数量]
 /anime1_url <Anime1 ID>
 /random_avatar
-/bili_login                  # 管理员私聊扫码登录
-/bili_login_status           # 管理员检查登录状态
-/bili_login_cancel           # 管理员取消当前扫码
-/bili_logout                 # 管理员清除扫码保存的凭据
+/helper_bili_login                  # 管理员私聊扫码登录
+/helper_bili_login_status           # 管理员检查登录状态
+/helper_bili_login_cancel           # 管理员取消当前扫码
+/helper_bili_logout                 # 管理员清除扫码保存的凭据
 ```
 
 随机语音、Steam 和壁纸使用配置中的动态命令名：
@@ -305,7 +316,7 @@ B 站模块依赖：
 
 ### 需要登录或触发 B 站风控
 
-可以在 `cookies_file` 上传 Netscape 格式 `cookies.txt`、填写 Cookie 文本，或由管理员私聊执行 `/bili_login` 扫码。重载插件、扫码成功后或执行 `/bili_login_status` 时，会出现以下不含敏感内容的状态日志之一：
+可以在 `cookies_file` 上传 Netscape 格式 `cookies.txt`、填写 Cookie 文本，或由管理员私聊执行 `/helper_bili_login` 扫码。重载插件、扫码成功后或执行 `/helper_bili_login_status` 时，会出现以下不含敏感内容的状态日志之一：
 
 - `Cookie verification succeeded`：B 站确认当前为登录状态。
 - `Bilibili reports not logged in`：Cookie 已读取，但已失效、不完整或不属于当前账号。
@@ -316,9 +327,9 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 ### 扫码二维码没有发出或一直等待
 
 - 确认 `bilibili_video.qr_login.enabled` 和 `commands_enabled` 都已开启。
-- 默认只允许管理员私聊发起；群聊被拒绝时，使用私聊发送 `/bili_login`，或明确关闭 `private_chat_only`。
-- 二维码过期、取消或超时后，重新执行 `/bili_login` 获取新二维码。
-- 扫码成功但视频仍提示未登录时，执行 `/bili_login_status`。若显示“暂时无法确认”，通常是服务器到 B 站的网络或风控问题；若显示“未识别为登录”，重新扫码即可。
+- 默认只允许管理员私聊发起；群聊被拒绝时，使用私聊发送 `/helper_bili_login`，或明确关闭 `private_chat_only`。
+- 二维码过期、取消或超时后，重新执行 `/helper_bili_login` 获取新二维码。
+- 扫码成功但视频仍提示未登录时，执行 `/helper_bili_login_status`。若显示“暂时无法确认”，通常是服务器到 B 站的网络或风控问题；若显示“未识别为登录”，重新扫码即可。
 
 ## 参考与致谢
 
