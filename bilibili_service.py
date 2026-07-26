@@ -8,6 +8,7 @@ import time
 import urllib.parse
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -18,6 +19,7 @@ from astrbot.api import logger
 from .bilibili_downloader import BilibiliDownloader
 from .bilibili_frames import BilibiliFrameExtractor
 from .bilibili_gemini import GeminiVideoAnalyzer
+from .bilibili_qr_login import BilibiliCredentialStore
 from .bilibili_transcript import BilibiliTranscriptService
 from .bilibili_types import (
     BILIBILI_CONTEXT_PREFIX,
@@ -32,6 +34,7 @@ from .helper_utils import (
     cfg,
     clean_text,
     extract_file_config_value,
+    read_bool,
     read_int,
     resolve_existing_path,
 )
@@ -58,6 +61,13 @@ _USER_AGENT = (
 _ResultT = TypeVar("_ResultT")
 
 
+@dataclass(frozen=True)
+class BilibiliCookieVerification:
+    status: str
+    source: str
+    message: str
+
+
 class BilibiliVideoService:
     """Shared Bilibili pipeline for automatic context and the LLM tool."""
 
@@ -68,6 +78,7 @@ class BilibiliVideoService:
         self.transcript = BilibiliTranscriptService(config, self.downloader)
         self.frames = BilibiliFrameExtractor(config)
         self.gemini = GeminiVideoAnalyzer(config)
+        self.credentials = BilibiliCredentialStore(data_dir)
         self._session: aiohttp.ClientSession | None = None
         self._analysis_cache: OrderedDict[
             str,
@@ -85,7 +96,7 @@ class BilibiliVideoService:
 
     async def start(self) -> None:
         await self.downloader.start()
-        await self._verify_cookie_on_start()
+        await self.verify_cookie()
 
     async def close(self) -> None:
         if self._session is not None and not self._session.closed:
@@ -601,13 +612,17 @@ class BilibiliVideoService:
             self._session = aiohttp.ClientSession(trust_env=True)
         return self._session
 
-    async def _verify_cookie_on_start(self) -> None:
-        cookie = self._cookie_header()
+    async def verify_cookie(self) -> BilibiliCookieVerification:
+        cookie, source = self._cookie_header_and_source()
         if not cookie:
             logger.info(
                 "[HelperTools/Bilibili] no Cookie configured; public videos will be read without login"
             )
-            return
+            return BilibiliCookieVerification(
+                status="none",
+                source="",
+                message="当前没有配置 B 站 Cookie，也没有可用的扫码登录凭据。",
+            )
 
         try:
             session = await self._get_session()
@@ -622,10 +637,17 @@ class BilibiliVideoService:
         except Exception as exc:  # noqa: BLE001 - verification must not block plugin startup
             logger.warning(
                 "[HelperTools/Bilibili] Cookie was loaded from %s but could not be verified: %r",
-                self._cookie_source(),
+                source,
                 exc,
             )
-            return
+            return BilibiliCookieVerification(
+                status="unknown",
+                source=source,
+                message=(
+                    f"当前使用{source}，但网络或 B 站接口暂时不可用，"
+                    "暂时无法确认登录状态。"
+                ),
+            )
 
         data = payload.get("data") if isinstance(payload, dict) else None
         if (
@@ -635,14 +657,31 @@ class BilibiliVideoService:
         ):
             logger.info(
                 "[HelperTools/Bilibili] Cookie verification succeeded (source=%s, logged in)",
-                self._cookie_source(),
+                source,
             )
-            return
+            return BilibiliCookieVerification(
+                status="valid",
+                source=source,
+                message=f"当前使用{source}，B 站确认已登录。",
+            )
 
         logger.warning(
             "[HelperTools/Bilibili] Cookie was loaded from %s but Bilibili reports not logged in; it may be expired or incomplete",
-            self._cookie_source(),
+            source,
         )
+        return BilibiliCookieVerification(
+            status="invalid",
+            source=source,
+            message=(
+                f"当前使用{source}，但 B 站未识别为登录状态；"
+                "凭据可能已失效或不完整。"
+            ),
+        )
+
+    async def _verify_cookie_on_start(self) -> BilibiliCookieVerification:
+        """Compatibility wrapper for callers from earlier plugin releases."""
+
+        return await self.verify_cookie()
 
     @staticmethod
     def _short_url_headers() -> dict[str, str]:
@@ -695,19 +734,33 @@ class BilibiliVideoService:
         return headers
 
     def _cookie_header(self) -> str:
+        return self._cookie_header_and_source()[0]
+
+    def _cookie_header_and_source(self) -> tuple[str, str]:
+        saved_qr_cookie = self.credentials.cookie_header()
+        configured_cookie, configured_source = self._configured_cookie_header()
+        if self._prefer_saved_qr_credentials() and saved_qr_cookie:
+            return saved_qr_cookie, self.credentials.source_label
+        if configured_cookie:
+            return configured_cookie, configured_source
+        if saved_qr_cookie:
+            return saved_qr_cookie, self.credentials.source_label
+        return "", ""
+
+    def _configured_cookie_header(self) -> tuple[str, str]:
         raw = clean_text(cfg(self.config, "bilibili_video", "cookie", ""))
         if raw:
-            return raw
+            return raw, "配置文本"
         configured = extract_file_config_value(
             cfg(self.config, "bilibili_video", "cookies_file", [])
         )
         path = resolve_existing_path(configured, self.data_dir)
         if path is None or not path.is_file():
-            return ""
+            return "", ""
         try:
             lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
         except OSError:
-            return ""
+            return "", ""
         pairs: list[str] = []
         for line in lines:
             stripped = line.strip()
@@ -718,16 +771,17 @@ class BilibiliVideoService:
             columns = stripped.split("\t")
             if len(columns) >= 7 and columns[5] and columns[6]:
                 pairs.append(f"{columns[5]}={columns[6]}")
-        return "; ".join(pairs)
+        return "; ".join(pairs), "cookies.txt 文件"
 
     def _cookie_source(self) -> str:
-        if clean_text(cfg(self.config, "bilibili_video", "cookie", "")):
-            return "配置文本"
-        configured = extract_file_config_value(
-            cfg(self.config, "bilibili_video", "cookies_file", [])
-        )
-        path = resolve_existing_path(configured, self.data_dir)
-        return "cookies.txt 文件" if path is not None and path.is_file() else "未知来源"
+        _cookie, source = self._cookie_header_and_source()
+        return source or "未知来源"
+
+    def _prefer_saved_qr_credentials(self) -> bool:
+        qr_login = cfg(self.config, "bilibili_video", "qr_login", {})
+        if not isinstance(qr_login, dict):
+            return True
+        return read_bool(qr_login.get("prefer_saved_credentials", True), True)
 
     def _request_timeout(self) -> int:
         return read_int(

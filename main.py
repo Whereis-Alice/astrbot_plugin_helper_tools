@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import astrbot.api.message_components as Comp
@@ -15,6 +16,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from .anime1_service import Anime1Service
 from .avatar_rotation_service import AvatarRotationService
+from .bilibili_qr_login import BilibiliQrLoginError, BilibiliQrLoginService
 from .bilibili_service import (
     BILIBILI_TOOL_NAME,
     BilibiliVideoService,
@@ -42,7 +44,7 @@ from .wake_service import WakeService
 from .wallpaper_service import WallpaperService
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.5.2"
+PLUGIN_VERSION = "0.5.3"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、Anime1、收款码、随机语音、Steam、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -474,6 +476,11 @@ class HelperToolsPlugin(Star):
         self.bot_profile = BotProfileService(self.config, self.context, self.data_dir)
         self.avatar_rotation = AvatarRotationService(self.config, self.data_dir, self.context)
         self.bilibili = BilibiliVideoService(self.config, self.data_dir)
+        self.bilibili_qr_login = BilibiliQrLoginService(
+            self.config,
+            self.data_dir,
+            self.bilibili.credentials,
+        )
         self.reply_media_guard = ReplyMediaGuard(self.config)
         self.reply_card_reader = ReplyCardReader(self.config)
         self.wake = WakeService(self.config, self.context)
@@ -490,6 +497,7 @@ class HelperToolsPlugin(Star):
         logger.info("[%s] initialized", PLUGIN_ID)
 
     async def terminate(self) -> None:
+        await self.bilibili_qr_login.close()
         await self.bilibili.close()
         await self.avatar_rotation.stop()
         await self.anime1.stop()
@@ -515,6 +523,13 @@ class HelperToolsPlugin(Star):
         return self.enabled() and _module_enabled(self.config, module, default) and read_bool(
             cfg(self.config, module, "llm_tool_enabled", default),
             default,
+        )
+
+    def _bilibili_qr_login_commands_enabled(self) -> bool:
+        return (
+            self.enabled()
+            and _module_enabled(self.config, "bilibili_video")
+            and self.bilibili_qr_login.commands_enabled()
         )
 
     def _build_tools(self) -> list[FunctionTool[AstrAgentContext]]:
@@ -674,6 +689,106 @@ class HelperToolsPlugin(Star):
             and not self.wake.is_llm_request_blocked(event)
         ):
             event.should_call_llm(True)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("bili_login", alias={"B站登录", "B站扫码登录", "哔哩登录"})
+    async def bilibili_login_command(self, event: AstrMessageEvent):
+        """Send an administrator a Bilibili QR code and persist the resulting cookies."""
+
+        event.stop_event()
+        if not self._bilibili_qr_login_commands_enabled():
+            yield event.plain_result("B 站扫码登录命令当前未启用。")
+            return
+        group_getter = getattr(event, "get_group_id", None)
+        group_id = clean_text(group_getter() if callable(group_getter) else "")
+        if self.bilibili_qr_login.private_chat_only() and group_id:
+            yield event.plain_result(
+                "为避免二维码被群成员看到，请管理员在私聊中执行这个命令。"
+            )
+            return
+        try:
+            started = await self.bilibili_qr_login.start_login()
+        except asyncio.CancelledError:
+            raise
+        except BilibiliQrLoginError as exc:
+            yield event.plain_result(str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 - keep a login failure out of Agent flow
+            logger.warning("[%s] failed to create Bilibili login QR: %r", PLUGIN_ID, exc)
+            yield event.plain_result("创建 B 站登录二维码失败，请稍后重试。")
+            return
+
+        prompt = (
+            "已有一张 B 站登录二维码正在等待确认，请使用同一张二维码继续扫码。"
+            if started.reused_existing_qr
+            else "请使用哔哩哔哩 App 扫描下方二维码，并在手机上确认登录。"
+        )
+        yield event.chain_result(
+            [
+                Comp.Plain(prompt),
+                Comp.Image.fromFileSystem(str(started.qr_image_path)),
+            ]
+        )
+        try:
+            outcome = await self.bilibili_qr_login.wait_for_login(started)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - task failures are already contained, keep command safe
+            logger.warning("[%s] Bilibili QR login task failed: %r", PLUGIN_ID, exc)
+            yield event.plain_result("B 站扫码登录任务异常，请重新执行登录命令。")
+            return
+
+        if outcome.status != "success":
+            yield event.plain_result(outcome.message)
+            return
+
+        verification = await self.bilibili.verify_cookie()
+        yield event.plain_result(f"{outcome.message}\n{verification.message}")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("bili_login_status", alias={"B站登录状态", "哔哩登录状态"})
+    async def bilibili_login_status_command(self, event: AstrMessageEvent):
+        """Check the active Bilibili credentials without exposing their contents."""
+
+        event.stop_event()
+        if not self._bilibili_qr_login_commands_enabled():
+            yield event.plain_result("B 站扫码登录命令当前未启用。")
+            return
+        verification = await self.bilibili.verify_cookie()
+        yield event.plain_result(verification.message)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("bili_login_cancel", alias={"取消B站登录", "取消哔哩登录"})
+    async def bilibili_login_cancel_command(self, event: AstrMessageEvent):
+        """Cancel the active QR-login poll without deleting existing credentials."""
+
+        event.stop_event()
+        if not self._bilibili_qr_login_commands_enabled():
+            yield event.plain_result("B 站扫码登录命令当前未启用。")
+            return
+        if await self.bilibili_qr_login.cancel_login():
+            yield event.plain_result("已取消当前 B 站扫码登录。")
+            return
+        yield event.plain_result("当前没有正在等待确认的 B 站登录二维码。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("bili_logout", alias={"B站退出", "B站登出", "哔哩退出"})
+    async def bilibili_logout_command(self, event: AstrMessageEvent):
+        """Remove only the credentials obtained through this plugin's QR login."""
+
+        event.stop_event()
+        if not self._bilibili_qr_login_commands_enabled():
+            yield event.plain_result("B 站扫码登录命令当前未启用。")
+            return
+        await self.bilibili_qr_login.cancel_login_and_wait()
+        cleared = await self.bilibili.credentials.clear()
+        await self.bilibili_qr_login.clear_qr_image()
+        if not cleared:
+            yield event.plain_result("清除扫码登录凭据失败，请检查插件数据目录权限。")
+            return
+        yield event.plain_result(
+            "已清除本插件保存的 B 站扫码凭据。配置页中的 Cookie 文本和 cookies.txt 不会被修改。"
+        )
 
     @filter.command("qq_avatar", alias={"qq头像", "头像"})
     async def qq_avatar_command(

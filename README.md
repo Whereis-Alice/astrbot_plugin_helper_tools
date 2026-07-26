@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、QQ 信息、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.5.2`
+- 当前版本：`v0.5.3`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -10,7 +10,7 @@
 
 | 模块 | 主要能力 |
 | --- | --- |
-| B站视频理解 | 识别链接、BV/av、b23.tv、分享文本和 QQ 小程序卡片；支持 Gemini 视频分析，或默认模型结合字幕、转写和可选抽帧识图 |
+| B站视频理解 | 识别链接、BV/av、b23.tv、分享文本和 QQ 小程序卡片；支持管理员扫码登录、Gemini 视频分析，或默认模型结合字幕、转写和可选抽帧识图 |
 | QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
 | 引用媒体 | 保留引用图片识图，并标明图片来源；读取被引用的小程序、音乐和分享卡片 |
 | Anime1 | 查询剧集更新和观看地址 |
@@ -29,7 +29,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.5.2` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装 B 站模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.5.3` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装 B 站模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -99,7 +99,8 @@ Gemini 不直接面向用户说话，也不会替换 AstrBot 人格。外部视�
 | `download_quality` | Gemini 或抽帧来源的视频下载画质，默认 360p |
 | `processing_timeout_seconds` | 整条解析流水线的超时 |
 | `cache_ttl_minutes` | 同一视频分析结果缓存时间 |
-| `cookie` / `cookies_file` | 可选，用于登录后才能访问的视频或字幕；启动日志会校验登录状态 |
+| `cookie` / `cookies_file` | 可选，用于登录后才能访问的视频或字幕；也可使用下面的管理员扫码登录 |
+| `qr_login` | 管理员扫码登录、私聊限制、轮询间隔、超时和凭据优先级 |
 | `default_model.bcut_fallback_enabled` | 无官方字幕时是否使用必剪转写 |
 | `default_model.max_transcript_chars` | 交给默认模型的字幕上限；超长时保留首段、中段和结尾 |
 | `default_model.frame_vision.enabled` | 是否让默认模型结合抽帧识图，默认关闭 |
@@ -113,6 +114,29 @@ Gemini 不直接面向用户说话，也不会替换 AstrBot 人格。外部视�
 
 B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到仓库。`cookies_file` 需要 Netscape 格式，通常可由浏览器扩展或 yt-dlp 工具导出。
 
+### 管理员扫码登录
+
+默认开启 `bilibili_video.qr_login` 后，管理员可在**私聊**中发送：
+
+```text
+/bili_login
+```
+
+插件会发送 B 站登录二维码，使用哔哩哔哩 App 扫码并在手机确认后，会自动取得登录凭据、写入插件数据目录，并立即向 B 站检查是否已登录。整个过程不会在聊天或日志里输出 Cookie。
+
+相关管理员命令：
+
+| 命令 | 作用 |
+| --- | --- |
+| `/bili_login` | 获取或继续等待当前登录二维码 |
+| `/bili_login_status` | 不暴露 Cookie 内容地检查当前登录状态 |
+| `/bili_login_cancel` | 取消正在等待确认的二维码，不删除已有凭据 |
+| `/bili_logout` | 删除本插件扫码保存的凭据，不修改配置页的 Cookie 文本或 cookies.txt |
+
+二维码登录凭据保存为插件数据目录下的 `bilibili_qr_credentials.json`；支持文件权限的系统会限制为当前用户可读写。它不是加密文件，因此仍应保护 AstrBot 数据目录，不要把该文件提交、上传或分享。
+
+`qr_login.prefer_saved_credentials` 默认开启，扫码保存的凭据会优先于 `cookie` 和 `cookies_file` 使用。关闭它后，手工配置的 Cookie 会优先；在两者都不存在时才使用扫码凭据。`private_chat_only` 默认开启，关闭后管理员可以在群里发起登录，但二维码会被群成员看到，不建议这样做。
+
 ### 隐私与安全
 
 - 只接受 B 站官方长链和已知短链域名；短链的每次跳转都会重新校验域名，避免访问任意地址。
@@ -120,6 +144,7 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 - Gemini 模式会把下载的视频上传到配置的 Gemini API；默认在分析完成后删除 Gemini File API 文件。
 - 下载文件位于插件数据目录的临时目录，成功、失败和取消后都会清理。
 - 字幕、转写和 Gemini 分析文字会缓存；自动注入的抽帧只在本轮内存中使用，工具返回的抽帧只进入 AstrBot 临时工具缓存供本轮读取；两者均不写入会话历史或插件持久缓存。
+- 二维码生成与轮询请求不会携带已有 B 站 Cookie；扫码结果只在取得 `SESSDATA` 后才会保存。视频网页、API 和下载请求会使用当前选中的凭据，但 `b23.tv` 短链不会收到 Cookie。
 
 ### 能力边界
 
@@ -160,6 +185,10 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 /anime1 [关键词] [年|月|周|日|全部] [数量]
 /anime1_url <Anime1 ID>
 /random_avatar
+/bili_login                  # 管理员私聊扫码登录
+/bili_login_status           # 管理员检查登录状态
+/bili_login_cancel           # 管理员取消当前扫码
+/bili_logout                 # 管理员清除扫码保存的凭据
 ```
 
 随机语音、Steam 和壁纸使用配置中的动态命令名：
@@ -276,13 +305,20 @@ B 站模块依赖：
 
 ### 需要登录或触发 B 站风控
 
-在 `cookies_file` 上传 Netscape 格式 `cookies.txt`，或填写 Cookie 文本。重载插件后会出现以下不含敏感内容的状态日志之一：
+可以在 `cookies_file` 上传 Netscape 格式 `cookies.txt`、填写 Cookie 文本，或由管理员私聊执行 `/bili_login` 扫码。重载插件、扫码成功后或执行 `/bili_login_status` 时，会出现以下不含敏感内容的状态日志之一：
 
 - `Cookie verification succeeded`：B 站确认当前为登录状态。
 - `Bilibili reports not logged in`：Cookie 已读取，但已失效、不完整或不属于当前账号。
 - `could not be verified`：网络或 B 站接口暂时不可用，不能据此判断 Cookie 是否失效。
 
 Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发送到 `b23.tv` 短链。QQ 分享附带的短链追踪参数会在解析时自动清理；遇到短链 `GET 400` 时还会尝试用 `HEAD` 读取跳转地址。
+
+### 扫码二维码没有发出或一直等待
+
+- 确认 `bilibili_video.qr_login.enabled` 和 `commands_enabled` 都已开启。
+- 默认只允许管理员私聊发起；群聊被拒绝时，使用私聊发送 `/bili_login`，或明确关闭 `private_chat_only`。
+- 二维码过期、取消或超时后，重新执行 `/bili_login` 获取新二维码。
+- 扫码成功但视频仍提示未登录时，执行 `/bili_login_status`。若显示“暂时无法确认”，通常是服务器到 B 站的网络或风控问题；若显示“未识别为登录”，重新扫码即可。
 
 ## 参考与致谢
 
@@ -291,6 +327,7 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 - Gemini 视频上传与分析流程参考 [YUMU1658/astrbot_plugin_qq_tools](https://github.com/YUMU1658/astrbot_plugin_qq_tools)，Copyright (c) 2026 YUMU1658。
 - B 站识别、字幕优先、yt-dlp 下载和必剪转写流程参考 [storyAura/astrbot_plugin_biliVideo](https://github.com/storyAura/astrbot_plugin_biliVideo)，Copyright (c) 2025 storyAura。
 - B 站短链的无 Cookie 展开请求策略参考 [drdon1234/astrbot_plugin_media_parser](https://github.com/drdon1234/astrbot_plugin_media_parser)。
+- B 站二维码获取、扫码轮询和凭据保存流程参考 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili)，并按本插件的视频理解场景重新实现。
 - QQ 资料卡能力参考 [Zhalslar/astrbot_plugin_box](https://github.com/Zhalslar/astrbot_plugin_box)。
 - Anime1 更新列表能力参考 [zhist2028/astrbot_plugin_anime1_list](https://github.com/zhist2028/astrbot_plugin_anime1_list)。
 - 收款码能力参考 [luori7hao/astrbot_plugin_payqr](https://github.com/luori7hao/astrbot_plugin_payqr)。

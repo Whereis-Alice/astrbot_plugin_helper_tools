@@ -62,6 +62,50 @@
         "default": true,
         "hint": "模型可主动读取用户给出的 B 站链接、BV号、av号、b23.tv短链或分享文本。"
       },
+      "qr_login": {
+        "type": "object",
+        "description": "B站扫码登录（仅管理员命令）",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "启用 B站扫码登录",
+            "default": true,
+            "hint": "管理员使用 /bili_login 获取二维码；扫码成功后的凭据会自动保存到插件数据目录。"
+          },
+          "commands_enabled": {
+            "type": "bool",
+            "description": "启用扫码登录相关命令",
+            "default": true,
+            "hint": "控制 /bili_login、/bili_login_status、/bili_login_cancel 和 /bili_logout。"
+          },
+          "private_chat_only": {
+            "type": "bool",
+            "description": "仅允许私聊中发起扫码登录",
+            "default": true,
+            "hint": "推荐保持开启，避免登录二维码出现在群聊中。"
+          },
+          "prefer_saved_credentials": {
+            "type": "bool",
+            "description": "优先使用扫码保存的凭据",
+            "default": true,
+            "hint": "关闭后，配置页的 Cookie 文本或 cookies.txt 会优先于扫码登录凭据。"
+          },
+          "poll_interval_seconds": {
+            "type": "int",
+            "description": "扫码状态检查间隔（秒）",
+            "default": 2,
+            "min": 1,
+            "max": 15
+          },
+          "timeout_seconds": {
+            "type": "int",
+            "description": "等待扫码确认最长时间（秒）",
+            "default": 180,
+            "min": 30,
+            "max": 600
+          }
+        }
+      },
       "analysis_mode": {
         "type": "string",
         "description": "视频分析方式（二选一）",
