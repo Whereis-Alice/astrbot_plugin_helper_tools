@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -109,6 +110,54 @@ class DownloadedMedia:
             shutil.rmtree(self.work_dir, ignore_errors=True)
         except OSError:
             pass
+
+
+@dataclass(frozen=True, slots=True)
+class VideoFrame:
+    """One bounded JPEG frame supplied to a vision-capable chat model."""
+
+    index: int
+    timestamp: float
+    data: bytes
+    mime_type: str = "image/jpeg"
+
+    @property
+    def data_url(self) -> str:
+        encoded = base64.b64encode(self.data).decode("ascii")
+        return f"data:{self.mime_type};base64,{encoded}"
+
+
+@dataclass(frozen=True, slots=True)
+class BilibiliVideoContext:
+    """Text facts plus optional, current-turn-only visual frame evidence."""
+
+    content: str
+    frames: tuple[VideoFrame, ...] = ()
+    visual_note: str = ""
+    requires_visual_frames: bool = False
+
+    @property
+    def text(self) -> str:
+        if not self.frames and not self.visual_note:
+            return self.content
+
+        lines = [self.content]
+        if self.frames:
+            timestamps = "、".join(
+                f"第{frame.index}张 {format_duration(frame.timestamp)}"
+                for frame in self.frames
+            )
+            lines.extend(
+                (
+                    "",
+                    "视觉抽帧资料：已从视频中均匀抽取画面，并按下列顺序附在本资料之后。",
+                    f"抽帧时点：{timestamps}",
+                    "请结合字幕/转写与这些画面作答；没有覆盖到的动态细节要说明不确定。",
+                )
+            )
+        elif self.visual_note:
+            lines.extend(("", f"视觉抽帧资料：{self.visual_note}"))
+        return "\n".join(lines).strip()
 
 
 @dataclass(frozen=True, slots=True)

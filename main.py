@@ -6,10 +6,10 @@ import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, FunctionTool, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools, register
-from astrbot.core.agent.message import TextPart
+from astrbot.core.agent.message import ImageURLPart, TextPart
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, ImageContent, TextContent
 from pydantic import Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
@@ -20,6 +20,7 @@ from .bilibili_service import (
     BilibiliVideoService,
     request_has_bilibili_context,
 )
+from .bilibili_types import BilibiliVideoContext
 from .bot_profile_service import BOT_PROFILE_TOOL_NAME, BotProfileService
 from .helper_utils import cfg, clean_text, core_wake_prefixes, read_bool
 from .payqr_service import PAYQR_TOOL_NAME, PayQRService
@@ -41,11 +42,12 @@ from .wake_service import WakeService
 from .wallpaper_service import WallpaperService
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.5.0"
+PLUGIN_VERSION = "0.5.1"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、Anime1、收款码、随机语音、Steam、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
+_BILIBILI_TOOL_IMAGE_MARKER = f"[Image from tool '{BILIBILI_TOOL_NAME}'"
 
 
 def _tool_event(context: ContextWrapper[AstrAgentContext]) -> Any:
@@ -69,6 +71,50 @@ def _module_commands_enabled(config: Any, module: str, default: bool = True) -> 
         cfg(config, module, "commands_enabled", default),
         default,
     )
+
+
+def _mark_content_part_temporary(part: Any) -> Any:
+    mark_as_temp = getattr(part, "mark_as_temp", None)
+    if callable(mark_as_temp):
+        mark_as_temp()
+    return part
+
+
+def _bilibili_tool_result(context: BilibiliVideoContext) -> ToolResult:
+    if not context.frames:
+        return context.text
+    content: list[Any] = [TextContent(type="text", text=context.text)]
+    for frame in context.frames:
+        content.append(
+            ImageContent(
+                type="image",
+                data=frame.data_url.partition(",")[2],
+                mimeType=frame.mime_type,
+            )
+        )
+    return CallToolResult(content=content, isError=False)
+
+
+def _mark_bilibili_tool_frames_temporary(run_context: Any) -> int:
+    """Keep core-created tool frame messages out of persisted conversation history."""
+
+    marked_messages = 0
+    for message in getattr(run_context, "messages", []):
+        content = getattr(message, "content", None)
+        if not isinstance(content, list):
+            continue
+        is_bilibili_frame_message = any(
+            isinstance(part, TextPart)
+            and _BILIBILI_TOOL_IMAGE_MARKER in part.text
+            for part in content
+        )
+        if not is_bilibili_frame_message:
+            continue
+        for part in content:
+            _mark_content_part_temporary(part)
+        message._no_save = True
+        marked_messages += 1
+    return marked_messages
 
 
 @pydantic_dataclass
@@ -362,13 +408,14 @@ class UnderstandBilibiliVideoTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolResult:
         if self.plugin is None:
             return "B站视频理解工具未绑定插件实例。"
-        return await self.plugin.bilibili.analyze_input(
+        result = await self.plugin.bilibili.analyze_input_result(
             clean_text(kwargs.get("video")),
             force_refresh=_bool_arg(kwargs.get("force_refresh"), False),
         )
+        return _bilibili_tool_result(result)
 
 
 @pydantic_dataclass
@@ -529,31 +576,63 @@ class HelperToolsPlugin(Star):
         if callable(is_stopped) and is_stopped():
             return
 
-        context_text = clean_text(
-            getattr(event, "_helper_tools_bilibili_context", "")
-        )
-        if not context_text:
-            context_text = await self.bilibili.context_for_event(event)
-            if not context_text:
+        context_result = getattr(event, "_helper_tools_bilibili_context_result", None)
+        if not isinstance(context_result, BilibiliVideoContext):
+            context_result = await self.bilibili.context_for_event_result(event)
+            if not context_result.text:
                 return
-            event._helper_tools_bilibili_context = context_text
+            event._helper_tools_bilibili_context_result = context_result
 
         parts = getattr(request, "extra_user_content_parts", None)
         if isinstance(parts, list):
-            context_part = TextPart(text=context_text)
-            mark_as_temp = getattr(context_part, "mark_as_temp", None)
-            if callable(mark_as_temp):
-                mark_as_temp()
-            parts.append(context_part)
+            parts.append(
+                _mark_content_part_temporary(TextPart(text=context_result.text))
+            )
+            for frame in context_result.frames:
+                parts.append(
+                    _mark_content_part_temporary(
+                        ImageURLPart(
+                            image_url=ImageURLPart.ImageURL(
+                                url=frame.data_url,
+                                id=(
+                                    f"bilibili-frame-{frame.index}-"
+                                    f"{frame.timestamp:.3f}"
+                                ),
+                            )
+                        )
+                    )
+                )
         else:
             original_prompt = clean_text(getattr(request, "prompt", ""))
-            request.prompt = f"{original_prompt}\n\n{context_text}".strip()
+            fallback_text = context_result.text
+            if context_result.frames:
+                fallback_text += (
+                    "\n\n视觉抽帧已生成，但当前 AstrBot 请求不支持附加图片，"
+                    "本轮不会使用这些画面。"
+                )
+            request.prompt = f"{original_prompt}\n\n{fallback_text}".strip()
         logger.info(
-            "[%s] attached Bilibili video context (session=%s, mode=%s)",
+            "[%s] attached Bilibili video context (session=%s, mode=%s, frames=%d)",
             PLUGIN_ID,
             clean_text(getattr(event, "unified_msg_origin", "")),
             self.bilibili.analysis_mode(),
+            len(context_result.frames),
         )
+
+    @filter.on_agent_done(priority=20)
+    async def bilibili_tool_frame_history_guard(
+        self,
+        _event: AstrMessageEvent,
+        run_context: ContextWrapper[AstrAgentContext],
+        _response: Any,
+    ) -> None:
+        marked_messages = _mark_bilibili_tool_frames_temporary(run_context)
+        if marked_messages:
+            logger.info(
+                "[%s] removed %d Bilibili tool frame message(s) from future history",
+                PLUGIN_ID,
+                marked_messages,
+            )
 
     @filter.on_decorating_result(priority=20)
     async def wake_after_result(self, event: AstrMessageEvent):

@@ -7,19 +7,22 @@ import re
 import time
 import urllib.parse
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import aiohttp
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
 
 from .bilibili_downloader import BilibiliDownloader
+from .bilibili_frames import BilibiliFrameExtractor
 from .bilibili_gemini import GeminiVideoAnalyzer
 from .bilibili_transcript import BilibiliTranscriptService
 from .bilibili_types import (
     BILIBILI_CONTEXT_PREFIX,
     BilibiliError,
+    BilibiliVideoContext,
     VideoAnalysis,
     VideoInfo,
     VideoReference,
@@ -51,6 +54,7 @@ _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
+_ResultT = TypeVar("_ResultT")
 
 
 class BilibiliVideoService:
@@ -61,9 +65,13 @@ class BilibiliVideoService:
         self.data_dir = data_dir
         self.downloader = BilibiliDownloader(config, data_dir)
         self.transcript = BilibiliTranscriptService(config, self.downloader)
+        self.frames = BilibiliFrameExtractor(config)
         self.gemini = GeminiVideoAnalyzer(config)
         self._session: aiohttp.ClientSession | None = None
-        self._analysis_cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        self._analysis_cache: OrderedDict[
+            str,
+            tuple[float, BilibiliVideoContext],
+        ] = OrderedDict()
         self._metadata_cache: OrderedDict[str, tuple[float, VideoInfo]] = OrderedDict()
         self._locks: dict[str, asyncio.Lock] = {}
         concurrency = read_int(
@@ -121,38 +129,57 @@ class BilibiliVideoService:
             setattr(event, _EVENT_REFERENCE_ATTR, reference)
         return reference
 
-    async def context_for_event(self, event: Any) -> str:
+    async def context_for_event_result(self, event: Any) -> BilibiliVideoContext:
         if self.auto_parse_mode() == "off":
-            return ""
+            return BilibiliVideoContext("")
         reference = self.prepare_event(event)
         if reference is None:
-            return ""
-        return await self.analyze_reference_safe(reference)
+            return BilibiliVideoContext("")
+        return await self.analyze_reference_safe_result(reference)
 
-    async def analyze_input(self, value: str, *, force_refresh: bool = False) -> str:
+    async def context_for_event(self, event: Any) -> str:
+        return (await self.context_for_event_result(event)).text
+
+    async def analyze_input_result(
+        self,
+        value: str,
+        *,
+        force_refresh: bool = False,
+    ) -> BilibiliVideoContext:
         reference = extract_video_reference(value)
         if reference is None:
-            return (
+            return BilibiliVideoContext(
                 "[B站视频解析失败]\n"
                 "没有识别到 B 站视频。支持链接、BV 号、av 号、b23.tv 短链和包含这些内容的分享文本。"
             )
-        return await self.analyze_reference_safe(reference, force_refresh=force_refresh)
+        return await self.analyze_reference_safe_result(
+            reference,
+            force_refresh=force_refresh,
+        )
 
-    async def analyze_reference_safe(
+    async def analyze_input(self, value: str, *, force_refresh: bool = False) -> str:
+        return (
+            await self.analyze_input_result(value, force_refresh=force_refresh)
+        ).text
+
+    async def analyze_reference_safe_result(
         self,
         reference: VideoReference,
         *,
         force_refresh: bool = False,
-    ) -> str:
+    ) -> BilibiliVideoContext:
         try:
-            return await self.analyze_reference(reference, force_refresh=force_refresh)
+            return await self.analyze_reference_result(
+                reference,
+                force_refresh=force_refresh,
+            )
         except BilibiliError as exc:
             logger.warning(
                 "[HelperTools/Bilibili] analysis failed for %s: %r",
                 reference.lookup_key,
                 exc,
             )
-            return f"[B站视频解析失败]\n原因：{exc.user_message}"
+            return BilibiliVideoContext(f"[B站视频解析失败]\n原因：{exc.user_message}")
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - keep plugin failures out of Agent flow
@@ -160,10 +187,102 @@ class BilibiliVideoService:
                 "[HelperTools/Bilibili] unexpected analysis error for %s",
                 reference.lookup_key,
             )
-            return (
+            return BilibiliVideoContext(
                 "[B站视频解析失败]\n"
                 f"原因：处理视频时发生未预期错误（{type(exc).__name__}）。"
             )
+
+    async def analyze_reference_safe(
+        self,
+        reference: VideoReference,
+        *,
+        force_refresh: bool = False,
+    ) -> str:
+        return (
+            await self.analyze_reference_safe_result(
+                reference,
+                force_refresh=force_refresh,
+            )
+        ).text
+
+    async def analyze_reference_result(
+        self,
+        reference: VideoReference,
+        *,
+        force_refresh: bool = False,
+    ) -> BilibiliVideoContext:
+        timeout = self._processing_timeout_seconds()
+        deadline = time.monotonic() + timeout
+        try:
+            info = await self._run_until(
+                lambda: self._resolve_info(reference, force_refresh=force_refresh),
+                deadline,
+            )
+            max_duration = read_int(
+                cfg(self.config, "bilibili_video", "max_duration_seconds", 600),
+                600,
+                minimum=10,
+                maximum=21600,
+            )
+            if info.duration > max_duration:
+                raise BilibiliError(
+                    f"video duration {info.duration}s exceeds {max_duration}s",
+                    user_message=(
+                        f"视频当前分 P 时长为 {info.duration} 秒，超过配置的 "
+                        f"{max_duration} 秒限制。"
+                    ),
+                )
+
+            mode = self.analysis_mode()
+            cache_key = f"{mode}:{info.cache_key}"
+            if force_refresh:
+                self._analysis_cache.pop(cache_key, None)
+            cached = self._cached_context(cache_key)
+            if cached is not None:
+                return await self._attach_optional_frames(
+                    info,
+                    mode,
+                    cached,
+                    deadline=deadline,
+                )
+
+            lock = self._locks.setdefault(cache_key, asyncio.Lock())
+            await self._run_until(lock.acquire, deadline)
+            try:
+                cached = self._cached_context(cache_key)
+                if cached is None or force_refresh:
+                    base_context = await self._run_with_processing_slot(
+                        lambda: self._analyze_info(info, mode),
+                        deadline,
+                    )
+                    if isinstance(base_context, str):
+                        base_context = BilibiliVideoContext(base_context)
+                    # Frames are current-turn evidence only. Cache text facts, never image bytes.
+                    base_context = BilibiliVideoContext(
+                        content=base_context.content,
+                        requires_visual_frames=base_context.requires_visual_frames,
+                    )
+                    self._cache_set(
+                        self._analysis_cache,
+                        cache_key,
+                        base_context,
+                    )
+                else:
+                    base_context = cached
+            finally:
+                lock.release()
+
+            return await self._attach_optional_frames(
+                info,
+                mode,
+                base_context,
+                deadline=deadline,
+            )
+        except asyncio.TimeoutError as exc:
+            raise BilibiliError(
+                f"video processing exceeded {timeout}s",
+                user_message=f"B 站视频处理超过 {timeout} 秒，任务已取消。",
+            ) from exc
 
     async def analyze_reference(
         self,
@@ -171,56 +290,18 @@ class BilibiliVideoService:
         *,
         force_refresh: bool = False,
     ) -> str:
-        info = await self._resolve_info(reference, force_refresh=force_refresh)
-        max_duration = read_int(
-            cfg(self.config, "bilibili_video", "max_duration_seconds", 600),
-            600,
-            minimum=10,
-            maximum=21600,
-        )
-        if info.duration > max_duration:
-            raise BilibiliError(
-                f"video duration {info.duration}s exceeds {max_duration}s",
-                user_message=(
-                    f"视频当前分 P 时长为 {info.duration} 秒，超过配置的 "
-                    f"{max_duration} 秒限制。"
-                ),
+        return (
+            await self.analyze_reference_result(
+                reference,
+                force_refresh=force_refresh,
             )
+        ).text
 
-        mode = self.analysis_mode()
-        cache_key = f"{mode}:{info.cache_key}"
-        if force_refresh:
-            self._analysis_cache.pop(cache_key, None)
-        cached = self._cache_get(self._analysis_cache, cache_key)
-        if isinstance(cached, str):
-            return cached
-
-        lock = self._locks.setdefault(cache_key, asyncio.Lock())
-        async with lock:
-            cached = self._cache_get(self._analysis_cache, cache_key)
-            if isinstance(cached, str) and not force_refresh:
-                return cached
-            timeout = read_int(
-                cfg(self.config, "bilibili_video", "processing_timeout_seconds", 360),
-                360,
-                minimum=30,
-                maximum=3600,
-            )
-            try:
-                async with self._semaphore:
-                    rendered = await asyncio.wait_for(
-                        self._analyze_info(info, mode),
-                        timeout=timeout,
-                    )
-            except asyncio.TimeoutError as exc:
-                raise BilibiliError(
-                    f"video processing exceeded {timeout}s",
-                    user_message=f"B 站视频处理超过 {timeout} 秒，任务已取消。",
-                ) from exc
-            self._cache_set(self._analysis_cache, cache_key, rendered)
-            return rendered
-
-    async def _analyze_info(self, info: VideoInfo, mode: str) -> str:
+    async def _analyze_info(
+        self,
+        info: VideoInfo,
+        mode: str,
+    ) -> BilibiliVideoContext:
         session = await self._get_session()
         if mode == "gemini":
             media = await self.downloader.download_video(info)
@@ -234,7 +315,9 @@ class BilibiliVideoService:
                 evidence_source="Gemini 对下载后视频的画面、声音与屏幕文字分析",
                 content=content,
             )
-        else:
+            return BilibiliVideoContext(analysis.render())
+
+        try:
             transcript = await self.transcript.fetch(
                 info,
                 session,
@@ -244,7 +327,7 @@ class BilibiliVideoService:
             if not content:
                 raise BilibiliError(
                     "transcript renderer returned empty content",
-                    user_message="视频字幕或转写结果为空，当前默认模型没有足够资料理解视频。",
+                    user_message="视频字幕或转写结果为空。",
                 )
             analysis = VideoAnalysis(
                 info=info,
@@ -252,7 +335,119 @@ class BilibiliVideoService:
                 evidence_source=transcript.source,
                 content=content,
             )
-        return analysis.render()
+            return BilibiliVideoContext(analysis.render())
+        except BilibiliError as exc:
+            if not self.frames.enabled():
+                raise
+            analysis = VideoAnalysis(
+                info=info,
+                mode="AstrBot 当前默认模型",
+                evidence_source="视频抽帧视觉资料（字幕/转写不可用）",
+                content=(
+                    "字幕或语音转写暂时不可用。请结合后续附带的视频画面作答；"
+                    "无法从画面确定的声音、对白或连续动作请说明不确定。"
+                ),
+            )
+            logger.warning(
+                "[HelperTools/Bilibili] transcript unavailable for %s; falling back to frames: %r",
+                info.cache_key,
+                exc,
+            )
+            return BilibiliVideoContext(
+                analysis.render(),
+                requires_visual_frames=True,
+            )
+
+    async def _attach_optional_frames(
+        self,
+        info: VideoInfo,
+        mode: str,
+        context: BilibiliVideoContext,
+        *,
+        deadline: float,
+    ) -> BilibiliVideoContext:
+        if mode != "astrbot" or not self.frames.enabled():
+            return context
+        try:
+            frames = await self._run_with_processing_slot(
+                lambda: self._extract_frames(info),
+                deadline,
+            )
+        except asyncio.TimeoutError:
+            error = BilibiliError(
+                "frame extraction exceeded the processing timeout",
+                user_message="视频抽帧超过整条解析的剩余时间，任务已取消。",
+            )
+            return self._frame_failure_context(context, error)
+        except BilibiliError as exc:
+            return self._frame_failure_context(context, exc)
+
+        return BilibiliVideoContext(content=context.content, frames=frames)
+
+    async def _extract_frames(self, info: VideoInfo):
+        media = await self.downloader.download_video(info)
+        try:
+            return await self.frames.extract(media, info)
+        finally:
+            media.cleanup()
+
+    @staticmethod
+    def _frame_failure_context(
+        context: BilibiliVideoContext,
+        error: BilibiliError,
+    ) -> BilibiliVideoContext:
+        if context.requires_visual_frames:
+            raise error
+        return BilibiliVideoContext(
+            content=context.content,
+            visual_note=(
+                f"抽取画面失败（{error.user_message}），本次仅依据字幕或语音转写。"
+            ),
+        )
+
+    def _cached_context(self, key: str) -> BilibiliVideoContext | None:
+        cached = self._cache_get(self._analysis_cache, key)
+        if isinstance(cached, BilibiliVideoContext):
+            return cached
+        if isinstance(cached, str):
+            return BilibiliVideoContext(cached)
+        return None
+
+    def _processing_timeout_seconds(self) -> int:
+        return read_int(
+            cfg(self.config, "bilibili_video", "processing_timeout_seconds", 360),
+            360,
+            minimum=30,
+            maximum=3600,
+        )
+
+    @staticmethod
+    def _remaining_timeout_seconds(deadline: float) -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise asyncio.TimeoutError
+        return remaining
+
+    async def _run_until(
+        self,
+        operation: Callable[[], Awaitable[_ResultT]],
+        deadline: float,
+    ) -> _ResultT:
+        return await asyncio.wait_for(
+            operation(),
+            timeout=self._remaining_timeout_seconds(deadline),
+        )
+
+    async def _run_with_processing_slot(
+        self,
+        operation: Callable[[], Awaitable[_ResultT]],
+        deadline: float,
+    ) -> _ResultT:
+        await self._run_until(self._semaphore.acquire, deadline)
+        try:
+            return await self._run_until(operation, deadline)
+        finally:
+            self._semaphore.release()
 
     async def _resolve_info(
         self,

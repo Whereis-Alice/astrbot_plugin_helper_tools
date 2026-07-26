@@ -100,14 +100,14 @@
       },
       "download_quality": {
         "type": "string",
-        "description": "Gemini 视频下载画质",
+        "description": "视频下载画质（Gemini/抽帧）",
         "options": [
           "360p",
           "480p",
           "720p"
         ],
         "default": "360p",
-        "hint": "默认模型方式通常只下载音频；此项主要影响 Gemini 模式的文件大小和画面清晰度。"
+        "hint": "Gemini 模式会上传该画质的视频；默认模型开启抽帧识图后，也用它作为抽帧来源。"
       },
       "processing_timeout_seconds": {
         "type": "int",
@@ -202,6 +202,50 @@
             "min": 1000,
             "max": 200000,
             "hint": "超出时会保留开头、中段代表片段和结尾，而不是只截断尾部。"
+          },
+          "frame_vision": {
+            "type": "object",
+            "description": "可选：视频抽帧识图",
+            "items": {
+              "enabled": {
+                "type": "bool",
+                "description": "让默认模型结合视频抽帧识图",
+                "default": false,
+                "hint": "只适用于当前 AstrBot 模型支持图片输入的情况。开启后会额外下载视频并抽帧；图片只用于本轮分析，不会写入后续对话历史。"
+              },
+              "frame_count": {
+                "type": "int",
+                "description": "每个分 P 均匀抽取的画面数量",
+                "default": 6,
+                "min": 1,
+                "max": 24,
+                "hint": "帧数越多越容易覆盖剧情变化，也会增加模型图片输入和处理时间。"
+              },
+              "max_frame_width": {
+                "type": "int",
+                "description": "单张抽帧最大宽度（像素）",
+                "default": 960,
+                "min": 320,
+                "max": 1920,
+                "hint": "更大的尺寸更利于看清屏幕文字，但会增加图片大小和视觉模型消耗。"
+              },
+              "jpeg_quality": {
+                "type": "int",
+                "description": "抽帧 JPEG 清晰度",
+                "default": 5,
+                "min": 2,
+                "max": 31,
+                "hint": "数值越小越清晰、文件越大；默认 5 通常适合识别人物和屏幕文字。"
+              },
+              "max_total_size_mb": {
+                "type": "int",
+                "description": "一条视频所有抽帧的总大小上限（MB）",
+                "default": 8,
+                "min": 1,
+                "max": 50,
+                "hint": "达到上限后会保留已抽出的前几张画面，避免占用过多上下文和内存。"
+              }
+            }
           }
         }
       },

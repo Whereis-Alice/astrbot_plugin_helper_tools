@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -13,7 +14,12 @@ from astrbot_plugin_helper_tools.bilibili_service import (
     extract_event_video_reference,
     extract_video_reference,
 )
-from astrbot_plugin_helper_tools.bilibili_types import BilibiliError, VideoInfo
+from astrbot_plugin_helper_tools.bilibili_types import (
+    BilibiliError,
+    BilibiliVideoContext,
+    VideoFrame,
+    VideoInfo,
+)
 
 
 class DummyEvent:
@@ -187,6 +193,79 @@ class BilibiliCacheTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual((first, second), ("解析完成", "解析完成"))
             self.assertEqual(calls, 1)
+
+    async def test_cache_never_keeps_visual_frame_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = BilibiliVideoService(
+                {"bilibili_video": {"cache_ttl_minutes": 10}},
+                Path(temp_dir),
+            )
+            info = make_info()
+            frame = VideoFrame(index=1, timestamp=1.0, data=b"\xff\xd8not-cached")
+
+            async def resolve(_reference, *, force_refresh):
+                return info
+
+            async def analyze(_info, _mode):
+                return BilibiliVideoContext("解析完成", frames=(frame,))
+
+            service._resolve_info = resolve
+            service._analyze_info = analyze
+            result = await service.analyze_reference_result(
+                extract_video_reference(info.bvid)
+            )
+            cached = service._cached_context(f"astrbot:{info.cache_key}")
+
+            self.assertEqual(result.frames, ())
+            self.assertIsNotNone(cached)
+            self.assertEqual(cached.frames, ())
+            self.assertEqual(cached.content, "解析完成")
+
+
+class BilibiliDeadlineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_frame_extraction_uses_the_remaining_pipeline_time(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = BilibiliVideoService(
+                {
+                    "bilibili_video": {
+                        "default_model": {"frame_vision": {"enabled": True}}
+                    }
+                },
+                Path(temp_dir),
+            )
+            info = make_info()
+            frame_extraction_cancelled = asyncio.Event()
+
+            async def resolve(_reference, *, force_refresh):
+                return info
+
+            async def analyze(_info, _mode):
+                await asyncio.sleep(0.10)
+                return BilibiliVideoContext("字幕资料")
+
+            async def extract(_info):
+                try:
+                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    frame_extraction_cancelled.set()
+                    raise
+                return ()
+
+            service._resolve_info = resolve
+            service._analyze_info = analyze
+            service._extract_frames = extract
+            service._processing_timeout_seconds = lambda: 0.16
+
+            started = time.monotonic()
+            result = await service.analyze_reference_result(
+                extract_video_reference(info.bvid)
+            )
+            elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 0.22)
+        self.assertTrue(frame_extraction_cancelled.is_set())
+        self.assertEqual(result.frames, ())
+        self.assertIn("抽取画面失败", result.text)
 
 
 if __name__ == "__main__":

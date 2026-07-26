@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、QQ 信息、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.5.0`
+- 当前版本：`v0.5.1`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -10,7 +10,7 @@
 
 | 模块 | 主要能力 |
 | --- | --- |
-| B站视频理解 | 识别链接、BV/av、b23.tv、分享文本和 QQ 小程序卡片；支持 Gemini 视频分析或 AstrBot 默认模型读取字幕/转写 |
+| B站视频理解 | 识别链接、BV/av、b23.tv、分享文本和 QQ 小程序卡片；支持 Gemini 视频分析，或默认模型结合字幕、转写和可选抽帧识图 |
 | QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
 | 引用媒体 | 保留引用图片识图，并标明图片来源；读取被引用的小程序、音乐和分享卡片 |
 | Anime1 | 查询剧集更新和观看地址 |
@@ -29,7 +29,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.5.0` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装 B 站模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.5.1` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装 B 站模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -58,17 +58,25 @@ QQ 中直接发送或引用哔哩哔哩小程序卡片也能识别。多 P 视�
 
 | 方式 | 内容来源 | 优点 | 需要注意 |
 | --- | --- | --- | --- |
-| `AstrBot 默认模型（字幕/转写）` | 优先读取 B 站官方字幕；没有字幕时下载音频并调用必剪语音转写 | 不需要额外模型 Key，最终由当前会话模型直接理解资料 | 主要理解对白、旁白和字幕；纯画面信息可能无法判断 |
+| `AstrBot 默认模型（字幕/转写）` | 优先读取 B 站官方字幕；没有字幕时下载音频并调用必剪语音转写；可额外抽取视频画面 | 不需要额外模型 Key；开启抽帧后可结合当前视觉模型理解场景、人物和屏幕文字 | 抽帧默认关闭；开启时当前模型必须支持图片输入，且静态画面不能完整代替连续视频 |
 | `Gemini 直接视频分析` | 下载低清视频并交给 Gemini 分析画面、声音和屏幕文字 | 能理解动作、场景、画面梗和无对白内容 | 需要 Gemini API Key，会消耗 Gemini 配额并上传视频 |
 
 两种方式的最终回复流程相同：
 
-1. 插件只提取视频元数据和内容事实。
-2. 事实被加入当前 AstrBot 主 Agent 的用户上下文。
+1. 插件只提取视频元数据、文字资料和可选画面事实。
+2. 资料被加入当前 AstrBot 主 Agent 的用户上下文。
 3. 当前会话的人格、历史和默认模型负责自然回复用户。
 
 Gemini 不直接面向用户说话，也不会替换 AstrBot 人格。外部视频标题、简介、字幕和模型分析会被标为不可信资料，其中出现的提示词或命令只按视频内容处理。
 插件注入的视频事实只参与当前一轮请求，不写入长期对话历史，避免大段字幕持续占用上下文。
+
+### 默认模型抽帧识图（可选）
+
+在 `bilibili_video.default_model.frame_vision.enabled` 开启后，插件会下载当前分 P 的视频，从开头到结尾均匀抽取 JPEG 画面，并把它们与字幕/转写一起交给当前 AstrBot 模型。这样默认模型可以同时参考文字、人物、场景、画面梗和屏幕文字。
+
+这不是另一个模型，也不会改变人格。它要求当前 AstrBot 会话模型支持图片输入；不支持视觉输入的模型可能忽略图片或返回模型侧错误，因此此功能默认关闭。
+
+自动解析时的抽帧图片和说明文字会以 AstrBot 临时上下文注入；LLM 工具产生的帧会由 AstrBot 临时工具缓存交给当前 Agent，结束前会标记为不保存。两种路径都不会写入会话历史，也不会带入后续聊天上下文。
 
 ### 自动触发方式
 
@@ -88,12 +96,17 @@ Gemini 不直接面向用户说话，也不会替换 AstrBot 人格。外部视�
 | --- | --- |
 | `max_duration_seconds` | 当前分 P 的最大时长，默认 600 秒 |
 | `max_file_size_mb` | 下载视频或音频的大小上限，默认 80 MB |
-| `download_quality` | Gemini 模式下载画质，默认 360p |
+| `download_quality` | Gemini 或抽帧来源的视频下载画质，默认 360p |
 | `processing_timeout_seconds` | 整条解析流水线的超时 |
 | `cache_ttl_minutes` | 同一视频分析结果缓存时间 |
 | `cookie` / `cookies_file` | 可选，用于登录后才能访问的视频或字幕 |
 | `default_model.bcut_fallback_enabled` | 无官方字幕时是否使用必剪转写 |
 | `default_model.max_transcript_chars` | 交给默认模型的字幕上限；超长时保留首段、中段和结尾 |
+| `default_model.frame_vision.enabled` | 是否让默认模型结合抽帧识图，默认关闭 |
+| `default_model.frame_vision.frame_count` | 均匀抽取的画面数量，默认 6，范围 1-24 |
+| `default_model.frame_vision.max_frame_width` | 单张画面的最大宽度，默认 960 像素 |
+| `default_model.frame_vision.jpeg_quality` | JPEG 清晰度，数值越小越清晰、文件越大，默认 5 |
+| `default_model.frame_vision.max_total_size_mb` | 所有画面的总大小上限，默认 8 MB |
 | `gemini.api_key` | Gemini 模式必填，也可使用环境变量 `GEMINI_API_KEY` |
 | `gemini.api_base` / `gemini.model` | Gemini REST API 根地址和模型名 |
 | `gemini.upload_mode` | 自动选择、File API 或内嵌 Base64 |
@@ -106,20 +119,21 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 - 默认模型回退会把音频上传到 B 站必剪转写服务。插件会把必剪返回的 HTTP 上传地址强制升级为 HTTPS，并限制为 B 站上传域名。
 - Gemini 模式会把下载的视频上传到配置的 Gemini API；默认在分析完成后删除 Gemini File API 文件。
 - 下载文件位于插件数据目录的临时目录，成功、失败和取消后都会清理。
-- 同一视频会并发去重并缓存，避免多人同时分享时重复下载和计费。
+- 字幕、转写和 Gemini 分析文字会缓存；自动注入的抽帧只在本轮内存中使用，工具返回的抽帧只进入 AstrBot 临时工具缓存供本轮读取；两者均不写入会话历史或插件持久缓存。
 
 ### 能力边界
 
 - 会员、付费、地区限制、已删除或风控视频可能需要 Cookie，也可能仍无法读取。
 - 必剪是 B 站的非公开稳定接口，未来失效时可关闭回退，或改用 Gemini 模式。
-- 默认模型方式没有视频画面输入。仅有音乐或纯视觉内容时，转写可能为空或不足以回答画面细节。
+- 默认模型方式未开启抽帧时没有视频画面输入。仅有音乐或纯视觉内容时，转写可能为空或不足以回答画面细节。
+- 抽帧只能提供若干静态时点；快速动作、镜头间细节和音画同步仍可能无法完整判断。
 - Gemini API 代理必须同时兼容 `v1beta generateContent` 和 File API；只兼容 OpenAI 格式的代理不能直接使用。
 
 ## LLM 工具
 
 | 工具名 | 作用 |
 | --- | --- |
-| `understand_bilibili_video` | 读取 B 站视频事实，支持强制刷新缓存 |
+| `understand_bilibili_video` | 读取 B 站视频事实；默认模型开启抽帧时会在当前工具回合附带画面，随后自动从历史移除 |
 | `get_qq_avatar` | 获取 QQ 用户头像，可把图片交给视觉模型 |
 | `get_qq_group_member_info` | 获取 QQ号、QQ名、群昵称、群身份、群等级、专属头衔及 OneBot 额外字段 |
 | `get_qq_profile` | 整合用户资料、群成员资料、群信息和头像 |
