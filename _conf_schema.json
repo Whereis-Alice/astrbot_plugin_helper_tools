@@ -149,7 +149,7 @@
         "type": "text",
         "description": "可选：B 站 Cookie 文本",
         "default": "",
-        "hint": "例如 SESSDATA=...; bili_jct=...。仅用于读取登录后可访问的视频或字幕；更推荐使用下面的 cookies.txt 文件。请勿把 Cookie 发到聊天中。"
+        "hint": "例如 SESSDATA=...; bili_jct=...。只会发送给 B 站网页/API 与下载请求，不会发送给 b23.tv 短链；插件启动时会检查登录状态并写入不含 Cookie 内容的日志。更推荐使用下面的 cookies.txt 文件。请勿把 Cookie 发到聊天中。"
       },
       "cookies_file": {
         "type": "file",
@@ -158,7 +158,7 @@
           ".txt"
         ],
         "default": [],
-        "hint": "需要登录的视频可上传 yt-dlp/浏览器导出的 Netscape cookies.txt。"
+        "hint": "需要登录的视频可上传 yt-dlp/浏览器导出的 Netscape cookies.txt。插件启动日志会说明 Cookie 是否已被 B 站识别为登录状态。"
       },
       "default_model": {
         "type": "object",

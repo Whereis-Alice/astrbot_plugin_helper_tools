@@ -5,8 +5,10 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import astrbot.api.message_components as Comp
+from aiohttp import web
 
 from astrbot_plugin_helper_tools.bilibili_service import (
     BilibiliVideoService,
@@ -161,6 +163,136 @@ class BilibiliReferenceTests(unittest.TestCase):
 
             self.assertIn("SESSDATA=secret", header)
             self.assertIn("bili_jct=csrf", header)
+            self.assertNotIn("Cookie", service._request_headers(include_cookie=False))
+            self.assertIn("Cookie", service._request_headers())
+
+
+class BilibiliShortUrlTests(unittest.IsolatedAsyncioTestCase):
+    async def test_short_url_strips_tracking_and_never_sends_bilibili_cookie(self) -> None:
+        observed: dict[str, str] = {}
+
+        async def handler(request: web.Request) -> web.Response:
+            observed["query"] = request.query_string
+            observed["cookie"] = request.headers.get("Cookie", "")
+            return web.Response(
+                status=302,
+                headers={
+                    "Location": "https://www.bilibili.com/video/BV1GJ411x7h7?p=2"
+                },
+            )
+
+        app = web.Application()
+        app.router.add_route("*", "/OffDfmV", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = runner.addresses[0][1]
+        service = BilibiliVideoService(
+            {"bilibili_video": {"cookie": "SESSDATA=secret"}},
+            Path(tempfile.gettempdir()),
+        )
+
+        try:
+            with (
+                patch(
+                    "astrbot_plugin_helper_tools.bilibili_service._is_allowed_bilibili_url",
+                    return_value=True,
+                ),
+                patch(
+                    "astrbot_plugin_helper_tools.bilibili_service._is_short_url_host",
+                    return_value=True,
+                ),
+            ):
+                resolved = await service._resolve_short_url(
+                    f"http://127.0.0.1:{port}/OffDfmV?share_medium=android&ts=1"
+                )
+        finally:
+            await service.close()
+            await runner.cleanup()
+
+        self.assertEqual(observed["query"], "")
+        self.assertEqual(observed["cookie"], "")
+        self.assertEqual(
+            resolved,
+            "https://www.bilibili.com/video/BV1GJ411x7h7?p=2",
+        )
+
+    async def test_short_url_retries_with_head_after_get_400(self) -> None:
+        methods: list[str] = []
+
+        async def handler(request: web.Request) -> web.Response:
+            methods.append(request.method)
+            if request.method == "GET":
+                return web.Response(status=400)
+            return web.Response(
+                status=302,
+                headers={"Location": "https://www.bilibili.com/video/BV1GJ411x7h7"},
+            )
+
+        app = web.Application()
+        app.router.add_route("*", "/OffDfmV", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = runner.addresses[0][1]
+        service = BilibiliVideoService({}, Path(tempfile.gettempdir()))
+
+        try:
+            with (
+                patch(
+                    "astrbot_plugin_helper_tools.bilibili_service._is_allowed_bilibili_url",
+                    return_value=True,
+                ),
+                patch(
+                    "astrbot_plugin_helper_tools.bilibili_service._is_short_url_host",
+                    return_value=True,
+                ),
+            ):
+                resolved = await service._resolve_short_url(
+                    f"http://127.0.0.1:{port}/OffDfmV"
+                )
+        finally:
+            await service.close()
+            await runner.cleanup()
+
+        self.assertEqual(methods, ["GET", "HEAD"])
+        self.assertEqual(resolved, "https://www.bilibili.com/video/BV1GJ411x7h7")
+
+
+class BilibiliCookieVerificationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cookie_check_calls_bilibili_nav_with_the_configured_cookie(self) -> None:
+        observed: dict[str, str] = {}
+
+        async def nav(request: web.Request) -> web.Response:
+            observed["cookie"] = request.headers.get("Cookie", "")
+            return web.json_response({"code": 0, "data": {"isLogin": True}})
+
+        app = web.Application()
+        app.router.add_get("/x/web-interface/nav", nav)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = runner.addresses[0][1]
+        service = BilibiliVideoService(
+            {"bilibili_video": {"cookie": "SESSDATA=secret; bili_jct=csrf"}},
+            Path(tempfile.gettempdir()),
+        )
+
+        try:
+            with patch(
+                "astrbot_plugin_helper_tools.bilibili_service._NAV_ENDPOINT",
+                f"http://127.0.0.1:{port}/x/web-interface/nav",
+            ):
+                await service._verify_cookie_on_start()
+        finally:
+            await service.close()
+            await runner.cleanup()
+
+        self.assertIn("SESSDATA=secret", observed["cookie"])
+        self.assertIn("bili_jct=csrf", observed["cookie"])
 
 
 class BilibiliCacheTests(unittest.IsolatedAsyncioTestCase):

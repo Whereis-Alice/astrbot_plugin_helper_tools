@@ -39,6 +39,7 @@ from .helper_utils import (
 BILIBILI_TOOL_NAME = "understand_bilibili_video"
 _EVENT_REFERENCE_ATTR = "_helper_tools_bilibili_reference"
 _VIEW_ENDPOINT = "https://api.bilibili.com/x/web-interface/view"
+_NAV_ENDPOINT = "https://api.bilibili.com/x/web-interface/nav"
 _SHORT_HOSTS = {"b23.tv", "bili2233.cn", "bili22.cn", "bili23.cn", "bili33.cn"}
 _ALLOWED_HOST_SUFFIXES = ("bilibili.com", *_SHORT_HOSTS)
 _GENERIC_URL_RE = re.compile(
@@ -84,6 +85,7 @@ class BilibiliVideoService:
 
     async def start(self) -> None:
         await self.downloader.start()
+        await self._verify_cookie_on_start()
 
     async def close(self) -> None:
         if self._session is not None and not self._session.closed:
@@ -513,11 +515,18 @@ class BilibiliVideoService:
         current = _clean_url(url)
         if not _is_allowed_bilibili_url(current):
             raise BilibiliError("short URL is outside the Bilibili allowlist")
+        if _is_short_url_host(current):
+            current = _strip_short_url_tracking(current)
         session = await self._get_session()
         for _attempt in range(6):
+            headers = (
+                self._short_url_headers()
+                if _is_short_url_host(current)
+                else self._request_headers()
+            )
             async with session.get(
                 current,
-                headers=self._request_headers(),
+                headers=headers,
                 allow_redirects=False,
                 timeout=aiohttp.ClientTimeout(total=self._request_timeout()),
             ) as response:
@@ -526,19 +535,32 @@ class BilibiliVideoService:
                     response.release()
                     if not location:
                         raise BilibiliError("short URL redirect has no Location header")
-                    target = urllib.parse.urljoin(current, location)
-                    if not _is_allowed_bilibili_url(target):
-                        raise BilibiliError(
-                            "short URL redirected outside the Bilibili allowlist",
-                            user_message="b23.tv 短链跳转到了非 B 站域名，已为安全起见拒绝访问。",
-                        )
+                    target = self._short_redirect_target(current, location)
+                    target_url = _canonical_video_url(extract_video_reference(target))
+                    if target_url:
+                        return target_url
                     current = target
                     continue
                 if response.status < 200 or response.status >= 300:
+                    status = response.status
                     response.release()
+                    if status == 400 and _is_short_url_host(current):
+                        location = await self._short_url_head_location(session, current)
+                        if location:
+                            target = self._short_redirect_target(current, location)
+                            target_url = _canonical_video_url(
+                                extract_video_reference(target)
+                            )
+                            if target_url:
+                                return target_url
+                            current = target
+                            continue
                     raise BilibiliError(
-                        f"short URL returned HTTP {response.status}",
-                        user_message=f"b23.tv 短链解析失败（HTTP {response.status}）。",
+                        f"short URL returned HTTP {status}",
+                        user_message=(
+                            f"b23.tv 短链解析失败（HTTP {status}）。"
+                            "短链可能已失效，或 B 站短链服务暂时拒绝了本次请求。"
+                        ),
                     )
                 try:
                     body = await read_bounded_response(response, 512 * 1024)
@@ -548,8 +570,9 @@ class BilibiliVideoService:
                         user_message="b23.tv 短链没有跳转到可识别的 B 站视频页面。",
                     ) from exc
                 current_reference = extract_video_reference(current)
-                if current_reference and current_reference.kind in {"bvid", "aid"}:
-                    return current
+                current_url = _canonical_video_url(current_reference)
+                if current_url:
+                    return current_url
                 page_text = body.decode("utf-8", errors="ignore")
                 try:
                     short_payload = json.loads(page_text)
@@ -564,14 +587,9 @@ class BilibiliVideoService:
                         user_message="这个 b23.tv 短链已失效或不存在。",
                     )
                 page_reference = extract_video_reference(page_text)
-                if page_reference:
-                    suffix = (
-                        f"?p={page_reference.part}" if page_reference.part > 1 else ""
-                    )
-                    if page_reference.kind == "bvid":
-                        return f"https://www.bilibili.com/video/{page_reference.value}{suffix}"
-                    if page_reference.kind == "aid":
-                        return f"https://www.bilibili.com/video/av{page_reference.value}{suffix}"
+                page_url = _canonical_video_url(page_reference)
+                if page_url:
+                    return page_url
                 break
         raise BilibiliError(
             "too many or unresolved short URL redirects",
@@ -583,13 +601,95 @@ class BilibiliVideoService:
             self._session = aiohttp.ClientSession(trust_env=True)
         return self._session
 
-    def _request_headers(self) -> dict[str, str]:
+    async def _verify_cookie_on_start(self) -> None:
+        cookie = self._cookie_header()
+        if not cookie:
+            logger.info(
+                "[HelperTools/Bilibili] no Cookie configured; public videos will be read without login"
+            )
+            return
+
+        try:
+            session = await self._get_session()
+            async with session.get(
+                _NAV_ENDPOINT,
+                headers=self._request_headers(),
+                timeout=aiohttp.ClientTimeout(total=min(10, self._request_timeout())),
+            ) as response:
+                payload = await _bounded_json(response, max_bytes=512 * 1024)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - verification must not block plugin startup
+            logger.warning(
+                "[HelperTools/Bilibili] Cookie was loaded from %s but could not be verified: %r",
+                self._cookie_source(),
+                exc,
+            )
+            return
+
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if (
+            _safe_int(payload.get("code", -1)) == 0
+            and isinstance(data, dict)
+            and bool(data.get("isLogin"))
+        ):
+            logger.info(
+                "[HelperTools/Bilibili] Cookie verification succeeded (source=%s, logged in)",
+                self._cookie_source(),
+            )
+            return
+
+        logger.warning(
+            "[HelperTools/Bilibili] Cookie was loaded from %s but Bilibili reports not logged in; it may be expired or incomplete",
+            self._cookie_source(),
+        )
+
+    @staticmethod
+    def _short_url_headers() -> dict[str, str]:
+        """b23.tv is a redirect host, so Bilibili account cookies never belong here."""
+
+        return {
+            "User-Agent": _USER_AGENT,
+            "Referer": "https://www.bilibili.com/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate",
+        }
+
+    async def _short_url_head_location(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+    ) -> str:
+        try:
+            async with session.head(
+                url,
+                headers=self._short_url_headers(),
+                allow_redirects=False,
+                timeout=aiohttp.ClientTimeout(total=self._request_timeout()),
+            ) as response:
+                if response.status not in {301, 302, 303, 307, 308}:
+                    return ""
+                return clean_text(response.headers.get("Location"))
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return ""
+
+    @staticmethod
+    def _short_redirect_target(current: str, location: str) -> str:
+        target = urllib.parse.urljoin(current, location)
+        if not _is_allowed_bilibili_url(target):
+            raise BilibiliError(
+                "short URL redirected outside the Bilibili allowlist",
+                user_message="b23.tv 短链跳转到了非 B 站域名，已为安全起见拒绝访问。",
+            )
+        return target
+
+    def _request_headers(self, *, include_cookie: bool = True) -> dict[str, str]:
         headers = {
             "User-Agent": _USER_AGENT,
             "Referer": "https://www.bilibili.com/",
             "Accept": "application/json, text/plain, */*",
         }
-        cookie = self._cookie_header()
+        cookie = self._cookie_header() if include_cookie else ""
         if cookie:
             headers["Cookie"] = cookie
         return headers
@@ -619,6 +719,15 @@ class BilibiliVideoService:
             if len(columns) >= 7 and columns[5] and columns[6]:
                 pairs.append(f"{columns[5]}={columns[6]}")
         return "; ".join(pairs)
+
+    def _cookie_source(self) -> str:
+        if clean_text(cfg(self.config, "bilibili_video", "cookie", "")):
+            return "配置文本"
+        configured = extract_file_config_value(
+            cfg(self.config, "bilibili_video", "cookies_file", [])
+        )
+        path = resolve_existing_path(configured, self.data_dir)
+        return "cookies.txt 文件" if path is not None and path.is_file() else "未知来源"
 
     def _request_timeout(self) -> int:
         return read_int(
@@ -892,6 +1001,30 @@ def _canonical_bvid(value: str) -> str:
 
 def _clean_url(value: str) -> str:
     return html.unescape(clean_text(value)).strip("<>").rstrip(_TRAILING_URL_CHARS)
+
+
+def _strip_short_url_tracking(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, "", "")
+    )
+
+
+def _is_short_url_host(url: str) -> bool:
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return host in _SHORT_HOSTS
+
+
+def _canonical_video_url(reference: VideoReference | None) -> str:
+    if reference is None or reference.kind not in {"bvid", "aid"}:
+        return ""
+    suffix = f"?p={reference.part}" if reference.part > 1 else ""
+    if reference.kind == "bvid":
+        return f"https://www.bilibili.com/video/{reference.value}{suffix}"
+    return f"https://www.bilibili.com/video/av{reference.value}{suffix}"
 
 
 def _is_allowed_bilibili_url(url: str) -> bool:

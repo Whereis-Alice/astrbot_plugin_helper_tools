@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、QQ 信息、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.5.1`
+- 当前版本：`v0.5.2`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -29,7 +29,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.5.1` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装 B 站模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.5.2` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装 B 站模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -99,7 +99,7 @@ Gemini 不直接面向用户说话，也不会替换 AstrBot 人格。外部视�
 | `download_quality` | Gemini 或抽帧来源的视频下载画质，默认 360p |
 | `processing_timeout_seconds` | 整条解析流水线的超时 |
 | `cache_ttl_minutes` | 同一视频分析结果缓存时间 |
-| `cookie` / `cookies_file` | 可选，用于登录后才能访问的视频或字幕 |
+| `cookie` / `cookies_file` | 可选，用于登录后才能访问的视频或字幕；启动日志会校验登录状态 |
 | `default_model.bcut_fallback_enabled` | 无官方字幕时是否使用必剪转写 |
 | `default_model.max_transcript_chars` | 交给默认模型的字幕上限；超长时保留首段、中段和结尾 |
 | `default_model.frame_vision.enabled` | 是否让默认模型结合抽帧识图，默认关闭 |
@@ -276,7 +276,13 @@ B 站模块依赖：
 
 ### 需要登录或触发 B 站风控
 
-在 `cookies_file` 上传 Netscape 格式 `cookies.txt`，或填写 Cookie 文本。账号 Cookie 可能过期，请定期更换并妥善保管。
+在 `cookies_file` 上传 Netscape 格式 `cookies.txt`，或填写 Cookie 文本。重载插件后会出现以下不含敏感内容的状态日志之一：
+
+- `Cookie verification succeeded`：B 站确认当前为登录状态。
+- `Bilibili reports not logged in`：Cookie 已读取，但已失效、不完整或不属于当前账号。
+- `could not be verified`：网络或 B 站接口暂时不可用，不能据此判断 Cookie 是否失效。
+
+Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发送到 `b23.tv` 短链。QQ 分享附带的短链追踪参数会在解析时自动清理；遇到短链 `GET 400` 时还会尝试用 `HEAD` 读取跳转地址。
 
 ## 参考与致谢
 
@@ -284,6 +290,7 @@ B 站模块依赖：
 
 - Gemini 视频上传与分析流程参考 [YUMU1658/astrbot_plugin_qq_tools](https://github.com/YUMU1658/astrbot_plugin_qq_tools)，Copyright (c) 2026 YUMU1658。
 - B 站识别、字幕优先、yt-dlp 下载和必剪转写流程参考 [storyAura/astrbot_plugin_biliVideo](https://github.com/storyAura/astrbot_plugin_biliVideo)，Copyright (c) 2025 storyAura。
+- B 站短链的无 Cookie 展开请求策略参考 [drdon1234/astrbot_plugin_media_parser](https://github.com/drdon1234/astrbot_plugin_media_parser)。
 - QQ 资料卡能力参考 [Zhalslar/astrbot_plugin_box](https://github.com/Zhalslar/astrbot_plugin_box)。
 - Anime1 更新列表能力参考 [zhist2028/astrbot_plugin_anime1_list](https://github.com/zhist2028/astrbot_plugin_anime1_list)。
 - 收款码能力参考 [luori7hao/astrbot_plugin_payqr](https://github.com/luori7hao/astrbot_plugin_payqr)。
