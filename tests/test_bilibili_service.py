@@ -262,6 +262,34 @@ class BilibiliShortUrlTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BilibiliCookieVerificationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_downloader_uses_the_same_saved_qr_cookie_as_api_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            service = BilibiliVideoService(
+                {
+                    "bilibili_video": {
+                        "cookie": "SESSDATA=manual-secret; bili_jct=manual-csrf",
+                    }
+                },
+                root,
+            )
+            work_dir = root / "download_work"
+            work_dir.mkdir()
+            await service.credentials.save_cookie_pairs(
+                {"SESSDATA": "qr-secret", "bili_jct": "qr-csrf"}
+            )
+
+            try:
+                cookiefile = service.downloader._cookiefile(work_dir)
+                self.assertIsNotNone(cookiefile)
+                content = cookiefile.read_text(encoding="utf-8")
+            finally:
+                await service.close()
+
+        self.assertIn("SESSDATA\tqr-secret", content)
+        self.assertIn("bili_jct\tqr-csrf", content)
+        self.assertNotIn("manual-secret", content)
+
     async def test_cookie_check_calls_bilibili_nav_with_the_configured_cookie(self) -> None:
         observed: dict[str, str] = {}
 

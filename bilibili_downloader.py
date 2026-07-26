@@ -5,6 +5,7 @@ import mimetypes
 import shutil
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,9 +43,16 @@ class _YtDlpLogger:
 class BilibiliDownloader:
     """Download one Bilibili page with bounded yt-dlp jobs and cleanup."""
 
-    def __init__(self, config: Any, data_dir: Path) -> None:
+    def __init__(
+        self,
+        config: Any,
+        data_dir: Path,
+        *,
+        cookie_header_provider: Callable[[], str] | None = None,
+    ) -> None:
         self.config = config
         self.temp_root = data_dir / "bilibili_video" / "temp"
+        self._cookie_header_provider = cookie_header_provider
         self._reapers: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
@@ -222,20 +230,17 @@ class BilibiliDownloader:
             ) from exc
 
     def _cookiefile(self, work_dir: Path) -> Path | None:
-        module = cfg(self.config, "bilibili_video", "cookies_file", [])
-        raw_path = extract_file_config_value(module)
-        existing = resolve_existing_path(raw_path, self.temp_root.parent)
-        if existing and existing.is_file():
-            return existing
-
-        raw_cookie = clean_text(cfg(self.config, "bilibili_video", "cookie", ""))
+        raw_cookie = self._effective_cookie_header()
         pairs: list[tuple[str, str]] = []
         for token in raw_cookie.split(";"):
             name, separator, value = token.strip().partition("=")
             if separator and name.strip() and value.strip():
                 pairs.append((name.strip(), value.strip()))
         if not pairs:
-            return None
+            module = cfg(self.config, "bilibili_video", "cookies_file", [])
+            raw_path = extract_file_config_value(module)
+            existing = resolve_existing_path(raw_path, self.temp_root.parent)
+            return existing if existing and existing.is_file() else None
 
         target = work_dir / "cookies.txt"
         lines = ["# Netscape HTTP Cookie File"]
@@ -245,6 +250,11 @@ class BilibiliDownloader:
         )
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return target
+
+    def _effective_cookie_header(self) -> str:
+        if self._cookie_header_provider is not None:
+            return clean_text(self._cookie_header_provider())
+        return clean_text(cfg(self.config, "bilibili_video", "cookie", ""))
 
     @staticmethod
     def _find_output(work_dir: Path, kind: str) -> Path | None:

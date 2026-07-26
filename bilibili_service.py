@@ -74,11 +74,15 @@ class BilibiliVideoService:
     def __init__(self, config: Any, data_dir: Path) -> None:
         self.config = config
         self.data_dir = data_dir
-        self.downloader = BilibiliDownloader(config, data_dir)
+        self.credentials = BilibiliCredentialStore(data_dir)
+        self.downloader = BilibiliDownloader(
+            config,
+            data_dir,
+            cookie_header_provider=self._cookie_header,
+        )
         self.transcript = BilibiliTranscriptService(config, self.downloader)
         self.frames = BilibiliFrameExtractor(config)
         self.gemini = GeminiVideoAnalyzer(config)
-        self.credentials = BilibiliCredentialStore(data_dir)
         self._session: aiohttp.ClientSession | None = None
         self._analysis_cache: OrderedDict[
             str,
