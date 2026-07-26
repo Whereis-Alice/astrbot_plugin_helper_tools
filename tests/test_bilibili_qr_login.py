@@ -10,7 +10,9 @@ from aiohttp import web
 
 from astrbot_plugin_helper_tools.bilibili_qr_login import (
     BilibiliCredentialStore,
+    BilibiliQrLoginApiResponseError,
     BilibiliQrLoginService,
+    QrLoginOutcome,
 )
 from astrbot_plugin_helper_tools.bilibili_service import BilibiliVideoService
 
@@ -239,3 +241,104 @@ class BilibiliQrLoginTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(outcome.status, "cancelled")
         self.assertIn("SESSDATA=existing", credentials.cookie_header())
+
+    async def test_html_poll_response_explains_proxy_or_interception(self) -> None:
+        async def generate(_request: web.Request) -> web.Response:
+            return web.json_response(
+                {
+                    "code": 0,
+                    "data": {
+                        "url": "https://passport.bilibili.com/h5-app/passport/sso/scan?auth_code=test",
+                        "qrcode_key": "html-key",
+                    },
+                }
+            )
+
+        async def poll(_request: web.Request) -> web.Response:
+            return web.Response(
+                text="<html><body>blocked</body></html>",
+                content_type="text/html",
+            )
+
+        app = web.Application()
+        app.router.add_get("/generate", generate)
+        app.router.add_get("/poll", poll)
+        runner, port = await self._start_server(app)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        service = BilibiliQrLoginService(
+            {
+                "bilibili_video": {
+                    "qr_login": {"direct_retry_on_invalid_response": False},
+                }
+            },
+            root,
+            BilibiliCredentialStore(root),
+        )
+
+        try:
+            with (
+                patch(
+                    "astrbot_plugin_helper_tools.bilibili_qr_login.QR_GENERATE_ENDPOINT",
+                    f"http://127.0.0.1:{port}/generate",
+                ),
+                patch(
+                    "astrbot_plugin_helper_tools.bilibili_qr_login.QR_POLL_ENDPOINT",
+                    f"http://127.0.0.1:{port}/poll",
+                ),
+            ):
+                started = await service.start_login()
+                outcome = await service.wait_for_login(started)
+        finally:
+            await service.close()
+            await runner.cleanup()
+
+        self.assertEqual(outcome.status, "failed")
+        self.assertIn("网页而不是 JSON", outcome.message)
+        self.assertIn("代理", outcome.message)
+
+    async def test_invalid_poll_response_retries_without_system_proxy(self) -> None:
+        class ProxyFallbackService(BilibiliQrLoginService):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self.poll_trust_env: list[bool] = []
+
+            async def _poll_login_with_session(self, active, session):
+                self.poll_trust_env.append(bool(session._trust_env))
+                if len(self.poll_trust_env) == 1:
+                    raise BilibiliQrLoginApiResponseError("unexpected proxy response")
+                return QrLoginOutcome("cancelled", "test complete")
+
+        async def generate(_request: web.Request) -> web.Response:
+            return web.json_response(
+                {
+                    "code": 0,
+                    "data": {
+                        "url": "https://passport.bilibili.com/h5-app/passport/sso/scan?auth_code=test",
+                        "qrcode_key": "retry-key",
+                    },
+                }
+            )
+
+        app = web.Application()
+        app.router.add_get("/generate", generate)
+        runner, port = await self._start_server(app)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        service = ProxyFallbackService({}, root, BilibiliCredentialStore(root))
+
+        try:
+            with patch(
+                "astrbot_plugin_helper_tools.bilibili_qr_login.QR_GENERATE_ENDPOINT",
+                f"http://127.0.0.1:{port}/generate",
+            ):
+                started = await service.start_login()
+                outcome = await service.wait_for_login(started)
+        finally:
+            await service.close()
+            await runner.cleanup()
+
+        self.assertEqual(outcome.status, "cancelled")
+        self.assertEqual(service.poll_trust_env, [True, False])

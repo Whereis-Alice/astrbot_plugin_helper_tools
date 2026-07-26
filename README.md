@@ -133,6 +133,8 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 | `/helper_bili_login_cancel` | 取消正在等待确认的二维码，不删除已有凭据 |
 | `/helper_bili_logout` | 删除本插件扫码保存的凭据，不修改配置页的 Cookie 文本或 cookies.txt |
 
+`qr_login.direct_retry_on_invalid_response` 默认开启。二维码请求会先遵循服务器的 `HTTP_PROXY` / `HTTPS_PROXY` 设置；如果代理或网络中转返回网页、空内容或其它非 JSON 数据，插件会自动再试一次不使用系统代理的直连。两次都失败时，日志会明确说明是网页拦截、空内容还是 HTTP 拒绝，不会输出二维码内容或 Cookie。
+
 #### 与 `astrbot_plugin_bilibili` 同时使用
 
 本插件刻意使用 `helper_bili_*` 命名空间，不占用 `/bili_login` 和 `/bili_logout`。因此同时安装 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili) 时：
@@ -155,7 +157,7 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 - Gemini 模式会把下载的视频上传到配置的 Gemini API；默认在分析完成后删除 Gemini File API 文件。
 - 下载文件位于插件数据目录的临时目录，成功、失败和取消后都会清理。
 - 字幕、转写和 Gemini 分析文字会缓存；自动注入的抽帧只在本轮内存中使用，工具返回的抽帧只进入 AstrBot 临时工具缓存供本轮读取；两者均不写入会话历史或插件持久缓存。
-- 二维码生成与轮询请求不会携带已有 B 站 Cookie；扫码结果只在取得 `SESSDATA` 后才会保存。视频网页、API 和下载请求会使用当前选中的凭据，但 `b23.tv` 短链不会收到 Cookie。
+- 二维码生成与轮询请求不会携带已有 B 站 Cookie；扫码结果只在取得 `SESSDATA` 后才会保存。遇到代理或中转返回异常页面时，默认会再进行一次不读取系统代理的直连重试。视频网页、API 和下载请求会使用当前选中的凭据，但 `b23.tv` 短链不会收到 Cookie。
 
 ### 能力边界
 

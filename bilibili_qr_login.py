@@ -35,6 +35,10 @@ class BilibiliQrLoginError(RuntimeError):
     """A QR-login failure that is safe to show to a plugin administrator."""
 
 
+class BilibiliQrLoginApiResponseError(BilibiliQrLoginError):
+    """An invalid API response that may succeed when retried without a proxy."""
+
+
 @dataclass(frozen=True)
 class QrLoginOutcome:
     status: str
@@ -60,6 +64,7 @@ class _ActiveQrLogin:
     session: aiohttp.ClientSession
     cancel_event: asyncio.Event
     task: asyncio.Task[QrLoginOutcome] | None = None
+    direct_session: aiohttp.ClientSession | None = None
 
 
 class BilibiliCredentialStore:
@@ -204,6 +209,12 @@ class BilibiliQrLoginService:
             maximum=600,
         )
 
+    def direct_retry_on_invalid_response(self) -> bool:
+        return read_bool(
+            self._config_value("direct_retry_on_invalid_response", True),
+            True,
+        )
+
     def is_active(self) -> bool:
         active = self._active
         return active is not None and active.task is not None and not active.task.done()
@@ -226,23 +237,25 @@ class BilibiliQrLoginService:
                     task=active.task,
                 )
 
-            session = aiohttp.ClientSession(
-                cookie_jar=aiohttp.CookieJar(unsafe=True),
-                trust_env=True,
-            )
+            session: aiohttp.ClientSession | None = None
             try:
-                challenge = await self._generate_challenge(session)
+                challenge, session = await self._open_challenge_session()
                 await asyncio.to_thread(
                     self._write_qr_image,
                     challenge.qr_url,
                     self.qr_image_path,
                 )
             except asyncio.CancelledError:
-                await session.close()
+                if session is not None and not session.closed:
+                    await session.close()
                 raise
             except Exception:
-                await session.close()
+                if session is not None and not session.closed:
+                    await session.close()
                 raise
+
+            if session is None:
+                raise RuntimeError("Bilibili QR login session was not created")
 
             active = _ActiveQrLogin(
                 challenge=challenge,
@@ -290,8 +303,9 @@ class BilibiliQrLoginService:
                 active.task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await active.task
-            if not active.session.closed:
-                await active.session.close()
+            for session in (active.session, active.direct_session):
+                if session is not None and not session.closed:
+                    await session.close()
         await asyncio.to_thread(self._remove_qr_image)
 
     async def clear_qr_image(self) -> None:
@@ -310,6 +324,49 @@ class BilibiliQrLoginService:
             20,
             minimum=5,
             maximum=120,
+        )
+
+    async def _open_challenge_session(
+        self,
+    ) -> tuple[_QrLoginChallenge, aiohttp.ClientSession]:
+        cookie_jar = aiohttp.CookieJar(unsafe=True)
+        session = self._create_session(cookie_jar, trust_env=True)
+        try:
+            return await self._generate_challenge(session), session
+        except BilibiliQrLoginApiResponseError as exc:
+            if not self.direct_retry_on_invalid_response():
+                await session.close()
+                raise
+            logger.warning(
+                "[HelperTools/Bilibili] QR generation received an invalid API response; retrying without system proxy: %s",
+                exc,
+            )
+            await session.close()
+            direct_session = self._create_session(cookie_jar, trust_env=False)
+            try:
+                return await self._generate_challenge(direct_session), direct_session
+            except BilibiliQrLoginApiResponseError as direct_exc:
+                await direct_session.close()
+                raise self._direct_retry_failed(direct_exc) from direct_exc
+            except Exception:
+                await direct_session.close()
+                raise
+        except Exception:
+            await session.close()
+            raise
+
+    @staticmethod
+    def _create_session(
+        cookie_jar: aiohttp.CookieJar,
+        *,
+        trust_env: bool,
+    ) -> aiohttp.ClientSession:
+        return aiohttp.ClientSession(cookie_jar=cookie_jar, trust_env=trust_env)
+
+    @staticmethod
+    def _direct_retry_failed(error: BilibiliQrLoginError) -> BilibiliQrLoginError:
+        return BilibiliQrLoginError(
+            f"{error} 已自动改为不使用系统代理直连 B 站重试一次，仍未成功。"
         )
 
     async def _generate_challenge(
@@ -363,8 +420,9 @@ class BilibiliQrLoginService:
             logger.warning("[HelperTools/Bilibili] QR login failed unexpectedly: %r", exc)
             return QrLoginOutcome("failed", "扫码登录请求失败，请稍后重试。")
         finally:
-            if not active.session.closed:
-                await active.session.close()
+            for session in (active.session, active.direct_session):
+                if session is not None and not session.closed:
+                    await session.close()
             async with self._lock:
                 if self._active is active:
                     self._active = None
@@ -373,7 +431,32 @@ class BilibiliQrLoginService:
         self,
         active: _ActiveQrLogin,
     ) -> QrLoginOutcome | None:
-        async with active.session.get(
+        session = active.direct_session or active.session
+        try:
+            return await self._poll_login_with_session(active, session)
+        except BilibiliQrLoginApiResponseError as exc:
+            if active.direct_session is not None or not self.direct_retry_on_invalid_response():
+                raise
+            logger.warning(
+                "[HelperTools/Bilibili] QR poll received an invalid API response; retrying without system proxy: %s",
+                exc,
+            )
+            direct_session = self._create_session(
+                active.session.cookie_jar,
+                trust_env=False,
+            )
+            active.direct_session = direct_session
+            try:
+                return await self._poll_login_with_session(active, direct_session)
+            except BilibiliQrLoginApiResponseError as direct_exc:
+                raise self._direct_retry_failed(direct_exc) from direct_exc
+
+    async def _poll_login_with_session(
+        self,
+        active: _ActiveQrLogin,
+        session: aiohttp.ClientSession,
+    ) -> QrLoginOutcome | None:
+        async with session.get(
             QR_POLL_ENDPOINT,
             params={"qrcode_key": active.challenge.qrcode_key},
             headers=self._request_headers(),
@@ -389,7 +472,7 @@ class BilibiliQrLoginService:
             if state_code == 0:
                 if active.cancel_event.is_set():
                     return QrLoginOutcome("cancelled", "扫码登录已取消。")
-                cookies = self._collect_login_cookies(active.session, response)
+                cookies = self._collect_login_cookies(session, response)
                 await self.credentials.save_cookie_pairs(cookies)
                 return QrLoginOutcome("success", "扫码登录成功，凭据已安全保存。")
             if state_code in {86101, 86090}:
@@ -411,18 +494,57 @@ class BilibiliQrLoginService:
     async def _read_json_response(response: aiohttp.ClientResponse) -> dict[str, Any]:
         body = await response.content.read(MAX_RESPONSE_BYTES + 1)
         if len(body) > MAX_RESPONSE_BYTES:
-            raise BilibiliQrLoginError("B 站二维码接口返回内容过大，已中止登录。")
+            raise BilibiliQrLoginApiResponseError(
+                "B 站二维码接口返回内容过大，已中止登录。"
+            )
         if response.status < 200 or response.status >= 300:
-            raise BilibiliQrLoginError(
+            BilibiliQrLoginService._log_invalid_api_response(response, body, "http_error")
+            raise BilibiliQrLoginApiResponseError(
                 f"B 站二维码接口返回 HTTP {response.status}，请稍后重试。"
             )
         try:
-            payload = json.loads(body.decode("utf-8"))
+            payload = json.loads(body.decode("utf-8-sig"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise BilibiliQrLoginError("B 站二维码接口返回了无法识别的数据。") from exc
+            kind = BilibiliQrLoginService._invalid_response_kind(response, body)
+            BilibiliQrLoginService._log_invalid_api_response(response, body, kind)
+            if kind == "html":
+                message = (
+                    "B 站二维码接口返回了网页而不是 JSON 数据，通常是服务器代理、"
+                    "网络中转或 B 站风控拦截。"
+                )
+            elif kind == "empty":
+                message = "B 站二维码接口返回空内容，通常是网络连接或中转服务异常。"
+            else:
+                message = "B 站二维码接口返回了非 JSON 数据，通常是网络代理或风控拦截。"
+            raise BilibiliQrLoginApiResponseError(message) from exc
         if not isinstance(payload, dict):
-            raise BilibiliQrLoginError("B 站二维码接口返回格式不正确。")
+            raise BilibiliQrLoginApiResponseError("B 站二维码接口返回格式不正确。")
         return payload
+
+    @staticmethod
+    def _invalid_response_kind(response: aiohttp.ClientResponse, body: bytes) -> str:
+        content_type = clean_text(response.headers.get("Content-Type")).lower()
+        stripped = body.lstrip(b"\xef\xbb\xbf \t\r\n")
+        if not stripped:
+            return "empty"
+        if "html" in content_type or stripped.startswith(b"<"):
+            return "html"
+        return "non_json"
+
+    @staticmethod
+    def _log_invalid_api_response(
+        response: aiohttp.ClientResponse,
+        body: bytes,
+        kind: str,
+    ) -> None:
+        logger.warning(
+            "[HelperTools/Bilibili] QR API invalid response status=%s content_type=%s content_encoding=%s bytes=%d kind=%s",
+            response.status,
+            clean_text(response.headers.get("Content-Type")) or "unknown",
+            clean_text(response.headers.get("Content-Encoding")) or "none",
+            len(body),
+            kind,
+        )
 
     @staticmethod
     def _ensure_success_payload(payload: dict[str, Any], action: str) -> None:

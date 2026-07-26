@@ -84,6 +84,12 @@
             "default": true,
             "hint": "推荐保持开启，避免登录二维码出现在群聊中。"
           },
+          "direct_retry_on_invalid_response": {
+            "type": "bool",
+            "description": "二维码接口异常时自动尝试直连",
+            "default": true,
+            "hint": "二维码请求会先按服务器的 HTTP_PROXY/HTTPS_PROXY 设置发出；如果收到网页、空内容或其它非 JSON 回包，会自动再尝试一次不使用系统代理的直连。服务器不能直连 B 站时可关闭。"
+          },
           "prefer_saved_credentials": {
             "type": "bool",
             "description": "优先使用扫码保存的凭据",
