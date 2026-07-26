@@ -1,95 +1,143 @@
-# 辅助工具合集
+# AstrBot 辅助工具合集
 
-给 AstrBot 注册一组 bot 可以自己调用的 LLM 工具，也提供常用命令入口。当前包含 QQ 信息、Anime1、收款码、随机语音、Steam 查询、引用媒体识别、唤醒增强和本地随机壁纸。
+为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、QQ 信息、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-## 功能
+- 当前版本：`v0.5.0`
+- AstrBot：`>=4.16,<5`
+- 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
-### LLM 工具
+## 功能概览
 
-- `get_qq_avatar`：获取 QQ 用户头像，可把头像图片内容返回给支持视觉输入的模型。
-- `get_qq_group_member_info`：获取 QQ 群成员信息，包含 QQ号、QQ名、群昵称、群身份、群等级、群专属头衔，并补充 OneBot 可返回的其它字段。
-- `get_qq_profile`：整合 QQ 用户资料、群成员资料、群信息和头像。
-- `send_payment_qr`：在“打钱、转账、赞助、请客、发红包”等场景发送配置好的收款码。
-- `get_anime1_updates`：查询 Anime1 番剧剧集更新列表，支持缓存、时间范围、关键词和数量限制。
-- `get_anime1_watch_url`：按 Anime1 条目 ID 生成观看地址。
-- `send_random_voice`：发送配置好的随机语音，默认兼容“哈基米”语音 API，也可以换成其它音频 API。
-- `search_steam_game`：按 Steam AppID、商店链接或关键词查询游戏信息，可附带封面图。
-- `set_bot_qq_profile`：管理员会话可用，用于修改 bot QQ 昵称、签名、状态、头像或同步人格；默认关闭。
+| 模块 | 主要能力 |
+| --- | --- |
+| B站视频理解 | 识别链接、BV/av、b23.tv、分享文本和 QQ 小程序卡片；支持 Gemini 视频分析或 AstrBot 默认模型读取字幕/转写 |
+| QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
+| 引用媒体 | 保留引用图片识图，并标明图片来源；读取被引用的小程序、音乐和分享卡片 |
+| Anime1 | 查询剧集更新和观看地址 |
+| 收款码 | 由命令或 LLM 在合适场景发送收款码 |
+| 随机语音 | 可配置 API、命令和触发词，不限于“哈基米” |
+| Steam | 按 AppID、商店链接或关键词查询游戏 |
+| 唤醒增强 | 提及/关键词唤醒、屏蔽词、指令屏蔽、阻塞判断和消息防抖 |
+| 本地壁纸 | 多图库随机抽图、管理员存图/删图、自动创建图库 |
+| Bot QQ 资料 | 管理员修改头像、昵称、签名、状态和人格同步 |
 
-### QQ 头像自动更换
+## 安装与更新
 
-`qq_avatar.auto_change` 可以让 bot 按时间表从本地头像池随机拿一张图片，自动更换自己的 QQ 头像。这个功能默认关闭；开启后，头像池目录留空时会使用插件数据目录下的 `avatar_pool`。
-
-时间表使用 5 段 cron：
-
-- 每天 8 点：`0 8 * * *`
-- 每 6 小时：`0 */6 * * *`
-- 每周一 9 点：`0 9 * * 1`
-
-这里必须是 `分 时 日 月 周` 五段。比如 `0 8 * *` 只有四段，插件会自动补成 `0 8 * * *`，但建议在配置页里直接写完整。
-
-也可以用管理员命令立刻测试一次：
+在 AstrBot 插件管理页使用仓库地址安装或更新：
 
 ```text
-/random_avatar
-/随机头像
-/换头像
+https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-上面示例里的 `/` 仍然表示 AstrBot 全局唤醒词缀；如果你的唤醒词缀是 `!`，就改成 `!随机头像`。
+更新到 `v0.5.0` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装 B 站模块所需依赖；手动部署时可在插件目录执行：
 
-### 引用自身图片来源标记
+```bash
+pip install -r requirements.txt
+```
 
-AstrBot 会把引用消息中的图片也作为 LLM 的图片附件。开启本插件的 `reply_media_guard.enabled` 后，用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会正常传给模型识图，但引用上下文会明确标记：这是你先前发出，或者自带插件自动发出的图，不是当前用户上传的图片。用户正常随消息上传的图片不受影响。
+## B站视频理解
 
-### 引用小程序和音乐卡片识别
+### 支持的输入
 
-开启 `reply_card_reader.enabled` 后，用户引用 QQ 小程序、哔哩哔哩分享、网易云音乐或其它分享卡片时，插件会从卡片的结构化字段中提取类型、来源、标题、作者/歌手、描述和链接，补进 AstrBot 原本的引用上下文，让模型能读懂被引用的内容。
-
-插件只追加一段给模型看的文字说明，不删除或替换原始卡片，也不改引用消息 ID，因此不会抢占指令，也不会影响其它插件按原消息触发。`include_urls` 可以控制是否把链接交给模型，`max_summary_chars` 用来限制单条引用卡片说明的长度。
-
-### 唤醒增强
-
-- 支持阻塞判断：全局黑名单、唤醒冷却、QQ 机器人账号段过滤、复读 bot 最近发言过滤、可自由删改的 wakepro 默认屏蔽词。
-- 支持指令屏蔽：可拦截内置指令、唤醒词缀命令消息、唤醒词缀普通消息；已识别的指令默认不会在执行后再被 LLM 追加回复。
-- 支持消息防抖：bot 被唤醒后，同一用户短时间内连续发言会尝试合并到上一轮请求，避免一句话拆成多次 LLM 调用。
-- 支持 `@ bot` 唤醒。
-- 支持通用唤醒词和管理员专属唤醒词。
-- 唤醒词触发方式可多选：自由触发、前缀触发、后缀触发。
-- 纯引用 bot 消息默认不会唤醒 LLM；只有同一条消息同时 `@ bot` 或命中唤醒词才会唤醒。
-- 不并入 wakepro 的智能唤醒和沉默检测。
-
-### 本地随机壁纸
-
-可以配置多个壁纸库，每个壁纸库有自己的本地目录、触发指令、发送文案和发送方式。
-
-示例：
-
-假设 AstrBot 全局唤醒词缀是 `/`：
+以下内容可直接发给 bot，也可放在完整分享文案中：
 
 ```text
-卡比壁纸
-/卡比壁纸
-//卡比壁纸        # 历史双前缀写法也兼容
-存图 卡比壁纸       # 随消息带图，或引用图片后使用；图库不存在时会自动新建
-删图               # 引用本插件发出的壁纸后删除对应本地文件
+https://www.bilibili.com/video/BV1GJ411x7h7
+https://www.bilibili.com/video/BV1GJ411x7h7?p=2
+BV1GJ411x7h7
+av80433022
+https://b23.tv/xxxxxxx
+【视频标题-哔哩哔哩】 https://b23.tv/xxxxxxx
 ```
 
-壁纸发送方式支持：
+QQ 中直接发送或引用哔哩哔哩小程序卡片也能识别。多 P 视频会读取链接里的 `p` 参数；没有指定时默认分析 P1。
 
-- 同一条消息：文案和图片在一条消息里发送。
-- 先发文案再发图：先单独发文案，再发图片。
-- 只发图片。
+### 两种分析方式
 
-存图/删图默认仅管理员可用，存图时自动新建图库也同样受这个权限限制。删除功能会优先根据“本插件发送的消息 ID -> 本地图片路径”记录精准删除，并且只允许删除已配置图库目录内的文件。
+在 `bilibili_video.analysis_mode` 中二选一：
+
+| 方式 | 内容来源 | 优点 | 需要注意 |
+| --- | --- | --- | --- |
+| `AstrBot 默认模型（字幕/转写）` | 优先读取 B 站官方字幕；没有字幕时下载音频并调用必剪语音转写 | 不需要额外模型 Key，最终由当前会话模型直接理解资料 | 主要理解对白、旁白和字幕；纯画面信息可能无法判断 |
+| `Gemini 直接视频分析` | 下载低清视频并交给 Gemini 分析画面、声音和屏幕文字 | 能理解动作、场景、画面梗和无对白内容 | 需要 Gemini API Key，会消耗 Gemini 配额并上传视频 |
+
+两种方式的最终回复流程相同：
+
+1. 插件只提取视频元数据和内容事实。
+2. 事实被加入当前 AstrBot 主 Agent 的用户上下文。
+3. 当前会话的人格、历史和默认模型负责自然回复用户。
+
+Gemini 不直接面向用户说话，也不会替换 AstrBot 人格。外部视频标题、简介、字幕和模型分析会被标为不可信资料，其中出现的提示词或命令只按视频内容处理。
+插件注入的视频事实只参与当前一轮请求，不写入长期对话历史，避免大段字幕持续占用上下文。
+
+### 自动触发方式
+
+`bilibili_video.auto_parse_mode` 有三个选项：
+
+| 选项 | 行为 |
+| --- | --- |
+| `跟随 AstrBot（推荐）` | 不单独唤醒 bot；消息本来会进入 LLM 时才补充视频资料，兼容 AstrBot 唤醒词、@ 和其它唤醒规则 |
+| `看到视频就主动回复` | 裸链接、BV/av、分享文本和小程序卡片都会主动拉起 LLM |
+| `关闭自动解析` | 不扫描用户消息，但 `understand_bilibili_video` LLM 工具仍可使用 |
+
+推荐群聊使用“跟随 AstrBot”，避免有人只分享链接时 bot 主动插话。
+
+### 关键配置
+
+| 配置 | 说明 |
+| --- | --- |
+| `max_duration_seconds` | 当前分 P 的最大时长，默认 600 秒 |
+| `max_file_size_mb` | 下载视频或音频的大小上限，默认 80 MB |
+| `download_quality` | Gemini 模式下载画质，默认 360p |
+| `processing_timeout_seconds` | 整条解析流水线的超时 |
+| `cache_ttl_minutes` | 同一视频分析结果缓存时间 |
+| `cookie` / `cookies_file` | 可选，用于登录后才能访问的视频或字幕 |
+| `default_model.bcut_fallback_enabled` | 无官方字幕时是否使用必剪转写 |
+| `default_model.max_transcript_chars` | 交给默认模型的字幕上限；超长时保留首段、中段和结尾 |
+| `gemini.api_key` | Gemini 模式必填，也可使用环境变量 `GEMINI_API_KEY` |
+| `gemini.api_base` / `gemini.model` | Gemini REST API 根地址和模型名 |
+| `gemini.upload_mode` | 自动选择、File API 或内嵌 Base64 |
+
+B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到仓库。`cookies_file` 需要 Netscape 格式，通常可由浏览器扩展或 yt-dlp 工具导出。
+
+### 隐私与安全
+
+- 只接受 B 站官方长链和已知短链域名；短链的每次跳转都会重新校验域名，避免访问任意地址。
+- 默认模型回退会把音频上传到 B 站必剪转写服务。插件会把必剪返回的 HTTP 上传地址强制升级为 HTTPS，并限制为 B 站上传域名。
+- Gemini 模式会把下载的视频上传到配置的 Gemini API；默认在分析完成后删除 Gemini File API 文件。
+- 下载文件位于插件数据目录的临时目录，成功、失败和取消后都会清理。
+- 同一视频会并发去重并缓存，避免多人同时分享时重复下载和计费。
+
+### 能力边界
+
+- 会员、付费、地区限制、已删除或风控视频可能需要 Cookie，也可能仍无法读取。
+- 必剪是 B 站的非公开稳定接口，未来失效时可关闭回退，或改用 Gemini 模式。
+- 默认模型方式没有视频画面输入。仅有音乐或纯视觉内容时，转写可能为空或不足以回答画面细节。
+- Gemini API 代理必须同时兼容 `v1beta generateContent` 和 File API；只兼容 OpenAI 格式的代理不能直接使用。
+
+## LLM 工具
+
+| 工具名 | 作用 |
+| --- | --- |
+| `understand_bilibili_video` | 读取 B 站视频事实，支持强制刷新缓存 |
+| `get_qq_avatar` | 获取 QQ 用户头像，可把图片交给视觉模型 |
+| `get_qq_group_member_info` | 获取 QQ号、QQ名、群昵称、群身份、群等级、专属头衔及 OneBot 额外字段 |
+| `get_qq_profile` | 整合用户资料、群成员资料、群信息和头像 |
+| `send_payment_qr` | 在转账、赞助、请客等场景发送收款码 |
+| `get_anime1_updates` | 查询 Anime1 更新列表 |
+| `get_anime1_watch_url` | 按 Anime1 ID 获取观看地址 |
+| `send_random_voice` | 发送可配置来源的随机语音 |
+| `search_steam_game` | 查询 Steam 游戏并可返回封面 |
+| `set_bot_qq_profile` | 管理员会话修改 Bot QQ 资料，默认不注册 |
+
+各工具可通过对应模块的 `llm_tool_enabled` 单独开关。`set_bot_qq_profile` 涉及账号资料修改，默认关闭；开启后仍会检查管理员权限。
 
 ## 常用命令
 
-下面示例假设 AstrBot 全局唤醒词缀是 `/`；如果你配置成 `!`，就把示例开头的 `/` 换成 `!`。
+下面示例假设 AstrBot 全局唤醒词缀是 `/`。如果实际使用 `!`，请把开头替换为 `!`。
 
 ```text
 /qq_avatar [QQ号|@用户] [40|100|140|640]
-/random_avatar       # 管理员手动随机换 bot 头像
 /qq_member [QQ号|@用户] [群号]
 /qq_profile [QQ号|@用户] [群号]
 /box [QQ号|@用户]
@@ -97,84 +145,139 @@ AstrBot 会把引用消息中的图片也作为 LLM 的图片附件。开启本�
 /anime1_update
 /anime1 [关键词] [年|月|周|日|全部] [数量]
 /anime1_url <Anime1 ID>
+/random_avatar
 ```
 
-随机语音、Steam 查询和壁纸随机抽图使用可配置命令名。插件会自动套用 AstrBot 全局唤醒词缀；如果你的全局唤醒词缀是 `!`，下面示例里的 `/steam` 就对应 `!steam`。
+随机语音、Steam 和壁纸使用配置中的动态命令名：
 
 ```text
 /voice_meme
 /随机语音
 /steam <AppID|商店链接|关键词>
 /查找 <AppID|商店链接|关键词>
-/778666        # 纯数字 AppID 默认需要 AstrBot 唤醒词缀才会触发
+/778666
 ```
 
-AstrBot 会先把全局唤醒词缀从消息文本里去掉，再把消息交给插件。因此 `/steam 778666` 在插件里实际会变成 `steam 778666`；本插件会根据原始消息判断是否真的带了唤醒词缀，同时兼容这两种形态，并在命令处理后阻止消息继续进入 LLM。
+AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同时检查原始消息，因此 `/指令`、其它唤醒词缀和历史双前缀写法能按各模块规则正确处理。
 
-Bot QQ 资料管理命令需要管理员权限：
+## 其它模块说明
+
+### QQ 头像自动更换
+
+开启 `qq_avatar.auto_change` 后，bot 会按 5 段 cron 从本地头像池随机选择图片并调用 OneBot `set_qq_avatar`：
 
 ```text
-设置头像 [图片URL]
-设置昵称 <昵称>
-设置签名 <签名>
-设置状态 <状态名>
-切换人格 [人格名]
-同步人格 [人格名]
-人格列表
+0 8 * * *      # 每天 8 点
+0 */6 * * *    # 每 6 小时
+0 9 * * 1      # 每周一 9 点
 ```
 
-## 配置
+手动测试使用管理员命令 `/random_avatar`、`/随机头像` 或 `/换头像`。多 QQ 平台时可配置 `platform_id` 指定账号。
 
-配置项按模块分组：
+### 引用图片和卡片
 
-- `general`：总开关。
-- `reply_media_guard`：引用你先前发出的图片时保留识图能力，并标记它不是用户新上传的图片。
-- `reply_card_reader`：让模型读懂被引用的小程序、音乐、分享、位置和联系人卡片。
-- `wake`：阻塞判断、唤醒屏蔽词、指令屏蔽、消息防抖、提及唤醒、唤醒词触发方式、禁用纯引用唤醒、黑名单。
-- `wallpaper`：多壁纸库、图库路径、随机抽图指令、存图/删图指令、存图自动新建图库、权限、去重和发送方式。
-- `qq_avatar`：QQ 头像工具、默认尺寸、图片下载限制、`auto_change` 自动随机更换 bot 头像。
-- `qq_member`：QQ群成员信息工具、是否输出原始额外字段。
-- `qq_profile`：QQ 资料查询、保护名单、是否仅管理员可查他人。
-- `payqr`：收款码图片和发送文案。
-- `anime1`：缓存刷新时间、启动更新、默认返回数量。
-- `voice`：随机语音 API、指令前缀、触发关键词、缓存数量。
-- `steam`：Steam 查询指令、Steam 商店链接自动解析、纯数字 AppID 触发方式、展示字段、限速。
-- `bot_profile`：bot QQ 资料管理命令和高风险 LLM 工具开关。
+- `reply_media_guard`：用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会交给 LLM 识图，同时明确“这是你先前发出，或者自带插件自动发出的图，不是当前用户上传的图片”。
+- `reply_card_reader`：提取被引用的小程序、音乐、普通分享、位置和联系人卡片的来源、标题、描述和链接，不删除原卡片，也不改变引用消息 ID。
+- B 站视频模块会在上述卡片资料基础上继续解析视频本身；普通卡片仍只由引用卡片模块处理。
 
-唤醒增强里几个容易混淆的开关：
+### 唤醒增强
 
-- `block_keywords`：唤醒屏蔽词，默认带 wakepro 的默认列表，可以在配置页里自由删、改、加；删掉的词不会再生效。
-- 如果你是从旧版本更新过来，配置页里看到屏蔽词是空的，重载一次插件后会自动补入 wakepro 默认列表；补完后插件会写入初始化标记。之后你再手动清空、删除或修改词表，插件不会偷偷改回去。
-- `block_prefix_commands`：禁用“当前 AstrBot 唤醒词缀 + 指令”的消息，例如 `/qq_avatar` 或 `!qq_avatar`；它对本插件和其它已注册插件都生效，通常保持关闭。
-- `block_prefix_llm`：屏蔽“当前 AstrBot 唤醒词缀 + 普通聊天”的消息，例如 `/帮我写个文案` 或 `!帮我写个文案`，但不影响真正的指令。它优先于消息防抖处理，避免消息在防抖窗口内绕过屏蔽。
-- `suppress_llm_after_command`：命令（包括别名）执行后不再交给 LLM；默认开启，用来避免“命令正常执行后 bot 又多说一句”。
+- 阻塞判断：全局黑名单、冷却、QQ 机器人账号段、复读 bot 发言和可自由删改的 wakepro 默认屏蔽词。
+- 指令屏蔽：可分别处理唤醒词缀指令、唤醒词缀普通消息和指令执行后的额外 LLM 回复。
+- 消息防抖：同一用户短时间内连续发言可合并到上一轮请求。
+- 提及唤醒：支持 `@ bot`、通用唤醒词和管理员唤醒词。
+- 唤醒词位置可多选：自由触发、前缀触发、后缀触发。
+- 纯引用 bot 消息默认不唤醒；同一条消息带 `@` 或唤醒词时仍可唤醒。
+- 未并入 wakepro 的智能唤醒和沉默检测。
 
-壁纸库的随机抽图指令会同时兼容三种写法：直接发配置里的命令名，例如 `卡比壁纸`；加当前 AstrBot 唤醒词缀，例如 `/卡比壁纸`；以及旧习惯里的双前缀写法，例如 `//卡比壁纸`。如果你的 AstrBot 全局唤醒词缀不是 `/`，就把示例里的 `/` 换成你自己的前缀。
+`block_keywords` 的默认列表只在旧配置迁移时补一次。初始化后可以自由删除、修改或清空，插件不会偷偷恢复。
 
-Steam 的 `auto_parse_links` 只负责自动解析 `store.steampowered.com/app/...` 这类商店链接。单独发纯数字是否触发 Steam 查询由 `appid_auto_parse_mode` 控制，默认是“需要唤醒词缀”，也就是 `778666` 不会触发，`/778666` 才会触发；也可以改成“关闭”或“直接触发”。
+### 本地随机壁纸
 
-`set_bot_qq_profile` 默认不注册为可用 LLM 工具；如需让模型主动修改 bot QQ 资料，请在 `bot_profile.llm_tool_enabled` 中显式开启。工具内部仍会检查当前会话是否为管理员。
+每个图库可独立配置名字、路径、抽图命令、文案和发送方式：
 
-## 平台说明
+```text
+卡比壁纸
+/卡比壁纸
+//卡比壁纸
+存图 卡比壁纸
+删图
+```
 
-QQ 相关功能依赖 OneBot/AIOCQHTTP/NapCat 一类适配器提供的接口。不同适配器可能支持字段不同，本插件会优先输出已知字段，并在配置允许时附带其它原始字段。
+- `存图 图库名` 支持随消息带图或引用图片。
+- 图库不存在时会自动创建目录，并把新条目写回插件配置。
+- `删图` 需引用本插件发送的图片，会根据消息 ID 到本地路径的持久化记录精准删除。
+- 存图、删图和自动创建图库默认仅管理员可用。
+- 开启递归扫描后，随机抽图会包含图库路径下所有子目录的图片。
 
-自动更换 bot QQ 头像同样依赖 OneBot 的 `set_qq_avatar` 接口；如果你接了多个 QQ 号，可以在 `qq_avatar.auto_change.platform_id` 里指定要操作的 AstrBot 平台 ID。头像池支持 `.jpg`、`.jpeg`、`.png`、`.webp`，可在配置里改。
+### Steam 数字 AppID
 
-壁纸的随机发送可在通用平台上工作；“引用 bot 发出的图片后删除对应本地文件”在 OneBot 平台上最稳，因为可以拿到发送消息 ID 做持久化映射。其它平台会尝试从引用链中的本地图片路径兜底。
+`steam.appid_auto_parse_mode` 控制纯数字触发：
 
-## 上游来源
+- `关闭`：纯数字不触发。
+- `需要唤醒词缀`：默认；`/778666` 触发，裸 `778666` 不触发。
+- `直接触发`：裸数字也触发。
 
-本插件把下列插件的能力并入到一个维护成本更低的工具合集里，并做了模块化重写与配置整理：
+`auto_parse_links` 只负责 `store.steampowered.com/app/...` 商店链接，两项互不混淆。
 
-- QQ 资料卡能力参考 [Zhalslar/astrbot_plugin_box](https://github.com/Zhalslar/astrbot_plugin_box)
-- Anime1 更新列表能力参考 [zhist2028/astrbot_plugin_anime1_list](https://github.com/zhist2028/astrbot_plugin_anime1_list)
-- 收款码工具能力参考 [luori7hao/astrbot_plugin_payqr](https://github.com/luori7hao/astrbot_plugin_payqr)
-- Bot QQ 资料管理能力参考 [Zhalslar/astrbot_plugin_qqprofile](https://github.com/Zhalslar/astrbot_plugin_qqprofile)
-- 随机哈基米语音能力参考 [oxoax/zhiyu-astrbot-hjm](https://github.com/oxoax/zhiyu-astrbot-hjm)
-- Steam 链接解析能力参考 [xu654/SteamLink](https://github.com/xu654/SteamLink)
-- 提及唤醒增强能力参考 [Zhalslar/astrbot_plugin_wakepro](https://github.com/Zhalslar/astrbot_plugin_wakepro)
+## 配置分组
 
-## 依赖
+| 分组 | 内容 |
+| --- | --- |
+| `general` | 插件总开关 |
+| `bilibili_video` | B 站分析模式、触发方式、下载限制、Cookie、默认模型和 Gemini 子配置 |
+| `reply_media_guard` | 引用自身图片来源标记 |
+| `reply_card_reader` | 引用卡片结构化读取 |
+| `wake` | 唤醒、屏蔽、阻塞和防抖 |
+| `wallpaper` | 多图库、抽图、存图和删图 |
+| `qq_avatar` / `qq_member` / `qq_profile` | QQ 头像、群成员和综合资料 |
+| `payqr` / `anime1` / `voice` / `steam` | 各辅助工具独立配置 |
+| `bot_profile` | Bot QQ 资料管理和高风险工具开关 |
 
-当前实现只使用 AstrBot 运行环境和 Python 标准库，没有额外第三方依赖。
+## 平台与依赖
+
+QQ 资料、群成员、自动换头像和部分壁纸删除能力依赖 OneBot/AIOCQHTTP/NapCat 一类适配器。不同实现返回的资料字段可能不同，插件会输出已知字段，并按配置附加可用的其它字段。
+
+B 站模块依赖：
+
+- `aiohttp`：异步 API、短链、字幕和模型请求。
+- `yt-dlp`：下载 B 站视频或音频。
+- `imageio-ffmpeg`：提供可随插件安装的 ffmpeg，用于合并视频音轨和提取音频。
+
+## 故障排查
+
+### 发送 B 站链接后 bot 不回复
+
+检查 `bilibili_video.auto_parse_mode`。默认“跟随 AstrBot”不会让裸链接单独唤醒群聊 bot，需要使用当前 AstrBot 唤醒词、`@ bot`，或者改成“看到视频就主动回复”。
+
+### 能取到标题，但无法理解内容
+
+- 默认模型方式：视频可能没有字幕，且必剪回退被关闭或暂时不可用。
+- Gemini 方式：检查 API Key、模型名、API 地址和额度。
+- 检查视频是否超过时长、文件大小或处理超时限制。
+
+### yt-dlp 或 ffmpeg 缺失
+
+重载或重新安装插件，让 AstrBot 重新安装 `requirements.txt`；也可手动执行 `pip install -r requirements.txt`。日志中会给出缺失依赖的明确提示。
+
+### 需要登录或触发 B 站风控
+
+在 `cookies_file` 上传 Netscape 格式 `cookies.txt`，或填写 Cookie 文本。账号 Cookie 可能过期，请定期更换并妥善保管。
+
+## 参考与致谢
+
+本插件对下列 MIT 开源项目的相关能力进行了参考和模块化重写，没有并入与辅助工具合集无关的订阅、登录界面、网页渲染等功能：
+
+- Gemini 视频上传与分析流程参考 [YUMU1658/astrbot_plugin_qq_tools](https://github.com/YUMU1658/astrbot_plugin_qq_tools)，Copyright (c) 2026 YUMU1658。
+- B 站识别、字幕优先、yt-dlp 下载和必剪转写流程参考 [storyAura/astrbot_plugin_biliVideo](https://github.com/storyAura/astrbot_plugin_biliVideo)，Copyright (c) 2025 storyAura。
+- QQ 资料卡能力参考 [Zhalslar/astrbot_plugin_box](https://github.com/Zhalslar/astrbot_plugin_box)。
+- Anime1 更新列表能力参考 [zhist2028/astrbot_plugin_anime1_list](https://github.com/zhist2028/astrbot_plugin_anime1_list)。
+- 收款码能力参考 [luori7hao/astrbot_plugin_payqr](https://github.com/luori7hao/astrbot_plugin_payqr)。
+- Bot QQ 资料管理能力参考 [Zhalslar/astrbot_plugin_qqprofile](https://github.com/Zhalslar/astrbot_plugin_qqprofile)。
+- 随机语音能力参考 [oxoax/zhiyu-astrbot-hjm](https://github.com/oxoax/zhiyu-astrbot-hjm)。
+- Steam 链接解析能力参考 [xu654/SteamLink](https://github.com/xu654/SteamLink)。
+- 提及唤醒增强能力参考 [Zhalslar/astrbot_plugin_wakepro](https://github.com/Zhalslar/astrbot_plugin_wakepro)。
+
+## 许可证
+
+本项目使用 [MIT License](LICENSE)。

@@ -6,6 +6,7 @@ import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, FunctionTool, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools, register
+from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 from mcp.types import CallToolResult
@@ -14,6 +15,11 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from .anime1_service import Anime1Service
 from .avatar_rotation_service import AvatarRotationService
+from .bilibili_service import (
+    BILIBILI_TOOL_NAME,
+    BilibiliVideoService,
+    request_has_bilibili_context,
+)
 from .bot_profile_service import BOT_PROFILE_TOOL_NAME, BotProfileService
 from .helper_utils import cfg, clean_text, core_wake_prefixes, read_bool
 from .payqr_service import PAYQR_TOOL_NAME, PayQRService
@@ -35,8 +41,8 @@ from .wake_service import WakeService
 from .wallpaper_service import WallpaperService
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.4.16"
-PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam、引用媒体识别、唤醒增强、壁纸图库等工具。"
+PLUGIN_VERSION = "0.5.0"
+PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、Anime1、收款码、随机语音、Steam、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
@@ -331,6 +337,41 @@ class SteamSearchTool(FunctionTool[AstrAgentContext]):
 
 
 @pydantic_dataclass
+class UnderstandBilibiliVideoTool(FunctionTool[AstrAgentContext]):
+    plugin: Any = Field(default=None, repr=False)
+    name: str = BILIBILI_TOOL_NAME
+    description: str = (
+        "读取并理解哔哩哔哩视频内容。支持 B 站链接、BV号、av号、"
+        "b23.tv 短链及包含这些内容的分享文本；返回视频事实供当前人格自然回答。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "video": {
+                    "type": "string",
+                    "description": "B站链接、BV号、av号、b23.tv短链或完整分享文本。",
+                },
+                "force_refresh": {
+                    "type": "boolean",
+                    "description": "忽略已有缓存并重新分析视频。",
+                    "default": False,
+                },
+            },
+            "required": ["video"],
+        }
+    )
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
+        if self.plugin is None:
+            return "B站视频理解工具未绑定插件实例。"
+        return await self.plugin.bilibili.analyze_input(
+            clean_text(kwargs.get("video")),
+            force_refresh=_bool_arg(kwargs.get("force_refresh"), False),
+        )
+
+
+@pydantic_dataclass
 class BotQQProfileTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = BOT_PROFILE_TOOL_NAME
@@ -385,6 +426,7 @@ class HelperToolsPlugin(Star):
         self.steam = SteamService(self.config, self.context)
         self.bot_profile = BotProfileService(self.config, self.context, self.data_dir)
         self.avatar_rotation = AvatarRotationService(self.config, self.data_dir, self.context)
+        self.bilibili = BilibiliVideoService(self.config, self.data_dir)
         self.reply_media_guard = ReplyMediaGuard(self.config)
         self.reply_card_reader = ReplyCardReader(self.config)
         self.wake = WakeService(self.config, self.context)
@@ -396,9 +438,12 @@ class HelperToolsPlugin(Star):
         await self.anime1.start()
         if self.enabled():
             await self.avatar_rotation.start()
+            if _module_enabled(self.config, "bilibili_video"):
+                await self.bilibili.start()
         logger.info("[%s] initialized", PLUGIN_ID)
 
     async def terminate(self) -> None:
+        await self.bilibili.close()
         await self.avatar_rotation.stop()
         await self.anime1.stop()
         await self.wake.stop()
@@ -435,6 +480,10 @@ class HelperToolsPlugin(Star):
             Anime1WatchURLTool(plugin=self, active=self._tool_active("anime1")),
             RandomVoiceTool(plugin=self, active=self._tool_active("voice")),
             SteamSearchTool(plugin=self, active=self._tool_active("steam")),
+            UnderstandBilibiliVideoTool(
+                plugin=self,
+                active=self._tool_active("bilibili_video"),
+            ),
             BotQQProfileTool(plugin=self, active=self._tool_active("bot_profile", False)),
         ]
 
@@ -461,6 +510,50 @@ class HelperToolsPlugin(Star):
             clean_text(getattr(event, "unified_msg_origin", "")),
         )
         event.stop_event()
+
+    @filter.on_llm_request(priority=20)
+    async def bilibili_video_context_handler(
+        self,
+        event: AstrMessageEvent,
+        request: Any,
+    ) -> None:
+        """Attach video facts to the current main Agent request."""
+        if (
+            not self.enabled()
+            or not _module_enabled(self.config, "bilibili_video")
+            or self.bilibili.auto_parse_mode() == "off"
+            or request_has_bilibili_context(request)
+        ):
+            return
+        is_stopped = getattr(event, "is_stopped", None)
+        if callable(is_stopped) and is_stopped():
+            return
+
+        context_text = clean_text(
+            getattr(event, "_helper_tools_bilibili_context", "")
+        )
+        if not context_text:
+            context_text = await self.bilibili.context_for_event(event)
+            if not context_text:
+                return
+            event._helper_tools_bilibili_context = context_text
+
+        parts = getattr(request, "extra_user_content_parts", None)
+        if isinstance(parts, list):
+            context_part = TextPart(text=context_text)
+            mark_as_temp = getattr(context_part, "mark_as_temp", None)
+            if callable(mark_as_temp):
+                mark_as_temp()
+            parts.append(context_part)
+        else:
+            original_prompt = clean_text(getattr(request, "prompt", ""))
+            request.prompt = f"{original_prompt}\n\n{context_text}".strip()
+        logger.info(
+            "[%s] attached Bilibili video context (session=%s, mode=%s)",
+            PLUGIN_ID,
+            clean_text(getattr(event, "unified_msg_origin", "")),
+            self.bilibili.analysis_mode(),
+        )
 
     @filter.on_decorating_result(priority=20)
     async def wake_after_result(self, event: AstrMessageEvent):
@@ -490,6 +583,18 @@ class HelperToolsPlugin(Star):
                 card_result.card_count,
                 card_result.enriched_reply_count,
             )
+
+        reference = self.bilibili.prepare_event(event)
+        is_stopped = getattr(event, "is_stopped", None)
+        stopped = callable(is_stopped) and is_stopped()
+        if (
+            reference is not None
+            and _module_enabled(self.config, "bilibili_video")
+            and self.bilibili.auto_parse_mode() == "direct"
+            and not stopped
+            and not self.wake.is_llm_request_blocked(event)
+        ):
+            event.should_call_llm(True)
 
     @filter.command("qq_avatar", alias={"qq头像", "头像"})
     async def qq_avatar_command(

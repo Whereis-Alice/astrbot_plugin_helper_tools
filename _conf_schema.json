@@ -47,6 +47,245 @@
       }
     }
   },
+  "bilibili_video": {
+    "type": "object",
+    "description": "B站视频理解",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 B 站视频理解模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 understand_bilibili_video LLM 工具",
+        "default": true,
+        "hint": "模型可主动读取用户给出的 B 站链接、BV号、av号、b23.tv短链或分享文本。"
+      },
+      "analysis_mode": {
+        "type": "string",
+        "description": "视频分析方式（二选一）",
+        "options": [
+          "AstrBot 默认模型（字幕/转写）",
+          "Gemini 直接视频分析"
+        ],
+        "default": "AstrBot 默认模型（字幕/转写）",
+        "hint": "默认模型方式读取官方字幕，无字幕时可用必剪转写；Gemini 方式会下载视频并让 Gemini 同时分析画面和声音。最终回复都由当前 AstrBot 人格生成。"
+      },
+      "auto_parse_mode": {
+        "type": "string",
+        "description": "用户发送 B 站视频时如何触发",
+        "options": [
+          "跟随 AstrBot（推荐）",
+          "看到视频就主动回复",
+          "关闭自动解析"
+        ],
+        "default": "跟随 AstrBot（推荐）",
+        "hint": "“跟随 AstrBot”不会单独唤醒机器人，只在消息本来就会进入 LLM 时补充视频资料；“主动回复”会让裸链接和小程序卡片也直接触发 LLM；关闭后仍可使用 LLM 工具。"
+      },
+      "max_duration_seconds": {
+        "type": "int",
+        "description": "单个分 P 最大时长（秒）",
+        "default": 600,
+        "min": 10,
+        "max": 21600,
+        "hint": "多 P 视频按当前 P 的时长判断。设置过大将增加下载时间、转写耗时和模型费用。"
+      },
+      "max_file_size_mb": {
+        "type": "int",
+        "description": "下载媒体最大大小（MB）",
+        "default": 80,
+        "min": 5,
+        "max": 2048
+      },
+      "download_quality": {
+        "type": "string",
+        "description": "Gemini 视频下载画质",
+        "options": [
+          "360p",
+          "480p",
+          "720p"
+        ],
+        "default": "360p",
+        "hint": "默认模型方式通常只下载音频；此项主要影响 Gemini 模式的文件大小和画面清晰度。"
+      },
+      "processing_timeout_seconds": {
+        "type": "int",
+        "description": "整条视频处理最长时间（秒）",
+        "default": 360,
+        "min": 30,
+        "max": 3600
+      },
+      "request_timeout_seconds": {
+        "type": "int",
+        "description": "单次 B 站网络请求超时（秒）",
+        "default": 20,
+        "min": 5,
+        "max": 120
+      },
+      "max_concurrency": {
+        "type": "int",
+        "description": "同时处理的视频数量",
+        "default": 1,
+        "min": 1,
+        "max": 4,
+        "hint": "同一视频会自动合并为一个任务。显存、带宽或 API 额度有限时建议保持 1。"
+      },
+      "cache_ttl_minutes": {
+        "type": "int",
+        "description": "视频分析缓存时间（分钟）",
+        "default": 360,
+        "min": 1,
+        "max": 10080
+      },
+      "max_cache_entries": {
+        "type": "int",
+        "description": "最多缓存视频数量",
+        "default": 64,
+        "min": 1,
+        "max": 1000
+      },
+      "cookie": {
+        "type": "text",
+        "description": "可选：B 站 Cookie 文本",
+        "default": "",
+        "hint": "例如 SESSDATA=...; bili_jct=...。仅用于读取登录后可访问的视频或字幕；更推荐使用下面的 cookies.txt 文件。请勿把 Cookie 发到聊天中。"
+      },
+      "cookies_file": {
+        "type": "file",
+        "description": "可选：Netscape 格式 cookies.txt",
+        "file_types": [
+          ".txt"
+        ],
+        "default": [],
+        "hint": "需要登录的视频可上传 yt-dlp/浏览器导出的 Netscape cookies.txt。"
+      },
+      "default_model": {
+        "type": "object",
+        "description": "AstrBot 默认模型方式",
+        "items": {
+          "prefer_subtitles": {
+            "type": "bool",
+            "description": "优先读取 B 站官方字幕",
+            "default": true
+          },
+          "subtitle_languages": {
+            "type": "list",
+            "description": "字幕语言优先顺序",
+            "default": [
+              "zh-CN",
+              "zh-Hans",
+              "zh-Hant",
+              "zh-HK",
+              "ai-zh",
+              "en-US",
+              "en"
+            ]
+          },
+          "bcut_fallback_enabled": {
+            "type": "bool",
+            "description": "无字幕时使用必剪语音转写",
+            "default": true,
+            "hint": "开启后会下载该分 P 的音频并上传到 B 站必剪转写服务。该服务是非公开稳定接口，未来可能变化。"
+          },
+          "bcut_timeout_seconds": {
+            "type": "int",
+            "description": "必剪转写最长等待时间（秒）",
+            "default": 240,
+            "min": 30,
+            "max": 1800
+          },
+          "max_transcript_chars": {
+            "type": "int",
+            "description": "交给默认模型的字幕最多字符数",
+            "default": 30000,
+            "min": 1000,
+            "max": 200000,
+            "hint": "超出时会保留开头、中段代表片段和结尾，而不是只截断尾部。"
+          }
+        }
+      },
+      "gemini": {
+        "type": "object",
+        "description": "Gemini 直接视频分析方式",
+        "items": {
+          "api_key": {
+            "type": "string",
+            "description": "Gemini API Key",
+            "default": "",
+            "hint": "也可以通过 AstrBot 进程环境变量 GEMINI_API_KEY 提供。"
+          },
+          "api_base": {
+            "type": "string",
+            "description": "Gemini REST API 根地址",
+            "default": "https://generativelanguage.googleapis.com",
+            "hint": "代理地址必须兼容 Gemini v1beta generateContent 和 File API。"
+          },
+          "model": {
+            "type": "string",
+            "description": "Gemini 视频分析模型",
+            "default": "gemini-2.5-flash"
+          },
+          "upload_mode": {
+            "type": "string",
+            "description": "视频上传方式",
+            "options": [
+              "自动选择",
+              "Gemini File API",
+              "内嵌 Base64"
+            ],
+            "default": "自动选择",
+            "hint": "自动选择会让小文件使用 Base64，大文件使用 File API。代理不支持 File API 时可改为 Base64，但请求体会更大。"
+          },
+          "inline_limit_mb": {
+            "type": "int",
+            "description": "自动选择 Base64 的文件上限（MB）",
+            "default": 15,
+            "min": 1,
+            "max": 50
+          },
+          "timeout_seconds": {
+            "type": "int",
+            "description": "Gemini 上传与分析超时（秒）",
+            "default": 240,
+            "min": 30,
+            "max": 1800
+          },
+          "analysis_prompt": {
+            "type": "text",
+            "description": "Gemini 客观分析提示词",
+            "default": "请完整观看这个视频并输出客观、可供另一个对话模型使用的中文事实报告。\n至少覆盖：主题与结论、按时间顺序的重要场景、人物或主体、对白/旁白、屏幕文字、声音与情绪、梗或反转，以及无法确认的细节。\n不要扮演聊天机器人，不要直接回应发送视频的用户，不要加入当前会话人格。没有看清或听清的内容请明确标为不确定，不得编造。"
+          },
+          "temperature": {
+            "type": "float",
+            "description": "Gemini 分析温度",
+            "default": 0.2,
+            "min": 0,
+            "max": 2
+          },
+          "max_output_tokens": {
+            "type": "int",
+            "description": "Gemini 最多输出 Token",
+            "default": 4096,
+            "min": 256,
+            "max": 65536
+          },
+          "max_analysis_chars": {
+            "type": "int",
+            "description": "交给当前人格的分析最多字符数",
+            "default": 24000,
+            "min": 1000,
+            "max": 100000
+          },
+          "delete_uploaded_file": {
+            "type": "bool",
+            "description": "分析后删除 Gemini 已上传文件",
+            "default": true
+          }
+        }
+      }
+    }
+  },
   "wake": {
     "type": "object",
     "description": "唤醒增强",
