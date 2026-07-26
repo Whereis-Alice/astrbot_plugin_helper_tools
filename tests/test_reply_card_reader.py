@@ -32,12 +32,12 @@ class ReplyCardReaderTests(unittest.TestCase):
         card = Comp.Json(
             data={
                 "app": "com.tencent.miniapp_01",
-                "desc": "????",
-                "prompt": "[QQ???]????",
+                "desc": "哔哩哔哩",
+                "prompt": "[QQ小程序]哔哩哔哩",
                 "meta": {
                     "detail_1": {
-                        "title": "??????",
-                        "desc": "??????",
+                        "title": "测试视频标题",
+                        "desc": "测试视频简介",
                         "qqdocurl": "https://b23.tv/example",
                     }
                 },
@@ -52,11 +52,11 @@ class ReplyCardReaderTests(unittest.TestCase):
         marker = card_marker(reply)
         self.assertEqual(result.enriched_reply_count, 1)
         self.assertEqual(result.card_count, 1)
-        self.assertIn("????????", marker)
-        self.assertIn("???????", marker)
-        self.assertIn("?????????", marker)
-        self.assertIn("?????????", marker)
-        self.assertIn("???https://b23.tv/example", marker)
+        self.assertIn("类型：小程序卡片", marker)
+        self.assertIn("来源：哔哩哔哩", marker)
+        self.assertIn("标题：测试视频标题", marker)
+        self.assertIn("描述：测试视频简介", marker)
+        self.assertIn("链接：https://b23.tv/example", marker)
         self.assertIs(reply.chain[0], card)
         self.assertEqual(reply.id, "101")
 
@@ -64,12 +64,12 @@ class ReplyCardReaderTests(unittest.TestCase):
         card = Comp.Json(
             data={
                 "app": "com.tencent.structmsg",
-                "desc": "??",
+                "desc": "音乐",
                 "meta": {
                     "music": {
-                        "tag": "?????",
-                        "title": "????",
-                        "desc": "????",
+                        "tag": "网易云音乐",
+                        "title": "测试歌曲",
+                        "desc": "测试歌手",
                         "jumpUrl": "https://music.163.com/song?id=123",
                     }
                 },
@@ -82,21 +82,21 @@ class ReplyCardReaderTests(unittest.TestCase):
 
         marker = card_marker(reply)
         self.assertEqual(result.card_count, 1)
-        self.assertIn("???????", marker)
-        self.assertIn("????????", marker)
-        self.assertIn("???????", marker)
-        self.assertIn("??/???????", marker)
+        self.assertIn("类型：音乐卡片", marker)
+        self.assertIn("来源：网易云音乐", marker)
+        self.assertIn("标题：测试歌曲", marker)
+        self.assertIn("作者/歌手：测试歌手", marker)
 
     def test_supports_native_music_and_share_segments(self) -> None:
         music = Comp.Music(
             id=456,
-            title="????",
-            content="???",
+            title="原生音乐",
+            content="歌手名",
             url="https://music.163.com/song?id=456",
         )
         share = Comp.Share(
-            title="????",
-            content="????",
+            title="普通分享",
+            content="分享说明",
             url="https://example.com/share",
         )
         reply = Comp.Reply(id="103", chain=[music, share])
@@ -105,17 +105,17 @@ class ReplyCardReaderTests(unittest.TestCase):
 
         marker = card_marker(reply)
         self.assertEqual(result.card_count, 2)
-        self.assertIn("?? 1", marker)
-        self.assertIn("?????", marker)
-        self.assertIn("?? 2", marker)
-        self.assertIn("????", marker)
+        self.assertIn("卡片 1", marker)
+        self.assertIn("网易云音乐", marker)
+        self.assertIn("卡片 2", marker)
+        self.assertIn("普通分享", marker)
 
     def test_does_not_duplicate_the_generated_marker(self) -> None:
         reply = Comp.Reply(
             id="104",
             chain=[
                 Comp.Share(
-                    title="??????",
+                    title="只应出现一次",
                     content="",
                     url="https://example.com",
                 )
@@ -141,13 +141,13 @@ class ReplyCardReaderTests(unittest.TestCase):
             id="105",
             chain=[
                 Comp.Share(
-                    title="??", content="??", url="https://example.com/private"
+                    title="分享", content="说明", url="https://example.com/private"
                 )
             ],
         )
         disabled_reply = Comp.Reply(
             id="106",
-            chain=[Comp.Share(title="????", content="", url="https://example.com")],
+            chain=[Comp.Share(title="不会补全", content="", url="https://example.com")],
         )
 
         hidden_result = ReplyCardReader(

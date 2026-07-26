@@ -11,11 +11,11 @@ import astrbot.api.message_components as Comp
 
 from .helper_utils import cfg, clean_text, read_bool, read_int, truncate
 
-CARD_SUMMARY_PREFIX = "[???????????????????"
+CARD_SUMMARY_PREFIX = "[引用卡片内容（由平台结构化字段提取）："
 _CARD_SUMMARY_SUFFIX = "]"
 _MAX_COMPONENT_DEPTH = 8
 _MAX_JSON_DEPTH = 8
-_GENERIC_SOURCE_NAMES = {"??", "??", "??", "???", "??"}
+_GENERIC_SOURCE_NAMES = {"分享", "新闻", "音乐", "小程序", "应用"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,15 +30,15 @@ class QuotedCardSummary:
 
     def render(self, *, include_urls: bool) -> str:
         fields = [
-            ("??", self.kind),
-            ("??", self.source),
-            ("??", self.title),
-            ("??/??", self.author),
-            ("??", self.description),
-            ("??", self.identifier),
+            ("类型", self.kind),
+            ("来源", self.source),
+            ("标题", self.title),
+            ("作者/歌手", self.author),
+            ("描述", self.description),
+            ("标识", self.identifier),
         ]
         if include_urls:
-            fields.append(("??", self.url))
+            fields.append(("链接", self.url))
 
         rendered: list[str] = []
         seen_values: set[str] = set()
@@ -50,8 +50,8 @@ class QuotedCardSummary:
             if dedupe_key in seen_values:
                 continue
             seen_values.add(dedupe_key)
-            rendered.append(f"{label}?{truncate(value, 500)}")
-        return "?".join(rendered)
+            rendered.append(f"{label}：{truncate(value, 500)}")
+        return "；".join(rendered)
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +100,7 @@ class ReplyCardReader:
             body = rendered_cards[0]
         else:
             body = " | ".join(
-                f"?? {index}?{item}"
+                f"卡片 {index}：{item}"
                 for index, item in enumerate(rendered_cards, start=1)
             )
 
@@ -194,7 +194,7 @@ class ReplyCardReader:
             return cls._music_card(component)
         if isinstance(component, Comp.Share):
             return QuotedCardSummary(
-                kind="????",
+                kind="分享卡片",
                 title=_normalize_value(getattr(component, "title", "")),
                 description=_normalize_value(getattr(component, "content", "")),
                 url=_normalize_value(getattr(component, "url", "")),
@@ -203,14 +203,14 @@ class ReplyCardReader:
             lat = _normalize_value(getattr(component, "lat", ""))
             lon = _normalize_value(getattr(component, "lon", ""))
             return QuotedCardSummary(
-                kind="????",
+                kind="位置卡片",
                 title=_normalize_value(getattr(component, "title", "")),
                 description=_normalize_value(getattr(component, "content", "")),
                 identifier=", ".join(item for item in (lat, lon) if item),
             )
         if isinstance(component, Comp.Contact):
             return QuotedCardSummary(
-                kind="???????",
+                kind="联系人或群名片",
                 identifier=_normalize_value(getattr(component, "id", "")),
             )
         return None
@@ -259,7 +259,7 @@ class ReplyCardReader:
                 "userName",
             ),
         )
-        if kind == "????" and not author and description:
+        if kind == "音乐卡片" and not author and description:
             author, description = description, ""
 
         url = cls._pick_value(
@@ -298,12 +298,12 @@ class ReplyCardReader:
         source = ""
         lowered_url = url.casefold()
         if "music.163.com" in lowered_url or "y.music.163.com" in lowered_url:
-            source = "?????"
+            source = "网易云音乐"
         elif "y.qq.com" in lowered_url or "c.y.qq.com" in lowered_url:
-            source = "QQ??"
+            source = "QQ音乐"
 
         return QuotedCardSummary(
-            kind="????",
+            kind="音乐卡片",
             source=source,
             title=_normalize_value(getattr(component, "title", "")),
             author=_normalize_value(getattr(component, "content", "")),
@@ -400,15 +400,15 @@ class ReplyCardReader:
                 path_text,
             )
         ).casefold()
-        if "music" in hints or "??" in hints:
-            return "????"
-        if "miniapp" in hints or "???" in hints or "detail_1" in hints:
-            return "?????"
-        return "????"
+        if "music" in hints or "音乐" in hints:
+            return "音乐卡片"
+        if "miniapp" in hints or "小程序" in hints or "detail_1" in hints:
+            return "小程序卡片"
+        return "分享卡片"
 
     @staticmethod
     def _strip_prompt_label(prompt: str) -> str:
-        return re.sub(r"^(?:\[[^\]]{1,24}\]|?[^?]{1,24}?)\s*", "", prompt).strip()
+        return re.sub(r"^(?:\[[^\]]{1,24}\]|【[^】]{1,24}】)\s*", "", prompt).strip()
 
     @staticmethod
     def _append_marker(reply: Any, marker: str) -> bool:
