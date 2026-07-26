@@ -1,361 +1,386 @@
 {
   "general": {
     "type": "object",
-    "description": "基础设置",
+    "description": "????",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用插件",
+        "description": "????",
         "default": true
       }
     }
   },
   "reply_media_guard": {
     "type": "object",
-    "description": "引用自身图片来源标记",
+    "description": "??????????",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "标记引用图片为你先前发出",
+        "description": "????????????",
         "default": true,
-        "hint": "用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会正常传给模型识图，同时模型会知道这不是当前用户上传的图片。"
+        "hint": "??????????????????????????????????????????????????????????"
+      }
+    }
+  },
+  "reply_card_reader": {
+    "type": "object",
+    "description": "?????/??????",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "???????????",
+        "default": true,
+        "hint": "???? QQ ?????????????????????????????????????????????????????????????????????????????"
+      },
+      "include_urls": {
+        "type": "bool",
+        "description": "??????????",
+        "default": true
+      },
+      "max_summary_chars": {
+        "type": "int",
+        "description": "??????????????",
+        "default": 1200,
+        "min": 200,
+        "max": 5000,
+        "hint": "???????????????????????"
       }
     }
   },
   "wake": {
     "type": "object",
-    "description": "唤醒增强",
+    "description": "????",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用唤醒增强模块",
+        "description": "????????",
         "default": true
       },
       "global_blacklist": {
         "type": "list",
-        "description": "全局黑名单会话/群号/用户号",
+        "description": "???????/??/???",
         "default": [],
-        "hint": "命中后会直接停止事件传播。"
+        "hint": "?????????????"
       },
       "block_enabled": {
         "type": "bool",
-        "description": "启用阻塞判断",
+        "description": "??????",
         "default": true
       },
       "wake_cd": {
         "type": "float",
-        "description": "唤醒冷却秒数",
+        "description": "??????",
         "default": 0.5,
         "min": 0,
         "max": 60,
-        "hint": "每个会话里的每个用户单独计时。设为 0 表示关闭冷却。"
+        "hint": "????????????????? 0 ???????"
       },
       "block_qqbot": {
         "type": "bool",
-        "description": "屏蔽 QQ 机器人账号段",
+        "description": "?? QQ ??????",
         "default": true,
-        "hint": "仅在 aiocqhttp/OneBot 平台上按常见 QQ 机器人账号段判断。"
+        "hint": "?? aiocqhttp/OneBot ?????? QQ ?????????"
       },
       "block_reread": {
         "type": "bool",
-        "description": "屏蔽复读 bot 最近发言",
+        "description": "???? bot ????",
         "default": true
       },
       "block_keywords": {
         "type": "list",
-        "description": "唤醒屏蔽词",
+        "description": "?????",
         "default": [
-          "政治",
-          "键证",
-          "党",
-          "福音会",
-          "教徒",
-          "统一教",
-          "观音法门",
-          "清海无上师",
-          "轮功",
-          "法轮",
-          "轮法功",
-          "新唐人",
-          "伪火",
-          "退党",
-          "自杀",
-          "枪出售",
-          "枪的制",
-          "枪货到",
-          "枪决",
-          "枪模",
-          "枪手",
-          "枪销售",
-          "枪械制",
-          "枪子弹",
-          "售步枪",
-          "售纯度",
-          "售单管",
-          "售弹簧刀",
-          "售防身",
-          "售狗子",
-          "售虎头",
-          "售火药",
-          "售假币",
-          "售健卫",
-          "售军用",
-          "售猎枪",
-          "售氯胺",
-          "售麻醉",
-          "售枪支",
-          "售热武",
-          "售三棱",
-          "售手枪",
-          "售五四",
-          "售一元硬",
-          "售子弹",
-          "售左轮",
-          "亚砷（酸）酐",
-          "亚砷酸钾",
-          "亚砷酸钠",
-          "亚硒酸",
-          "亚硒酸二钠",
-          "亚硒酸镁",
-          "亚硒酸钠",
-          "亚硒酸氢钠",
-          "亚硝酸乙酯",
-          "亚硝酰乙氧",
-          "氧化二丁基锡",
-          "氧化汞",
-          "氧化铊",
-          "氧化亚铊",
-          "氧氯化磷",
-          "原装弹",
-          "原子弹方法",
-          "原子弹清单",
-          "安眠酮",
-          "代血浆",
-          "普萘洛尔",
-          "呋塞米",
-          "西布曲明",
-          "胰岛素样生长因子",
-          "促红细胞生成素",
-          "地西泮",
-          "尼可刹米",
-          "甲睾酮",
-          "地奈德",
-          "莫达非尼",
-          "氯噻嗪",
-          "苯巴比妥",
-          "促性腺激素",
-          "泼尼松",
-          "麻黄草",
-          "雄烯二醇",
-          "地塞米松",
-          "新型毒品",
-          "杜冷丁",
-          "兴奋剂",
-          "海洛因",
-          "海luo因",
-          "鸦片",
-          "阿芙蓉",
-          "咖啡因",
+          "??",
+          "??",
+          "?",
+          "???",
+          "??",
+          "???",
+          "????",
+          "?????",
+          "??",
+          "??",
+          "???",
+          "???",
+          "??",
+          "??",
+          "??",
+          "???",
+          "???",
+          "???",
+          "??",
+          "??",
+          "??",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "????",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "???",
+          "????",
+          "???",
+          "???",
+          "??????",
+          "????",
+          "????",
+          "???",
+          "?????",
+          "????",
+          "????",
+          "?????",
+          "?????",
+          "?????",
+          "??????",
+          "???",
+          "???",
+          "????",
+          "????",
+          "???",
+          "?????",
+          "?????",
+          "???",
+          "???",
+          "????",
+          "???",
+          "????",
+          "????????",
+          "???????",
+          "???",
+          "????",
+          "???",
+          "???",
+          "????",
+          "???",
+          "????",
+          "?????",
+          "???",
+          "???",
+          "????",
+          "????",
+          "????",
+          "???",
+          "???",
+          "???",
+          "?luo?",
+          "??",
+          "???",
+          "???",
           "cocain",
-          "三唑仑",
-          "美沙酮",
-          "麻古",
-          "k粉",
-          "凯他敏",
+          "???",
+          "???",
+          "??",
+          "k?",
+          "???",
           "ketamine",
-          "冰毒",
-          "苯丙胺",
-          "大麻",
-          "爱他死",
-          "氯胺酮",
-          "甲基安非他明",
-          "吗啡",
-          "安非他命",
-          "腐败",
-          "四人帮",
-          "上海帮",
-          "北京帮",
-          "清华帮",
-          "警匪",
-          "官匪",
-          "官商",
-          "执法",
-          "毒豺",
-          "反共",
-          "抗议",
-          "亢议",
-          "血书",
-          "灭共",
-          "反分裂",
-          "三硝基甲苯",
-          "六氟化铀",
-          "解放军",
-          "兵力部署",
-          "部队",
-          "集团军",
-          "军区",
-          "颜色革命",
-          "塔利班",
-          "基地组织",
-          "恐怖分子",
-          "印尼屠华",
-          "印尼事件",
-          "蒋公",
-          "马英九",
-          "台独",
-          "光复民国",
-          "台湾",
-          "台海",
-          "日本万岁",
-          "疆独",
-          "解放组织",
-          "分裂分子",
-          "藏独",
-          "麻醉",
-          "中共",
-          "黑手党",
-          "钓鱼岛",
-          "钓鱼台",
-          "摩门教",
-          "三水法轮",
-          "三唑仑",
-          "天皇",
-          "基督",
-          "护法",
-          "回教",
-          "教徒",
-          "主席",
-          "摇头丸",
-          "迷药",
-          "乖乖粉",
-          "麻醉药",
-          "精神药品",
-          "专制",
-          "土共",
-          "共狗",
-          "共匪",
-          "政府",
-          "中央",
-          "国务院",
-          "中华帝国",
-          "大陆官方",
-          "贪财",
-          "贪腐",
-          "落马",
-          "高官",
-          "贪污",
-          "玩忽职守",
-          "受贿",
-          "滥用职权",
-          "违纪",
-          "开除党籍",
-          "撤销职务",
-          "徒刑",
-          "徇私舞弊",
-          "以权谋私",
-          "撤职",
-          "死刑",
-          "判处",
-          "剥夺",
-          "没收",
-          "叛逃",
-          "屄",
-          "被插",
-          "被操",
-          "被干",
-          "逼奸",
-          "插暴",
-          "操逼",
-          "操烂",
-          "肏你",
-          "肏死",
-          "操死",
-          "操我",
-          "厕奴",
-          "插比",
-          "插b",
-          "插逼",
-          "插进",
-          "插你",
-          "插我",
-          "插阴",
-          "潮吹",
-          "潮喷",
-          "抽插",
-          "春药",
-          "肛交",
-          "龟头",
-          "黑逼",
-          "后庭",
-          "后穴",
-          "几吧",
-          "鸡吧",
-          "鸡巴",
-          "精液",
-          "巨屌",
-          "口爆",
-          "口交",
-          "口射",
-          "口淫",
-          "裤袜",
-          "狂操",
-          "狂插",
-          "乱交",
-          "乱伦",
-          "轮暴",
-          "轮操",
-          "轮奸",
-          "强暴",
-          "强奸",
-          "肉棒",
-          "乳沟",
-          "乳交",
-          "自慰",
-          "下体",
-          "裸露",
-          "乱奸",
-          "乱伦",
-          "伦理",
-          "裸聊",
-          "裸体",
-          "裸照",
-          "裸体",
-          "迷幻药",
-          "迷昏",
-          "迷魂",
-          "迷奸",
-          "迷情",
-          "迷药",
-          "迷藥",
-          "谜奸药",
-          "色情",
-          "性交",
-          "性奴",
-          "性虐",
-          "阴唇",
-          "阴道",
-          "阴蒂",
-          "阴户",
-          "阴茎",
-          "阴毛",
-          "淫"
+          "??",
+          "???",
+          "??",
+          "???",
+          "???",
+          "??????",
+          "??",
+          "????",
+          "??",
+          "???",
+          "???",
+          "???",
+          "???",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "???",
+          "?????",
+          "????",
+          "???",
+          "????",
+          "??",
+          "???",
+          "??",
+          "????",
+          "???",
+          "????",
+          "????",
+          "????",
+          "????",
+          "??",
+          "???",
+          "??",
+          "????",
+          "??",
+          "??",
+          "????",
+          "??",
+          "????",
+          "????",
+          "??",
+          "??",
+          "??",
+          "???",
+          "???",
+          "???",
+          "???",
+          "????",
+          "???",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "???",
+          "??",
+          "???",
+          "???",
+          "????",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "???",
+          "????",
+          "????",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "????",
+          "??",
+          "????",
+          "??",
+          "????",
+          "????",
+          "??",
+          "????",
+          "????",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "?",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "?b",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "???",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "???",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "??",
+          "?"
         ],
-        "hint": "默认填入 wakepro 的屏蔽词列表。你可以在这里自由删除、修改或新增；实际拦截只按这份配置列表生效。清空列表就表示不使用屏蔽词。"
+        "hint": "???? wakepro ?????????????????????????????????????????????????????"
       },
       "block_keywords_initialized": {
         "type": "bool",
-        "description": "唤醒屏蔽词已初始化",
+        "description": "?????????",
         "default": false,
         "invisible": true
       },
       "command_block_enabled": {
         "type": "bool",
-        "description": "启用指令屏蔽",
+        "description": "??????",
         "default": true
       },
       "builtin_commands": {
         "type": "list",
-        "description": "内置指令列表",
+        "description": "??????",
         "default": [
           "llm",
           "t2i",
@@ -383,52 +408,52 @@
       },
       "block_builtin_commands": {
         "type": "bool",
-        "description": "禁止内置指令触发",
+        "description": "????????",
         "default": false,
-        "hint": "开启后，命中 builtin_commands 的消息会被停止传播。"
+        "hint": "?????? builtin_commands ??????????"
       },
       "block_prefix_commands": {
         "type": "bool",
-        "description": "屏蔽所有唤醒词缀指令",
+        "description": "??????????",
         "default": false,
-        "hint": "开启后，像「当前 AstrBot 唤醒词缀 + qq_avatar」这类命中指令会被直接拦截：本插件和其它已注册插件的指令都会失效，也不会交给 LLM。一般保持关闭。唤醒词缀不固定是 /。"
+        "hint": "???????? AstrBot ???? + qq_avatar?????????????????????????????????????? LLM???????????????? /?"
       },
       "block_prefix_llm": {
         "type": "bool",
-        "description": "屏蔽唤醒词缀普通消息",
+        "description": "??????????",
         "default": false,
-        "hint": "开启后，像「当前 AstrBot 唤醒词缀 + 帮我写个文案」这种没有命中任何指令的普通消息，不会交给 LLM；真正的指令不受这个开关影响。"
+        "hint": "???????? AstrBot ???? + ??????????????????????????? LLM???????????????"
       },
       "suppress_llm_after_command": {
         "type": "bool",
-        "description": "命令执行后不再调用 LLM",
+        "description": "????????? LLM",
         "default": true,
-        "hint": "开启后，已识别的 AstrBot 指令（包括别名）只由指令处理，不会在指令结束后再额外让 LLM 回复。"
+        "hint": "???????? AstrBot ??????????????????????????? LLM ???"
       },
       "debounce_enabled": {
         "type": "bool",
-        "description": "启用消息防抖",
+        "description": "??????",
         "default": true
       },
       "debounce_listen_seconds": {
         "type": "float",
-        "description": "防抖监听时长秒数",
+        "description": "????????",
         "default": 3.0,
         "min": 0,
         "max": 60,
-        "hint": "bot 被唤醒后，同一用户在窗口内连续发言会尝试合并到上一轮请求。设为 0 表示关闭。"
+        "hint": "bot ??????????????????????????????? 0 ?????"
       },
       "debounce_max_merge_count": {
         "type": "int",
-        "description": "最多合并消息数",
+        "description": "???????",
         "default": 3,
         "min": 0,
         "max": 50,
-        "hint": "设为 0 表示不限制。达到上限后不再继续监听下一条。"
+        "hint": "?? 0 ?????????????????????"
       },
       "debounce_message_types": {
         "type": "list",
-        "description": "参与防抖的消息类型",
+        "description": "?????????",
         "options": [
           "normal",
           "at",
@@ -440,101 +465,101 @@
           "at",
           "reply"
         ],
-        "hint": "normal: 普通消息；at: @bot；reply: 引用 bot；command: 指令。"
+        "hint": "normal: ?????at: @bot?reply: ?? bot?command: ???"
       },
       "at_wake_enabled": {
         "type": "bool",
-        "description": "允许 @ bot 唤醒",
+        "description": "?? @ bot ??",
         "default": true
       },
       "disable_reply_wake": {
         "type": "bool",
-        "description": "禁用纯引用唤醒",
+        "description": "???????",
         "default": true,
-        "hint": "引用 bot 消息时不会唤醒 LLM，除非同一条消息里同时 @ bot 或命中唤醒词。"
+        "hint": "?? bot ??????? LLM??????????? @ bot ???????"
       },
       "wake_words": {
         "type": "list",
-        "description": "通用唤醒词",
+        "description": "?????",
         "default": []
       },
       "admin_wake_words": {
         "type": "list",
-        "description": "管理员专属唤醒词",
+        "description": "????????",
         "default": [
-          "宝贝",
-          "宝宝"
+          "??",
+          "??"
         ]
       },
       "trigger_modes": {
         "type": "list",
-        "description": "唤醒词触发方式",
+        "description": "???????",
         "options": [
-          "自由触发",
-          "前缀触发",
-          "后缀触发"
+          "????",
+          "????",
+          "????"
         ],
         "default": [
-          "自由触发"
+          "????"
         ],
-        "hint": "自由触发：消息包含唤醒词即可；前缀触发：消息以唤醒词开头；后缀触发：消息以唤醒词结尾。可多选。"
+        "hint": "???????????????????????????????????????????????"
       },
       "strip_prefix_suffix_wake_word": {
         "type": "bool",
-        "description": "前缀/后缀触发后移除唤醒词",
+        "description": "??/??????????",
         "default": false,
-        "hint": "只对前缀触发和后缀触发生效；自由触发不会改写消息文本。"
+        "hint": "???????????????????????????"
       }
     }
   },
   "wallpaper": {
     "type": "object",
-    "description": "本地随机壁纸",
+    "description": "??????",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用本地随机壁纸模块",
+        "description": "??????????",
         "default": true
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用壁纸库随机发送指令",
+        "description": "???????????",
         "default": true
       },
       "add_enabled": {
         "type": "bool",
-        "description": "启用存图功能",
+        "description": "??????",
         "default": true
       },
       "delete_enabled": {
         "type": "bool",
-        "description": "启用删图功能",
+        "description": "??????",
         "default": true
       },
       "mutate_admin_only": {
         "type": "bool",
-        "description": "只有管理员可以存图/删图",
+        "description": "?????????/??",
         "default": true
       },
       "add_commands": {
         "type": "list",
-        "description": "存图指令",
+        "description": "????",
         "default": [
-          "存图"
+          "??"
         ],
-        "hint": "可直接用「存图 图库名」，也可使用「当前 AstrBot 唤醒词缀 + 存图 图库名」。旧配置里带 / 的写法也会兼容。"
+        "hint": "??????? ???????????? AstrBot ???? + ?? ?????????? / ????????"
       },
       "delete_commands": {
         "type": "list",
-        "description": "删图指令",
+        "description": "????",
         "default": [
-          "删图"
+          "??"
         ],
-        "hint": "可直接用「删图」，也可使用「当前 AstrBot 唤醒词缀 + 删图」。旧配置里带 / 的写法也会兼容。"
+        "hint": "???????????????? AstrBot ???? + ????????? / ????????"
       },
       "allowed_extensions": {
         "type": "list",
-        "description": "允许的图片扩展名",
+        "description": "????????",
         "default": [
           ".jpg",
           ".jpeg",
@@ -545,66 +570,66 @@
       },
       "max_add_bytes": {
         "type": "int",
-        "description": "单张图片最大保存字节数",
+        "description": "???????????",
         "default": 20971520,
         "min": 65536,
         "max": 209715200
       },
       "deduplicate_on_add": {
         "type": "bool",
-        "description": "存图时按 SHA256 去重",
+        "description": "???? SHA256 ??",
         "default": true
       },
       "stop_event_after_response": {
         "type": "bool",
-        "description": "壁纸命令响应后阻止后续处理",
+        "description": "?????????????",
         "default": true
       },
       "libraries": {
         "type": "template_list",
-        "description": "壁纸库列表",
+        "description": "?????",
         "templates": {
           "library": {
-            "name": "壁纸库",
+            "name": "???",
             "items": {
               "name": {
                 "type": "string",
-                "description": "壁纸库名称",
-                "default": "卡比壁纸"
+                "description": "?????",
+                "default": "????"
               },
               "path": {
                 "type": "string",
-                "description": "本地图片目录",
+                "description": "??????",
                 "default": "",
-                "hint": "留空时使用插件数据目录下的 wallpapers/<库名>。相对路径也会按插件数据目录解析。"
+                "hint": "????????????? wallpapers/<??>?????????????????"
               },
               "commands": {
                 "type": "list",
-                "description": "随机抽图指令",
+                "description": "??????",
                 "default": [
-                  "卡比壁纸"
+                  "????"
                 ],
-                "hint": "填写命令名即可，例如「卡比壁纸」。发送时使用当前 AstrBot 唤醒词缀触发，例如全局唤醒词缀是 / 时发送 /卡比壁纸，是 ! 时发送 !卡比壁纸。旧配置里带 / 的写法也会兼容。"
+                "hint": "???????????????????????? AstrBot ???????????????? / ??? /?????? ! ??? !?????????? / ????????"
               },
               "caption": {
                 "type": "string",
-                "description": "发送图片时附带的文案",
-                "default": "随机给你摸一张 {library}。",
-                "hint": "可用占位符：{library}、{filename}、{path}"
+                "description": "??????????",
+                "default": "??????? {library}?",
+                "hint": "??????{library}?{filename}?{path}"
               },
               "send_mode": {
                 "type": "string",
-                "description": "文案发送方式",
+                "description": "??????",
                 "options": [
-                  "同一条消息",
-                  "先发文案再发图",
-                  "只发图片"
+                  "?????",
+                  "???????",
+                  "????"
                 ],
-                "default": "同一条消息"
+                "default": "?????"
               },
               "recursive": {
                 "type": "bool",
-                "description": "递归扫描子目录",
+                "description": "???????",
                 "default": false
               }
             }
@@ -613,54 +638,54 @@
         "default": [
           {
             "__template_key": "library",
-            "name": "卡比壁纸",
+            "name": "????",
             "path": "",
             "commands": [
-              "卡比壁纸"
+              "????"
             ],
-            "caption": "随机给你摸一张 {library}。",
-            "send_mode": "同一条消息",
+            "caption": "??????? {library}?",
+            "send_mode": "?????",
             "recursive": false
           }
         ]
       },
       "auto_create_library_on_add": {
         "type": "bool",
-        "description": "存图到不存在的图库时自动新建",
+        "description": "??????????????",
         "default": true,
-        "hint": "开启后，带图发送「存图 新图库名」会自动创建图库目录，并把图库条目写入配置。没带图时不会创建。"
+        "hint": "??????????? ???????????????????????????????????"
       }
     }
   },
   "qq_avatar": {
     "type": "object",
-    "description": "QQ 头像工具",
+    "description": "QQ ????",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用 QQ 头像模块",
+        "description": "?? QQ ????",
         "default": true
       },
       "llm_tool_enabled": {
         "type": "bool",
-        "description": "注册 get_qq_avatar LLM 工具",
+        "description": "?? get_qq_avatar LLM ??",
         "default": true
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 qq_avatar 命令",
+        "description": "?? qq_avatar ??",
         "default": true,
-        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定，例如 /qq_avatar 或 !qq_avatar。"
+        "hint": "??????? AstrBot ??????????? /qq_avatar ? !qq_avatar?"
       },
       "download_image_for_llm": {
         "type": "bool",
-        "description": "工具调用时下载头像并把图片内容返回给模型",
+        "description": "????????????????????",
         "default": true,
-        "hint": "关闭后只返回头像 URL。下载失败时会自动降级为 URL。"
+        "hint": "???????? URL???????????? URL?"
       },
       "default_size": {
         "type": "string",
-        "description": "默认头像尺寸",
+        "description": "??????",
         "default": "640",
         "options": [
           "40",
@@ -671,66 +696,66 @@
       },
       "download_timeout_seconds": {
         "type": "int",
-        "description": "头像下载超时秒数",
+        "description": "????????",
         "default": 8,
         "min": 1,
         "max": 60
       },
       "max_download_bytes": {
         "type": "int",
-        "description": "头像最大下载字节数",
+        "description": "?????????",
         "default": 2097152,
         "min": 65536,
         "max": 10485760
       },
       "auto_change": {
         "type": "object",
-        "description": "自动更换 bot QQ 头像",
+        "description": "???? bot QQ ??",
         "items": {
           "enabled": {
             "type": "bool",
-            "description": "启用自动随机更换 bot QQ 头像",
+            "description": "???????? bot QQ ??",
             "default": false,
-            "hint": "开启后会按下面的 cron 时间表，从头像池目录随机选择一张图片并调用 OneBot 的 set_qq_avatar。"
+            "hint": "???????? cron ????????????????????? OneBot ? set_qq_avatar?"
           },
           "image_dir": {
             "type": "string",
-            "description": "头像池目录",
+            "description": "?????",
             "default": "",
-            "hint": "留空时使用插件数据目录下的 avatar_pool。也可以填绝对路径，或相对插件数据目录的路径。"
+            "hint": "????????????? avatar_pool???????????????????????"
           },
           "recursive": {
             "type": "bool",
-            "description": "递归扫描子目录",
+            "description": "???????",
             "default": false,
-            "hint": "开启后头像池目录下面的子文件夹也会一起参与随机抽取。"
+            "hint": "??????????????????????????"
           },
           "cron_expression": {
             "type": "string",
-            "description": "更换时间表",
+            "description": "?????",
             "default": "0 8 * * *",
-            "hint": "必须是 5 段 cron：分 时 日 月 周。例如每天 8 点是 0 8 * * *，每 6 小时是 0 */6 * * *。如果只填 4 段，插件会自动在最后补 *。"
+            "hint": "??? 5 ? cron?? ? ? ? ?????? 8 ?? 0 8 * * *?? 6 ??? 0 */6 * * *????? 4 ??????????? *?"
           },
           "timezone": {
             "type": "string",
-            "description": "时间表时区",
+            "description": "?????",
             "default": "Asia/Shanghai",
-            "hint": "国内通常保持 Asia/Shanghai 即可。"
+            "hint": "?????? Asia/Shanghai ???"
           },
           "run_on_start": {
             "type": "bool",
-            "description": "插件启动时立刻换一次",
+            "description": "??????????",
             "default": false,
-            "hint": "适合测试，日常使用建议关闭，避免每次重载插件都换头像。"
+            "hint": "???????????????????????????"
           },
           "avoid_repeat": {
             "type": "bool",
-            "description": "尽量避免连续两次抽到同一张",
+            "description": "?????????????",
             "default": true
           },
           "allowed_extensions": {
             "type": "list",
-            "description": "允许参与随机的图片后缀",
+            "description": "???????????",
             "default": [
               ".jpg",
               ".jpeg",
@@ -740,15 +765,15 @@
           },
           "platform_id": {
             "type": "string",
-            "description": "指定 QQ 平台 ID",
+            "description": "?? QQ ?? ID",
             "default": "",
-            "hint": "留空时使用第一个 aiocqhttp/OneBot 平台。如果你接了多个 QQ 号，可以填 AstrBot 平台 ID 精确指定。"
+            "hint": "???????? aiocqhttp/OneBot ?????????? QQ ????? AstrBot ?? ID ?????"
           },
           "manual_command_enabled": {
             "type": "bool",
-            "description": "启用管理员手动随机换头像命令",
+            "description": "??????????????",
             "default": true,
-            "hint": "命令名：random_avatar、随机头像、换随机头像、换头像；实际触发仍由 AstrBot 全局唤醒词缀决定。"
+            "hint": "????random_avatar?????????????????????? AstrBot ?????????"
           }
         }
       }
@@ -756,75 +781,75 @@
   },
   "qq_member": {
     "type": "object",
-    "description": "QQ群成员信息",
+    "description": "QQ?????",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用群成员信息模块",
+        "description": "?????????",
         "default": true
       },
       "llm_tool_enabled": {
         "type": "bool",
-        "description": "注册 get_qq_group_member_info LLM 工具",
+        "description": "?? get_qq_group_member_info LLM ??",
         "default": true
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 qq_member 命令",
+        "description": "?? qq_member ??",
         "default": true,
-        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
+        "hint": "??????? AstrBot ?????????"
       },
       "include_raw_extra_fields": {
         "type": "bool",
-        "description": "附带 OneBot 返回的其它原始字段",
+        "description": "?? OneBot ?????????",
         "default": true
       }
     }
   },
   "qq_profile": {
     "type": "object",
-    "description": "QQ 用户资料 / box",
+    "description": "QQ ???? / box",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用 QQ 资料模块",
+        "description": "?? QQ ????",
         "default": true
       },
       "llm_tool_enabled": {
         "type": "bool",
-        "description": "注册 get_qq_profile LLM 工具",
+        "description": "?? get_qq_profile LLM ??",
         "default": true
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 qq_profile、box、盒、开盒 命令",
+        "description": "?? qq_profile?box????? ??",
         "default": true,
-        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
+        "hint": "??????? AstrBot ?????????"
       },
       "admin_only_other_users": {
         "type": "bool",
-        "description": "仅管理员可查询他人资料",
+        "description": "???????????",
         "default": false
       },
       "protected_ids": {
         "type": "list",
-        "description": "保护名单 QQ 号",
+        "description": "???? QQ ?",
         "default": [],
-        "hint": "列表里的 QQ 号只允许本人查询。"
+        "hint": "???? QQ ?????????"
       },
       "send_avatar_in_command": {
         "type": "bool",
-        "description": "命令查询时附带头像图片",
+        "description": "???????????",
         "default": true
       },
       "include_raw_extra_fields": {
         "type": "bool",
-        "description": "资料查询结果附带原始字段",
+        "description": "????????????",
         "default": false
       },
       "max_text_chars": {
         "type": "int",
-        "description": "资料文本最大长度",
+        "description": "????????",
         "default": 4000,
         "min": 500,
         "max": 20000
@@ -833,27 +858,27 @@
   },
   "payqr": {
     "type": "object",
-    "description": "收款码",
+    "description": "???",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用收款码模块",
+        "description": "???????",
         "default": true
       },
       "llm_tool_enabled": {
         "type": "bool",
-        "description": "注册 send_payment_qr LLM 工具",
+        "description": "?? send_payment_qr LLM ??",
         "default": true
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 payqr、收款码、打钱 命令",
+        "description": "?? payqr??????? ??",
         "default": true,
-        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
+        "hint": "??????? AstrBot ?????????"
       },
       "payment_qr": {
         "type": "file",
-        "description": "收款码图片",
+        "description": "?????",
         "default": [],
         "file_types": [
           ".png",
@@ -865,54 +890,54 @@
       },
       "caption": {
         "type": "string",
-        "description": "发送收款码时附带的文字",
-        "default": "给我打钱！"
+        "description": "???????????",
+        "default": "?????"
       }
     }
   },
   "anime1": {
     "type": "object",
-    "description": "Anime1 番剧更新",
+    "description": "Anime1 ????",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用 Anime1 模块",
+        "description": "?? Anime1 ??",
         "default": true
       },
       "llm_tool_enabled": {
         "type": "bool",
-        "description": "注册 get_anime1_updates / get_anime1_watch_url LLM 工具",
+        "description": "?? get_anime1_updates / get_anime1_watch_url LLM ??",
         "default": true
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 anime1、anime1_update、anime1_url 命令",
+        "description": "?? anime1?anime1_update?anime1_url ??",
         "default": true,
-        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
+        "hint": "??????? AstrBot ?????????"
       },
       "update_on_start": {
         "type": "bool",
-        "description": "插件启动时立即刷新缓存",
+        "description": "???????????",
         "default": false
       },
       "update_times": {
         "type": "list",
-        "description": "每日自动更新时间点（小时 0-23）",
+        "description": "???????????? 0-23?",
         "default": [
           "1"
         ],
-        "hint": "例如 [\"1\", \"13\", \"22\"] 表示每天 1:00、13:00、22:00 更新。"
+        "hint": "?? [\"1\", \"13\", \"22\"] ???? 1:00?13:00?22:00 ???"
       },
       "timeout_seconds": {
         "type": "int",
-        "description": "请求超时秒数",
+        "description": "??????",
         "default": 20,
         "min": 3,
         "max": 120
       },
       "default_limit": {
         "type": "int",
-        "description": "默认返回条数",
+        "description": "??????",
         "default": 20,
         "min": 1,
         "max": 200
@@ -921,71 +946,71 @@
   },
   "voice": {
     "type": "object",
-    "description": "随机语音",
+    "description": "????",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用随机语音模块",
+        "description": "????????",
         "default": true
       },
       "llm_tool_enabled": {
         "type": "bool",
-        "description": "注册 send_random_voice LLM 工具",
+        "description": "?? send_random_voice LLM ??",
         "default": true
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用可配置指令名",
+        "description": "????????",
         "default": true
       },
       "api_url": {
         "type": "string",
-        "description": "随机语音 API URL",
+        "description": "???? API URL",
         "default": "http://api.ocoa.cn/api/hjm.php?type=audio"
       },
       "command_prefixes": {
         "type": "list",
-        "description": "随机语音指令名",
+        "description": "???????",
         "default": [
           "voice_meme",
-          "随机语音"
+          "????"
         ],
-        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /voice_meme 或 !voice_meme。旧配置里带 / 的写法也会兼容。"
+        "hint": "????????????????? AstrBot ????????? /voice_meme ? !voice_meme?????? / ????????"
       },
       "auto_trigger_enabled": {
         "type": "bool",
-        "description": "启用关键词自动触发",
+        "description": "?????????",
         "default": true
       },
       "trigger_keywords": {
         "type": "list",
-        "description": "自动触发关键词",
+        "description": "???????",
         "default": [
-          "哈基米"
+          "???"
         ]
       },
       "stop_event_after_response": {
         "type": "bool",
-        "description": "发送语音后阻止后续处理",
+        "description": "???????????",
         "default": true
       },
       "timeout_seconds": {
         "type": "int",
-        "description": "语音下载超时秒数",
+        "description": "????????",
         "default": 15,
         "min": 3,
         "max": 120
       },
       "max_download_bytes": {
         "type": "int",
-        "description": "语音最大下载字节数",
+        "description": "?????????",
         "default": 8388608,
         "min": 65536,
         "max": 52428800
       },
       "cache_max_files": {
         "type": "int",
-        "description": "本地语音缓存最多保留文件数",
+        "description": "?????????????",
         "default": 30,
         "min": 1,
         "max": 500
@@ -994,157 +1019,157 @@
   },
   "steam": {
     "type": "object",
-    "description": "Steam 游戏查询",
+    "description": "Steam ????",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用 Steam 模块",
+        "description": "?? Steam ??",
         "default": true
       },
       "llm_tool_enabled": {
         "type": "bool",
-        "description": "注册 search_steam_game LLM 工具",
+        "description": "?? search_steam_game LLM ??",
         "default": true
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用可配置查询指令名",
+        "description": "??????????",
         "default": true
       },
       "command_prefixes": {
         "type": "list",
-        "description": "Steam 查询指令名",
+        "description": "Steam ?????",
         "default": [
           "steam",
-          "查找"
+          "??"
         ],
-        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /steam 或 !steam。旧配置里带 / 的写法也会兼容。"
+        "hint": "????????????????? AstrBot ????????? /steam ? !steam?????? / ????????"
       },
       "auto_parse_links": {
         "type": "bool",
-        "description": "自动解析 Steam 商店链接",
+        "description": "???? Steam ????",
         "default": true,
-        "hint": "只解析 store.steampowered.com/app/... 这类链接；纯数字 AppID 的自动触发由下面的选项控制。"
+        "hint": "??? store.steampowered.com/app/... ???????? AppID ??????????????"
       },
       "appid_auto_parse_mode": {
         "type": "string",
-        "description": "纯数字 AppID 自动触发方式",
+        "description": "??? AppID ??????",
         "options": [
-          "关闭",
-          "需要唤醒词缀",
-          "直接触发"
+          "??",
+          "??????",
+          "????"
         ],
-        "default": "需要唤醒词缀",
-        "hint": "推荐保持“需要唤醒词缀”：例如全局唤醒词缀是 / 时，发送 /778666 才会查 Steam；单独发送 778666 不会触发。"
+        "default": "??????",
+        "hint": "?????????????????????? / ???? /778666 ??? Steam????? 778666 ?????"
       },
       "country_code": {
         "type": "string",
-        "description": "Steam 区域代码",
+        "description": "Steam ????",
         "default": "CN"
       },
       "show_header_image": {
         "type": "bool",
-        "description": "发送/返回封面图",
+        "description": "??/?????",
         "default": true
       },
       "show_type": {
         "type": "bool",
-        "description": "显示类型",
+        "description": "????",
         "default": true
       },
       "show_release_date": {
         "type": "bool",
-        "description": "显示发售日期",
+        "description": "??????",
         "default": true
       },
       "show_developers_publishers": {
         "type": "bool",
-        "description": "显示开发商和发行商",
+        "description": "?????????",
         "default": true
       },
       "show_genres": {
         "type": "bool",
-        "description": "显示分类",
+        "description": "????",
         "default": true
       },
       "show_short_description": {
         "type": "bool",
-        "description": "显示简介",
+        "description": "????",
         "default": true
       },
       "show_content_descriptors": {
         "type": "bool",
-        "description": "显示内容提示",
+        "description": "??????",
         "default": true
       },
       "max_description_chars": {
         "type": "int",
-        "description": "简介最大字符数",
+        "description": "???????",
         "default": 500,
         "min": 80,
         "max": 3000
       },
       "max_search_results": {
         "type": "int",
-        "description": "关键词搜索候选数量",
+        "description": "?????????",
         "default": 5,
         "min": 1,
         "max": 20
       },
       "http_timeout_seconds": {
         "type": "float",
-        "description": "Steam 请求超时秒数",
+        "description": "Steam ??????",
         "default": 8.0,
         "min": 2,
         "max": 60
       },
       "rate_window_seconds": {
         "type": "int",
-        "description": "限速窗口秒数",
+        "description": "??????",
         "default": 600,
         "min": 1
       },
       "rate_max_requests": {
         "type": "int",
-        "description": "限速窗口内最大请求数",
+        "description": "??????????",
         "default": 300,
         "min": 1
       },
       "rate_limited_text": {
         "type": "string",
-        "description": "触发限速时的提示",
-        "default": "Steam 查询太频繁了，请 {seconds}s 后再试。"
+        "description": "????????",
+        "default": "Steam ???????? {seconds}s ????"
       },
       "stop_event_after_response": {
         "type": "bool",
-        "description": "自动解析 Steam 链接后阻止后续处理",
+        "description": "???? Steam ?????????",
         "default": false
       }
     }
   },
   "bot_profile": {
     "type": "object",
-    "description": "Bot QQ 资料管理",
+    "description": "Bot QQ ????",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用 Bot QQ 资料管理模块",
+        "description": "?? Bot QQ ??????",
         "default": true
       },
       "llm_tool_enabled": {
         "type": "bool",
-        "description": "注册 set_bot_qq_profile LLM 工具",
+        "description": "?? set_bot_qq_profile LLM ??",
         "default": false,
-        "hint": "该工具会修改 bot 的 QQ 资料，默认关闭；开启后也仅允许管理员会话调用。"
+        "hint": "?????? bot ? QQ ???????????????????????"
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用设置头像/昵称/签名/状态、切换人格等管理员命令",
+        "description": "??????/??/??/?????????????",
         "default": true
       },
       "sync_name_with_persona": {
         "type": "bool",
-        "description": "切换人格时同步 bot 昵称与已缓存的人格头像",
+        "description": "??????? bot ???????????",
         "default": false
       }
     }

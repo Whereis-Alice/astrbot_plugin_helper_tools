@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp.types import CallToolResult
-from pydantic import Field
-from pydantic.dataclasses import dataclass as pydantic_dataclass
-
+import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, FunctionTool, logger
 from astrbot.api.event import AstrMessageEvent, filter
-import astrbot.api.message_components as Comp
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
+from mcp.types import CallToolResult
+from pydantic import Field
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from .anime1_service import Anime1Service
 from .avatar_rotation_service import AvatarRotationService
@@ -28,16 +27,16 @@ from .qq_features import (
     build_qq_avatar_url,
     normalize_avatar_size,
 )
+from .reply_card_reader import ReplyCardReader
 from .reply_media_guard import ReplyMediaGuard
 from .steam_service import STEAM_TOOL_NAME, SteamService
 from .voice_service import VOICE_TOOL_NAME, VoiceService
 from .wake_service import WakeService
 from .wallpaper_service import WallpaperService
 
-
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.4.14"
-PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、Anime1、收款码、随机语音、Steam、唤醒增强、壁纸图库等工具。"
+PLUGIN_VERSION = "0.4.15"
+PLUGIN_DESC = "???????? AstrBot ?? QQ?Anime1??????????Steam?????????????????????"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
@@ -48,7 +47,7 @@ def _tool_event(context: ContextWrapper[AstrAgentContext]) -> Any:
 
 
 def _missing_event() -> str:
-    return "当前工具需要在一次消息会话中调用，但没有读取到事件上下文。"
+    return "?????????????????????????????"
 
 
 def _bool_arg(value: Any, default: bool) -> bool:
@@ -70,24 +69,24 @@ def _module_commands_enabled(config: Any, module: str, default: bool = True) -> 
 class QQAvatarTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = QQ_AVATAR_TOOL_NAME
-    description: str = "获取 QQ 用户头像；可在模型支持图片输入时把头像图片内容一并返回。"
+    description: str = "?? QQ ????????????????????????????"
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "qq_id": {
                     "type": "string",
-                    "description": "目标 QQ 号；留空时尝试使用当前消息发送者或被 @ 用户。",
+                    "description": "?? QQ ?????????????????? @ ???",
                 },
                 "size": {
                     "type": "string",
-                    "description": "头像尺寸。",
+                    "description": "?????",
                     "enum": list(ALLOWED_AVATAR_SIZES),
                     "default": DEFAULT_AVATAR_SIZE,
                 },
                 "return_image": {
                     "type": "boolean",
-                    "description": "是否返回图片内容给模型查看。",
+                    "description": "??????????????",
                     "default": True,
                 },
             },
@@ -96,7 +95,7 @@ class QQAvatarTool(FunctionTool[AstrAgentContext]):
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolResult:
         if self.plugin is None:
-            return "QQ 头像工具未绑定插件实例。"
+            return "QQ ????????????"
         return await self.plugin.qq.get_avatar_result(
             event=_tool_event(context),
             qq_id=clean_text(kwargs.get("qq_id")),
@@ -109,18 +108,18 @@ class QQAvatarTool(FunctionTool[AstrAgentContext]):
 class QQGroupMemberTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = QQ_GROUP_MEMBER_TOOL_NAME
-    description: str = "获取 QQ 群成员信息，包括 QQ号、QQ名、群昵称、群身份、群等级、群专属头衔，以及 OneBot 可提供的其它字段。"
+    description: str = "?? QQ ???????? QQ??QQ?????????????????????? OneBot ?????????"
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "qq_id": {
                     "type": "string",
-                    "description": "目标 QQ 号；留空时尝试使用当前消息发送者或被 @ 用户。",
+                    "description": "?? QQ ?????????????????? @ ???",
                 },
                 "group_id": {
                     "type": "string",
-                    "description": "群号；留空时使用当前群聊。",
+                    "description": "?????????????",
                 },
             },
         }
@@ -128,7 +127,7 @@ class QQGroupMemberTool(FunctionTool[AstrAgentContext]):
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
         if self.plugin is None:
-            return "QQ群成员信息工具未绑定插件实例。"
+            return "QQ???????????????"
         return await self.plugin.qq.get_group_member_result(
             event=_tool_event(context),
             qq_id=clean_text(kwargs.get("qq_id")),
@@ -140,27 +139,27 @@ class QQGroupMemberTool(FunctionTool[AstrAgentContext]):
 class QQProfileTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = QQ_PROFILE_TOOL_NAME
-    description: str = "查询 QQ 用户资料和当前群资料，整合头像、QQ名、签名、群名片、群身份、等级等公开/OneBot 可用信息。"
+    description: str = "?? QQ ????????????????QQ??????????????????/OneBot ?????"
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "qq_id": {
                     "type": "string",
-                    "description": "目标 QQ 号；留空时尝试使用当前消息发送者或被 @ 用户。",
+                    "description": "?? QQ ?????????????????? @ ???",
                 },
                 "group_id": {
                     "type": "string",
-                    "description": "群号；留空时使用当前群聊。",
+                    "description": "?????????????",
                 },
                 "include_avatar": {
                     "type": "boolean",
-                    "description": "是否附带头像 URL 或图片内容。",
+                    "description": "?????? URL ??????",
                     "default": True,
                 },
                 "return_image": {
                     "type": "boolean",
-                    "description": "是否返回头像图片内容给模型查看。",
+                    "description": "????????????????",
                     "default": True,
                 },
             },
@@ -169,7 +168,7 @@ class QQProfileTool(FunctionTool[AstrAgentContext]):
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolResult:
         if self.plugin is None:
-            return "QQ 资料工具未绑定插件实例。"
+            return "QQ ????????????"
         return await self.plugin.qq.get_profile_result(
             event=_tool_event(context),
             qq_id=clean_text(kwargs.get("qq_id")),
@@ -183,7 +182,7 @@ class QQProfileTool(FunctionTool[AstrAgentContext]):
 class PaymentQRTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = PAYQR_TOOL_NAME
-    description: str = "当对话涉及没钱、打钱、转账、赞助、请客、收款等场景时，发送已配置的收款码图片。"
+    description: str = "???????????????????????????????????????"
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
@@ -194,7 +193,7 @@ class PaymentQRTool(FunctionTool[AstrAgentContext]):
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
         if self.plugin is None:
-            return "收款码工具未绑定插件实例。"
+            return "?????????????"
         event = _tool_event(context)
         if event is None:
             return _missing_event()
@@ -205,28 +204,28 @@ class PaymentQRTool(FunctionTool[AstrAgentContext]):
 class Anime1UpdatesTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = "get_anime1_updates"
-    description: str = "获取 Anime1 番剧剧集更新列表，支持缓存、时间范围、关键词和数量限制。"
+    description: str = "?? Anime1 ????????????????????????????"
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "use_cache": {
                     "type": "boolean",
-                    "description": "是否优先使用本地缓存；false 会立即刷新远端列表。",
+                    "description": "???????????false ??????????",
                     "default": True,
                 },
                 "time_range": {
                     "type": "string",
-                    "description": "时间范围：年、月、周、日、全部，也可留空。",
+                    "description": "?????????????????????",
                     "default": "",
                 },
                 "query": {
                     "type": "string",
-                    "description": "按番剧标题或 Anime1 ID 过滤。",
+                    "description": "?????? Anime1 ID ???",
                 },
                 "limit": {
                     "type": "number",
-                    "description": "返回数量限制；小于等于 0 时使用配置默认值。",
+                    "description": "??????????? 0 ?????????",
                     "default": 20,
                 },
             },
@@ -235,7 +234,7 @@ class Anime1UpdatesTool(FunctionTool[AstrAgentContext]):
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
         if self.plugin is None:
-            return "Anime1 工具未绑定插件实例。"
+            return "Anime1 ??????????"
         limit = kwargs.get("limit")
         try:
             parsed_limit = int(limit) if limit is not None else None
@@ -253,14 +252,14 @@ class Anime1UpdatesTool(FunctionTool[AstrAgentContext]):
 class Anime1WatchURLTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = "get_anime1_watch_url"
-    description: str = "根据 Anime1 条目 ID 获取观看地址。"
+    description: str = "?? Anime1 ?? ID ???????"
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "anime_id": {
                     "type": "string",
-                    "description": "Anime1 条目 ID。",
+                    "description": "Anime1 ?? ID?",
                 },
             },
             "required": ["anime_id"],
@@ -269,7 +268,7 @@ class Anime1WatchURLTool(FunctionTool[AstrAgentContext]):
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
         if self.plugin is None:
-            return "Anime1 观看地址工具未绑定插件实例。"
+            return "Anime1 ??????????????"
         return await self.plugin.anime1.get_watch_url(kwargs.get("anime_id"))
 
 
@@ -277,14 +276,14 @@ class Anime1WatchURLTool(FunctionTool[AstrAgentContext]):
 class RandomVoiceTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = VOICE_TOOL_NAME
-    description: str = "发送一条配置好的随机语音；默认可用于哈基米语音，也可在配置中换成其它随机语音 API。"
+    description: str = "?????????????????????????????????????? API?"
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "reason": {
                     "type": "string",
-                    "description": "触发发送的简短原因，可留空。",
+                    "description": "??????????????",
                 },
             },
         }
@@ -292,7 +291,7 @@ class RandomVoiceTool(FunctionTool[AstrAgentContext]):
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
         if self.plugin is None:
-            return "随机语音工具未绑定插件实例。"
+            return "??????????????"
         event = _tool_event(context)
         if event is None:
             return _missing_event()
@@ -303,18 +302,18 @@ class RandomVoiceTool(FunctionTool[AstrAgentContext]):
 class SteamSearchTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = STEAM_TOOL_NAME
-    description: str = "查询 Steam 游戏信息，支持 AppID、商店链接或关键词搜索，可返回封面图给模型查看。"
+    description: str = "?? Steam ??????? AppID????????????????????????"
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Steam AppID、商店链接或游戏关键词。",
+                    "description": "Steam AppID????????????",
                 },
                 "return_image": {
                     "type": "boolean",
-                    "description": "是否返回 Steam 封面图片内容给模型查看。",
+                    "description": "???? Steam ????????????",
                     "default": False,
                 },
             },
@@ -324,7 +323,7 @@ class SteamSearchTool(FunctionTool[AstrAgentContext]):
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolResult:
         if self.plugin is None:
-            return "Steam 工具未绑定插件实例。"
+            return "Steam ??????????"
         return await self.plugin.steam.query_game(
             query=clean_text(kwargs.get("query")),
             return_image=_bool_arg(kwargs.get("return_image"), False),
@@ -335,18 +334,18 @@ class SteamSearchTool(FunctionTool[AstrAgentContext]):
 class BotQQProfileTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = BOT_PROFILE_TOOL_NAME
-    description: str = "管理员会话可用：修改 bot 的 QQ 昵称、签名、状态、头像，或同步当前人格。默认关闭，需要在配置中显式启用。"
+    description: str = "?????????? bot ? QQ ????????????????????????????????????"
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "description": "操作：nickname、signature、status、avatar、sync_persona。",
+                    "description": "???nickname?signature?status?avatar?sync_persona?",
                 },
                 "value": {
                     "type": "string",
-                    "description": "操作值，如昵称、签名、状态名、头像 URL 或人格名。",
+                    "description": "????????????????? URL ?????",
                 },
             },
             "required": ["action"],
@@ -355,7 +354,7 @@ class BotQQProfileTool(FunctionTool[AstrAgentContext]):
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
         if self.plugin is None:
-            return "Bot QQ 资料工具未绑定插件实例。"
+            return "Bot QQ ????????????"
         event = _tool_event(context)
         if event is None:
             return _missing_event()
@@ -387,6 +386,7 @@ class HelperToolsPlugin(Star):
         self.bot_profile = BotProfileService(self.config, self.context, self.data_dir)
         self.avatar_rotation = AvatarRotationService(self.config, self.data_dir, self.context)
         self.reply_media_guard = ReplyMediaGuard(self.config)
+        self.reply_card_reader = ReplyCardReader(self.config)
         self.wake = WakeService(self.config, self.context)
         self.wallpaper = WallpaperService(self.config, self.data_dir, self.context)
 
@@ -469,20 +469,29 @@ class HelperToolsPlugin(Star):
         await self.wake.on_decorating_result(event)
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=-99998)
-    async def reply_bot_image_guard_handler(self, event: AstrMessageEvent):
-        """Label quoted bot images so LLMs keep their real source context."""
+    async def reply_media_context_handler(self, event: AstrMessageEvent):
+        """Preserve the source and readable content of quoted rich media."""
         if not self.enabled():
             return
-        result = self.reply_media_guard.mark_bot_reply_images(event)
-        if result.marked_image_count:
+        image_result = self.reply_media_guard.mark_bot_reply_images(event)
+        if image_result.marked_image_count:
             logger.info(
                 "[%s] labeled %d bot-authored quote(s) containing %d image(s)",
                 PLUGIN_ID,
-                result.marked_reply_count,
-                result.marked_image_count,
+                image_result.marked_reply_count,
+                image_result.marked_image_count,
             )
 
-    @filter.command("qq_avatar", alias={"qq头像", "头像"})
+        card_result = self.reply_card_reader.enrich(event)
+        if card_result.card_count:
+            logger.info(
+                "[%s] made %d quoted card(s) readable in %d quote(s)",
+                PLUGIN_ID,
+                card_result.card_count,
+                card_result.enriched_reply_count,
+            )
+
+    @filter.command("qq_avatar", alias={"qq??", "??"})
     async def qq_avatar_command(
         self,
         event: AstrMessageEvent,
@@ -490,7 +499,7 @@ class HelperToolsPlugin(Star):
         size: str | None = None,
     ):
         if not self.enabled() or not _module_commands_enabled(self.config, "qq_avatar"):
-            yield event.plain_result("QQ 头像命令当前未启用。")
+            yield event.plain_result("QQ ??????????")
             event.stop_event()
             return
         requested_qq_id = clean_text(qq_id)
@@ -509,20 +518,20 @@ class HelperToolsPlugin(Star):
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("random_avatar", alias={"随机头像", "换随机头像", "换头像"})
+    @filter.command("random_avatar", alias={"????", "?????", "???"})
     async def random_avatar_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "qq_avatar"):
-            yield event.plain_result("QQ 头像命令当前未启用。")
+            yield event.plain_result("QQ ??????????")
             event.stop_event()
             return
         if not self.avatar_rotation.manual_command_enabled():
-            yield event.plain_result("QQ 头像随机更换手动命令当前未启用。")
+            yield event.plain_result("QQ ????????????????")
             event.stop_event()
             return
         yield event.plain_result(await self.avatar_rotation.change_once(event, reason="manual"))
         event.stop_event()
 
-    @filter.command("qq_member", alias={"群成员信息", "qq成员"})
+    @filter.command("qq_member", alias={"?????", "qq??"})
     async def qq_member_command(
         self,
         event: AstrMessageEvent,
@@ -530,7 +539,7 @@ class HelperToolsPlugin(Star):
         group_id: str | None = None,
     ):
         if not self.enabled() or not _module_commands_enabled(self.config, "qq_member"):
-            yield event.plain_result("QQ群成员信息命令当前未启用。")
+            yield event.plain_result("QQ?????????????")
             event.stop_event()
             return
         result = await self.qq.get_group_member_result(
@@ -541,7 +550,7 @@ class HelperToolsPlugin(Star):
         yield event.plain_result(result)
         event.stop_event()
 
-    @filter.command("qq_profile", alias={"qq资料", "box", "盒", "开盒"})
+    @filter.command("qq_profile", alias={"qq??", "box", "?", "??"})
     async def qq_profile_command(
         self,
         event: AstrMessageEvent,
@@ -549,7 +558,7 @@ class HelperToolsPlugin(Star):
         group_id: str | None = None,
     ):
         if not self.enabled() or not _module_commands_enabled(self.config, "qq_profile"):
-            yield event.plain_result("QQ 资料命令当前未启用。")
+            yield event.plain_result("QQ ??????????")
             event.stop_event()
             return
         resolved_qq_id, error = self.qq.resolve_qq_id(event, clean_text(qq_id))
@@ -566,7 +575,7 @@ class HelperToolsPlugin(Star):
             return_image=False,
         )
         if not isinstance(result, str):
-            yield event.plain_result("QQ 资料结果格式异常。")
+            yield event.plain_result("QQ ?????????")
             event.stop_event()
             return
         chain: list[Any] = []
@@ -576,10 +585,10 @@ class HelperToolsPlugin(Star):
         yield event.chain_result(chain)
         event.stop_event()
 
-    @filter.command("payqr", alias={"收款码", "打钱"})
+    @filter.command("payqr", alias={"???", "??"})
     async def payqr_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "payqr"):
-            yield event.plain_result("收款码命令当前未启用。")
+            yield event.plain_result("???????????")
             event.stop_event()
             return
         chain, error = self.payqr.build_chain()
@@ -591,22 +600,22 @@ class HelperToolsPlugin(Star):
         yield event.chain_result(chain)
         event.stop_event()
 
-    @filter.command("anime1_update", alias={"anime_update", "更新anime1"})
+    @filter.command("anime1_update", alias={"anime_update", "??anime1"})
     async def anime1_update_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "anime1"):
-            yield event.plain_result("Anime1 命令当前未启用。")
+            yield event.plain_result("Anime1 ????????")
             event.stop_event()
             return
         try:
             count = await self.anime1.update_cache()
         except Exception as exc:
-            yield event.plain_result(f"Anime1 更新失败: {exc}")
+            yield event.plain_result(f"Anime1 ????: {exc}")
             event.stop_event()
             return
-        yield event.plain_result(f"Anime1 缓存已更新，共 {count} 条。")
+        yield event.plain_result(f"Anime1 ??????? {count} ??")
         event.stop_event()
 
-    @filter.command("anime1", alias={"番剧更新"})
+    @filter.command("anime1", alias={"????"})
     async def anime1_command(
         self,
         event: AstrMessageEvent,
@@ -615,7 +624,7 @@ class HelperToolsPlugin(Star):
         arg3: str | None = None,
     ):
         if not self.enabled() or not _module_commands_enabled(self.config, "anime1"):
-            yield event.plain_result("Anime1 命令当前未启用。")
+            yield event.plain_result("Anime1 ????????")
             event.stop_event()
             return
         query, time_range, limit = self._parse_anime_args(arg1, arg2, arg3)
@@ -628,80 +637,80 @@ class HelperToolsPlugin(Star):
         yield event.plain_result(result)
         event.stop_event()
 
-    @filter.command("anime1_url", alias={"番剧链接"})
+    @filter.command("anime1_url", alias={"????"})
     async def anime1_url_command(self, event: AstrMessageEvent, anime_id: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "anime1"):
-            yield event.plain_result("Anime1 命令当前未启用。")
+            yield event.plain_result("Anime1 ????????")
             event.stop_event()
             return
         yield event.plain_result(await self.anime1.get_watch_url(anime_id))
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("设置头像")
+    @filter.command("????")
     async def set_bot_avatar_command(self, event: AstrMessageEvent, image_url: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
-            yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            yield event.plain_result("Bot QQ ??????????")
             event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.set_avatar(event, clean_text(image_url)))
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("设置昵称")
+    @filter.command("????")
     async def set_bot_nickname_command(self, event: AstrMessageEvent, nickname: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
-            yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            yield event.plain_result("Bot QQ ??????????")
             event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.set_nickname(event, clean_text(nickname)))
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("设置签名")
+    @filter.command("????")
     async def set_bot_signature_command(self, event: AstrMessageEvent, signature: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
-            yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            yield event.plain_result("Bot QQ ??????????")
             event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.set_signature(event, clean_text(signature)))
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("设置状态")
+    @filter.command("????")
     async def set_bot_status_command(self, event: AstrMessageEvent, status_name: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
-            yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            yield event.plain_result("Bot QQ ??????????")
             event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.set_status(event, clean_text(status_name)))
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("切换人格")
+    @filter.command("????")
     async def switch_persona_command(self, event: AstrMessageEvent, persona_id: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
-            yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            yield event.plain_result("Bot QQ ??????????")
             event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.switch_persona(event, clean_text(persona_id)))
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("同步人格")
+    @filter.command("????")
     async def sync_persona_command(self, event: AstrMessageEvent, persona_id: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
-            yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            yield event.plain_result("Bot QQ ??????????")
             event.stop_event()
             return
         yield event.plain_result(await self.bot_profile.sync_with_persona(event, clean_text(persona_id)))
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("人格列表", alias={"查看人格列表"})
+    @filter.command("????", alias={"??????"})
     async def list_persona_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
-            yield event.plain_result("Bot QQ 资料命令当前未启用。")
+            yield event.plain_result("Bot QQ ??????????")
             event.stop_event()
             return
         yield event.plain_result(self.bot_profile.list_personas())
@@ -729,7 +738,7 @@ class HelperToolsPlugin(Star):
             try:
                 chain, error = await self.steam.build_chain_for_message(steam_match.query)
             except Exception as exc:
-                yield event.plain_result(f"Steam 查询失败: {exc}")
+                yield event.plain_result(f"Steam ????: {exc}")
                 if steam_match.stop_event:
                     event.stop_event()
                 return
@@ -748,7 +757,7 @@ class HelperToolsPlugin(Star):
             try:
                 chain = await self.voice.build_chain()
             except Exception as exc:
-                yield event.plain_result(f"随机语音发送失败: {exc}")
+                yield event.plain_result(f"????????: {exc}")
                 if self.voice.stop_after_response():
                     event.stop_event()
                 return
@@ -760,7 +769,7 @@ class HelperToolsPlugin(Star):
         query_parts: list[str] = []
         time_range = ""
         limit: int | None = None
-        range_tokens = {"年", "月", "周", "日", "天", "day", "week", "month", "year", "today", "全部", "all"}
+        range_tokens = {"?", "?", "?", "?", "?", "day", "week", "month", "year", "today", "??", "all"}
         for raw in args:
             item = clean_text(raw)
             if not item:
