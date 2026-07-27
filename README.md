@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.6.0`
+- 当前版本：`v0.6.1`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -31,7 +31,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.6.0` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.6.1` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt

@@ -46,7 +46,7 @@ from .wake_service import WakeService
 from .wallpaper_service import WallpaperService
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.6.0"
+PLUGIN_VERSION = "0.6.1"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
