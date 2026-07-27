@@ -1,8 +1,8 @@
 # AstrBot 辅助工具合集
 
-为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
+为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、网页浏览、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.6.1`
+- 当前版本：`v0.6.2`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -11,6 +11,7 @@
 | 模块 | 主要能力 |
 | --- | --- |
 | B站视频理解 | 识别链接、BV/av、b23.tv、分享文本和 QQ 小程序卡片；支持管理员扫码登录、Gemini 视频分析，或默认模型结合字幕、转写和可选抽帧识图 |
+| 网页浏览 | 可选的 Playwright 只读网页读取；返回正文、标题和可选截图，默认关闭 |
 | QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
 | QQ 名片点赞 | 自动响应“赞我”或“赞@用户”；可选由当前人设自然回复 |
 | 今日小猪 | 每日抽取固定的小猪卡片；可选查看被 @ 用户的结果和使用自定义素材库 |
@@ -31,11 +32,56 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.6.1` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.6.2` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
 ```
+
+网页浏览默认关闭。实际启用 `web_browser.enabled` 前，还需要在 **AstrBot 正在使用的同一 Python 环境** 执行一次：
+
+```bash
+python -m playwright install chromium
+```
+
+## 网页浏览（Playwright，可选）
+
+开启 `web_browser.enabled` 后，当前会话的模型可调用 `browse_webpage` 读取公开网页。工具会返回页面标题、正文与可选的当前视口截图，随后继续按 AstrBot 当前人格自然回复。
+
+它是只读浏览，不提供点击、输入、登录、Cookie 复用、文件下载或表单提交。每次读取都会创建新的无 Cookie 浏览器上下文，完成后立即关闭该上下文；不会把某个用户的登录状态或网页会话交给下一次调用。
+
+### 启用方式
+
+1. 在配置页开启 `网页浏览（Playwright） -> 启用网页浏览模块`。
+2. 确认已经执行 `python -m playwright install chromium`。
+3. 重载插件。模型看到网址并且用户明确需要查询、核对或总结网页时，会自行调用工具。
+
+`browse_webpage` 没有聊天命令。它和其它 LLM 工具一样由模型按当前对话判断调用，避免群聊里单发网址就自动访问。
+
+### 关键配置
+
+| 配置 | 说明 |
+| --- | --- |
+| `enabled` | 总开关，默认关闭；关闭时工具不会注册给模型 |
+| `llm_tool_enabled` | 单独控制 `browse_webpage` 是否可调用 |
+| `navigation_timeout_seconds` / `wait_until` / `extra_wait_ms` | 控制网页加载等待，普通网站推荐保持“DOM 就绪” |
+| `max_page_text_chars` | 单页交给模型的正文上限；超长页面保留开头和结尾 |
+| `screenshot_enabled` / `screenshot_quality` / `max_screenshot_size_mb` | 控制可选截图；截图过大时只返回文字 |
+| `viewport_width` / `viewport_height` | 页面与截图使用的浏览器尺寸 |
+| `max_concurrent_pages` | 同时读取网页数，默认 1，节省内存 |
+| `allowed_domains` / `blocked_domains` | 公网域名白名单和黑名单；黑名单优先。`example.com` 会包含子域名，`*.example.com` 只匹配子域名 |
+| `allow_private_network` | 默认关闭，阻止本机、内网和保留 IP；除非你明确需要且了解风险，不要开启 |
+| `chromium_executable_path` | 可选指定已有 Chromium 的路径；一般留空 |
+| `disable_chromium_sandbox` | 仅在 root 容器报 Chromium sandbox 错误时使用，会降低隔离性 |
+
+### 安全和上下文边界
+
+- 只接受 `http` / `https`，拒绝 URL 内嵌账号密码。
+- 初始网址、跳转后的网址和页面资源请求都会检查域名黑白名单、DNS 和 IP。默认拒绝 `localhost`、Docker/Kubernetes 常见内部域名、内网/链路本地/保留地址及解析到这些地址的域名。
+- 网页正文、标题和截图说明都被标记为不可信外部资料。其中出现“忽略上文”“调用工具”“发送密码”等文字，只会被当作网页内容。
+- 网页正文与截图只参与本轮回答，Agent 完成后会标记为不保存，不会进入后续聊天上下文。
+
+## B站视频理解
 
 ## B站视频理解
 
@@ -174,6 +220,7 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 
 | 工具名 | 作用 |
 | --- | --- |
+| `browse_webpage` | 读取公开网页标题、正文和可选截图；默认关闭，网页资料只在当前轮保留 |
 | `understand_bilibili_video` | 读取 B 站视频事实；默认模型开启抽帧时会在当前工具回合附带画面，随后自动从历史移除 |
 | `get_qq_avatar` | 获取 QQ 用户头像，可把图片交给视觉模型 |
 | `get_qq_group_member_info` | 获取 QQ号、QQ名、群昵称、群身份、群等级、专属头衔及 OneBot 额外字段 |
@@ -368,7 +415,7 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 
 本插件对下列 MIT 开源项目的相关能力进行了参考和模块化重写，没有并入与辅助工具合集无关的订阅、登录界面、网页渲染等功能：
 
-- Gemini 视频上传与分析流程参考 [YUMU1658/astrbot_plugin_qq_tools](https://github.com/YUMU1658/astrbot_plugin_qq_tools)，Copyright (c) 2026 YUMU1658。
+- Gemini 视频上传与分析、Playwright 浏览器配置和 SSRF 防护思路参考 [YUMU1658/astrbot_plugin_qq_tools](https://github.com/YUMU1658/astrbot_plugin_qq_tools)，Copyright (c) 2026 YUMU1658。本插件的网页模块按辅助工具场景独立重写为无状态只读读取，不并入点击、输入和浏览器会话控制能力。
 - B 站识别、字幕优先、yt-dlp 下载和必剪转写流程参考 [storyAura/astrbot_plugin_biliVideo](https://github.com/storyAura/astrbot_plugin_biliVideo)，Copyright (c) 2025 storyAura。
 - B 站短链的无 Cookie 展开请求策略参考 [drdon1234/astrbot_plugin_media_parser](https://github.com/drdon1234/astrbot_plugin_media_parser)。
 - B 站二维码获取、扫码轮询和凭据保存流程参考 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili)，并按本插件的视频理解场景重新实现。

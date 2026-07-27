@@ -380,6 +380,133 @@
       }
     }
   },
+  "web_browser": {
+    "type": "object",
+    "description": "网页浏览（Playwright）",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用网页浏览模块",
+        "default": false,
+        "hint": "默认关闭。开启后模型才能读取公开网页；还需要在 AstrBot 使用的 Python 环境执行 python -m playwright install chromium。"
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 browse_webpage LLM 工具",
+        "default": true,
+        "hint": "关闭后即使模块已启用，模型也不能调用网页浏览。"
+      },
+      "navigation_timeout_seconds": {
+        "type": "int",
+        "description": "网页加载超时（秒）",
+        "default": 25,
+        "min": 5,
+        "max": 120,
+        "hint": "页面在这个时间内没有完成指定的加载阶段，就会停止并返回失败。"
+      },
+      "wait_until": {
+        "type": "string",
+        "description": "读取页面前等待到的加载阶段",
+        "options": [
+          "DOM 就绪（推荐）",
+          "页面 load 完成",
+          "网络空闲"
+        ],
+        "default": "DOM 就绪（推荐）",
+        "hint": "多数网站推荐保持 DOM 就绪；“网络空闲”对持续轮询的网站可能更容易超时。"
+      },
+      "extra_wait_ms": {
+        "type": "int",
+        "description": "加载后额外等待（毫秒）",
+        "default": 400,
+        "min": 0,
+        "max": 10000,
+        "hint": "给前端页面一点渲染时间。页面内容缺失时可适当调高，不宜设得过大。"
+      },
+      "max_page_text_chars": {
+        "type": "int",
+        "description": "交给模型的网页正文最大字符数",
+        "default": 12000,
+        "min": 1000,
+        "max": 50000,
+        "hint": "超长正文会保留开头和结尾，中间省略，避免单个网页占满上下文。"
+      },
+      "screenshot_enabled": {
+        "type": "bool",
+        "description": "允许网页工具附带页面截图",
+        "default": true,
+        "hint": "截图仅供当前轮支持视觉的模型阅读，工具完成后不会写入后续会话历史。"
+      },
+      "screenshot_quality": {
+        "type": "int",
+        "description": "截图 JPEG 清晰度",
+        "default": 60,
+        "min": 30,
+        "max": 90,
+        "hint": "数值越高越清晰、占用的视觉上下文也越大。"
+      },
+      "max_screenshot_size_mb": {
+        "type": "int",
+        "description": "单张截图大小上限（MB）",
+        "default": 2,
+        "min": 1,
+        "max": 8,
+        "hint": "超过上限时会放弃截图，只返回文字资料。"
+      },
+      "viewport_width": {
+        "type": "int",
+        "description": "浏览器视口宽度",
+        "default": 1280,
+        "min": 640,
+        "max": 1920
+      },
+      "viewport_height": {
+        "type": "int",
+        "description": "浏览器视口高度",
+        "default": 720,
+        "min": 480,
+        "max": 1440
+      },
+      "max_concurrent_pages": {
+        "type": "int",
+        "description": "同时读取网页数量",
+        "default": 1,
+        "min": 1,
+        "max": 3,
+        "hint": "浏览器较占内存，通常保持 1 即可。修改后建议重载插件。"
+      },
+      "allow_private_network": {
+        "type": "bool",
+        "description": "允许访问本机和内网地址",
+        "default": false,
+        "hint": "强烈建议保持关闭。关闭时会拒绝 localhost、内网/保留 IP，以及解析到这些地址的域名。"
+      },
+      "allowed_domains": {
+        "type": "list",
+        "description": "允许访问的域名白名单",
+        "default": [],
+        "hint": "留空表示允许所有公网域名。填写 example.com 会同时匹配其子域名；填写 *.example.com 只匹配子域名。白名单会同时限制页面资源请求。"
+      },
+      "blocked_domains": {
+        "type": "list",
+        "description": "禁止访问的域名黑名单",
+        "default": [],
+        "hint": "黑名单优先于白名单，填写 example.com 会同时阻止其子域名。"
+      },
+      "chromium_executable_path": {
+        "type": "string",
+        "description": "自定义 Chromium 可执行文件路径",
+        "default": "",
+        "hint": "通常留空，使用 playwright install chromium 下载的浏览器。只有部署环境已有兼容 Chromium 时才填写。"
+      },
+      "disable_chromium_sandbox": {
+        "type": "bool",
+        "description": "关闭 Chromium 沙箱",
+        "default": false,
+        "hint": "仅当容器以 root 运行且 Chromium 明确报 sandbox 错误时开启。关闭沙箱会降低隔离性。"
+      }
+    }
+  },
   "wake": {
     "type": "object",
     "description": "唤醒增强",
