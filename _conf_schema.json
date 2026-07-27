@@ -1295,6 +1295,71 @@
       }
     }
   },
+  "rollpig": {
+    "type": "object",
+    "description": "今日小猪",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用今日小猪模块",
+        "default": true,
+        "hint": "用户可通过下方命令抽取当天固定的今日小猪。本模块不注册 LLM 工具。"
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用今日小猪命令",
+        "default": true,
+        "hint": "支持 rollpig、今日小猪、抽小猪、我的小猪；实际触发方式由 AstrBot 全局唤醒词缀决定。"
+      },
+      "allow_mentioned_user": {
+        "type": "bool",
+        "description": "允许查看被 @ 用户的今日小猪",
+        "default": false,
+        "hint": "开启后可发送“/今日小猪 @某人”。只读取真实的 @ 消息段，不会误把普通文本当作目标。"
+      },
+      "mention_target_in_group": {
+        "type": "bool",
+        "description": "群聊结果中 @ 目标用户",
+        "default": true,
+        "hint": "关闭后仍会正常发送结果，只是不再额外 @ 用户。"
+      },
+      "protect_admins": {
+        "type": "bool",
+        "description": "禁止查看管理员的今日小猪",
+        "default": true,
+        "hint": "仅影响查看被 @ 用户的功能；管理员本人抽取自己的今日小猪不受影响。"
+      },
+      "timezone": {
+        "type": "string",
+        "description": "每日刷新时区",
+        "default": "Asia/Shanghai",
+        "hint": "国内通常保持 Asia/Shanghai。每天同一用户只会抽到同一种结果，跨天后自动刷新。"
+      },
+      "card_cache_days": {
+        "type": "int",
+        "description": "生成图片的本地保留天数",
+        "default": 7,
+        "min": 1,
+        "max": 30,
+        "hint": "图片会缓存到插件数据目录，重复查询同一天的同一结果不会重复渲染；过期图片会在下次渲染时清理。"
+      },
+      "custom_catalog_file": {
+        "type": "file",
+        "description": "自定义今日小猪 JSON 素材库",
+        "default": [],
+        "file_types": [
+          ".json"
+        ],
+        "hint": "可选。格式为对象列表，每项包含 id、name、description、analysis。上传后会优先使用自定义素材库。"
+      },
+      "custom_image_dir": {
+        "type": "string",
+        "description": "自定义素材图片目录",
+        "default": "",
+        "hint": "可选。目录中的图片文件名应为素材库的 id，例如 test-pig.png；找不到时会回退到内置图片。相对路径以插件数据目录为基准。"
+      }
+    }
+  },
   "payqr": {
     "type": "object",
     "description": "收款码",

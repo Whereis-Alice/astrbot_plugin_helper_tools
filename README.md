@@ -1,8 +1,8 @@
 # AstrBot 辅助工具合集
 
-为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、QQ 信息、QQ 名片点赞、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
+为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.5.9`
+- 当前版本：`v0.6.0`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -13,6 +13,7 @@
 | B站视频理解 | 识别链接、BV/av、b23.tv、分享文本和 QQ 小程序卡片；支持管理员扫码登录、Gemini 视频分析，或默认模型结合字幕、转写和可选抽帧识图 |
 | QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
 | QQ 名片点赞 | 自动响应“赞我”或“赞@用户”；可选由当前人设自然回复 |
+| 今日小猪 | 每日抽取固定的小猪卡片；可选查看被 @ 用户的结果和使用自定义素材库 |
 | 引用媒体 | 保留引用图片识图，并标明图片来源；读取被引用的小程序、音乐和分享卡片 |
 | Anime1 | 查询剧集更新和观看地址 |
 | 收款码 | 由命令或 LLM 在合适场景发送收款码 |
@@ -30,7 +31,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.5.9` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装 B 站模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.6.0` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -195,6 +196,9 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 /qq_member [QQ号|@用户] [群号]
 /qq_profile [QQ号|@用户] [群号]
 /box [QQ号|@用户]
+/rollpig
+/今日小猪
+/今日小猪 @用户                 # 需开启 rollpig.allow_mentioned_user
 /payqr
 /anime1_update
 /anime1 [关键词] [年|月|周|日|全部] [数量]
@@ -241,6 +245,18 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 陌生人点赞不能由插件绕过：即使对方已开启“允许陌生人点赞”，QQ 仍可能对机器人账号做无提示风控。此时 OneBot/适配器可能返回正常，但对方资料卡不会增加点赞数；插件也没有读取对方实际收赞数的接口。对陌生人或无法确认好友关系的目标，插件会明确提示“请求已提交，到账未核验”，不会再把它说成已实际收到。需要稳定点赞时，添加 bot 为好友比反复重试可靠得多。
 
 开启 `qq_like.persona_reply.enabled` 后，固定的“已点赞”文案会改为由当前 AstrBot 默认模型和当前人设自然回复。插件只向本轮请求附加一次点赞结果，回复完成后不会写入后续聊天历史。
+
+### 今日小猪
+
+`rollpig.enabled` 和 `rollpig.commands_enabled` 均默认开启。用户使用 `/rollpig`、`/今日小猪`、`/抽小猪` 或 `/我的小猪` 即可抽取当天结果；同一用户在同一天反复查询会得到同一只小猪，按 `rollpig.timezone` 跨天后自动刷新。
+
+开启 `rollpig.allow_mentioned_user` 后，可在群里使用 `/今日小猪 @某人` 查看对方当天的结果。该功能直接读取 QQ 的真实 @ 消息段，因此不会再出现上游插件“明明 @ 了人却还是查自己”的问题。`mention_target_in_group` 控制回复时是否 @ 目标，`protect_admins` 可阻止查看管理员的结果。
+
+素材、图片和字体已随插件本地打包，生成的卡片会短暂缓存到插件数据目录。`card_cache_days` 控制保留天数。需要自定义时，上传 `custom_catalog_file` JSON，格式为对象列表，每项包含 `id`、`name`、`description`、`analysis`；图片目录可在 `custom_image_dir` 指定，图片名称使用对应 `id`，例如 `test-pig.png`。找不到自定义图片时会回退到内置图片。
+
+图片渲染会把所有尺寸、字体字号和坐标转换成整数，因此已修复上游在部分环境中报出的 `'float' object cannot be interpreted as an integer`。渲染失败时会自动降级为原图和文字说明，不会中断命令处理。
+
+本模块与原独立插件使用相同的命令名。更新到本版本后，请在 AstrBot 中禁用或卸载 `astrbot_plugin_rollpig`，避免两个插件同时处理 `/今日小猪` 等命令。
 
 ### 引用图片和卡片
 
@@ -300,6 +316,7 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 | `wallpaper` | 多图库、抽图、存图和删图 |
 | `qq_avatar` / `qq_member` / `qq_profile` | QQ 头像、群成员和综合资料 |
 | `qq_like` | 自动 QQ 名片点赞、陌生人限制提示和可选人设回复 |
+| `rollpig` | 今日小猪、查看被 @ 用户、自定义素材和卡片缓存 |
 | `payqr` / `anime1` / `voice` / `steam` | 各辅助工具独立配置 |
 | `bot_profile` | Bot QQ 资料管理和高风险工具开关 |
 
@@ -312,6 +329,7 @@ B 站模块依赖：
 - `aiohttp`：异步 API、短链、字幕和模型请求。
 - `yt-dlp`：下载 B 站视频或音频。
 - `imageio-ffmpeg`：提供可随插件安装的 ffmpeg，用于合并视频音轨和提取音频。
+- `Pillow`：生成今日小猪图片卡片。
 
 ## 故障排查
 
@@ -355,6 +373,7 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 - B 站短链的无 Cookie 展开请求策略参考 [drdon1234/astrbot_plugin_media_parser](https://github.com/drdon1234/astrbot_plugin_media_parser)。
 - B 站二维码获取、扫码轮询和凭据保存流程参考 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili)，并按本插件的视频理解场景重新实现。
 - QQ 名片点赞触发与 OneBot 调用思路参考 [Futureppo/astrbot_plugin_zanwo](https://github.com/Futureppo/astrbot_plugin_zanwo)，并重写为独立限流模块和可选的当前人设回复。
+- 今日小猪素材库、图片和原始玩法参考 [MegSopern/astrbot_plugin_rollpig](https://github.com/MegSopern/astrbot_plugin_rollpig)，Copyright (c) 2025 Bear_lele、MegSopern；本插件重写了缓存、@ 目标解析和图片渲染。完整许可证声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - QQ 资料卡能力参考 [Zhalslar/astrbot_plugin_box](https://github.com/Zhalslar/astrbot_plugin_box)。
 - Anime1 更新列表能力参考 [zhist2028/astrbot_plugin_anime1_list](https://github.com/zhist2028/astrbot_plugin_anime1_list)。
 - 收款码能力参考 [luori7hao/astrbot_plugin_payqr](https://github.com/luori7hao/astrbot_plugin_payqr)。
@@ -365,4 +384,4 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 
 ## 许可证
 
-本项目使用 [MIT License](LICENSE)。
+本项目使用 [MIT License](LICENSE)；已打包的第三方素材许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

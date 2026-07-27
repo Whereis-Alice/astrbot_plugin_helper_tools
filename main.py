@@ -39,14 +39,15 @@ from .qq_features import (
 from .qq_like_service import QQProfileLikeService
 from .reply_card_reader import ReplyCardReader
 from .reply_media_guard import ReplyMediaGuard
+from .rollpig_service import RollPigService
 from .steam_service import STEAM_TOOL_NAME, SteamService
 from .voice_service import VOICE_TOOL_NAME, VoiceService
 from .wake_service import WakeService
 from .wallpaper_service import WallpaperService
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.5.9"
-PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
+PLUGIN_VERSION = "0.6.0"
+PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
@@ -487,6 +488,7 @@ class HelperToolsPlugin(Star):
         self.reply_card_reader = ReplyCardReader(self.config)
         self.wake = WakeService(self.config, self.context)
         self.wallpaper = WallpaperService(self.config, self.data_dir, self.context)
+        self.rollpig = RollPigService(self.config, self.data_dir, self.context)
 
         self.context.add_llm_tools(*self._build_tools())
 
@@ -931,6 +933,21 @@ class HelperToolsPlugin(Star):
         if read_bool(cfg(self.config, "qq_profile", "send_avatar_in_command", True), True):
             chain.append(Comp.Image.fromURL(build_qq_avatar_url(resolved_qq_id, self.qq.avatar_default_size())))
         chain.append(Comp.Plain(result))
+        yield event.chain_result(chain)
+        event.stop_event()
+
+    @filter.command("rollpig", alias={"今日小猪", "抽小猪", "我的小猪"})
+    async def rollpig_command(self, event: AstrMessageEvent):
+        if not self.enabled() or not _module_commands_enabled(self.config, "rollpig"):
+            yield event.plain_result("今日小猪命令当前未启用。")
+            event.stop_event()
+            return
+        chain, error = await self.rollpig.build_chain(event)
+        if error:
+            yield event.plain_result(error)
+            event.stop_event()
+            return
+        assert chain is not None
         yield event.chain_result(chain)
         event.stop_event()
 
