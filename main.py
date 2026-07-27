@@ -36,6 +36,7 @@ from .qq_features import (
     build_qq_avatar_url,
     normalize_avatar_size,
 )
+from .qq_like_service import QQProfileLikeService
 from .reply_card_reader import ReplyCardReader
 from .reply_media_guard import ReplyMediaGuard
 from .steam_service import STEAM_TOOL_NAME, SteamService
@@ -44,8 +45,8 @@ from .wake_service import WakeService
 from .wallpaper_service import WallpaperService
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.5.3"
-PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、Anime1、收款码、随机语音、Steam、引用媒体识别、唤醒增强、壁纸图库等工具。"
+PLUGIN_VERSION = "0.5.9"
+PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
@@ -469,6 +470,7 @@ class HelperToolsPlugin(Star):
         self.data_dir = StarTools.get_data_dir(PLUGIN_ID)
 
         self.qq = QQService(self.config)
+        self.qq_like = QQProfileLikeService(self.config)
         self.anime1 = Anime1Service(self.config, self.data_dir)
         self.payqr = PayQRService(self.config, self.data_dir)
         self.voice = VoiceService(self.config, self.data_dir, self.context)
@@ -518,6 +520,16 @@ class HelperToolsPlugin(Star):
             prefix and raw_text.startswith(prefix)
             for prefix in sorted(core_wake_prefixes(self.context), key=len, reverse=True)
         )
+
+    def _message_without_wake_prefix(self, event: AstrMessageEvent) -> str:
+        message_obj = getattr(event, "message_obj", None)
+        raw_text = clean_text(getattr(message_obj, "message_str", "")) or clean_text(
+            getattr(event, "message_str", ""),
+        )
+        for prefix in sorted(core_wake_prefixes(self.context), key=len, reverse=True):
+            if prefix and raw_text.startswith(prefix):
+                return raw_text[len(prefix) :].lstrip()
+        return ""
 
     def _tool_active(self, module: str, default: bool = True) -> bool:
         return self.enabled() and _module_enabled(self.config, module, default) and read_bool(
@@ -632,6 +644,32 @@ class HelperToolsPlugin(Star):
             clean_text(getattr(event, "unified_msg_origin", "")),
             self.bilibili.analysis_mode(),
             len(context_result.frames),
+        )
+
+    @filter.on_llm_request(priority=19)
+    async def qq_like_persona_context_handler(
+        self,
+        event: AstrMessageEvent,
+        request: Any,
+    ) -> None:
+        """Give one QQ-like result to the current persona without saving it."""
+        if not self.enabled() or not _module_enabled(self.config, "qq_like", False):
+            return
+        context = self.qq_like.take_persona_context(event)
+        if not context:
+            return
+        parts = getattr(request, "extra_user_content_parts", None)
+        if not isinstance(parts, list):
+            logger.warning(
+                "[%s] QQ like persona context was skipped because this request has no temporary content parts",
+                PLUGIN_ID,
+            )
+            return
+        parts.append(_mark_content_part_temporary(TextPart(text=context)))
+        logger.info(
+            "[%s] attached temporary QQ like result for persona reply (session=%s)",
+            PLUGIN_ID,
+            clean_text(getattr(event, "unified_msg_origin", "")),
         )
 
     @filter.on_agent_done(priority=20)
@@ -1035,6 +1073,36 @@ class HelperToolsPlugin(Star):
         if not text:
             return
         wake_triggered = self._message_has_wake_prefix(event)
+
+        like_result = await self.qq_like.handle_message(
+            event,
+            text,
+            wake_prefix_text=self._message_without_wake_prefix(event),
+        )
+        if like_result.handled:
+            stopped = getattr(event, "is_stopped", None)
+            can_use_persona_reply = (
+                bool(like_result.persona_context)
+                and not (callable(stopped) and stopped())
+                and not bool(getattr(event, "call_llm", False))
+                and not self.wake.is_llm_request_blocked(event)
+                and self.qq_like.attach_persona_context(
+                    event,
+                    like_result.persona_context,
+                )
+            )
+            if can_use_persona_reply:
+                # Bare trigger phrases normally do not enter AstrBot's default
+                # LLM pipeline. Mark this event as a normal wake request so the
+                # active provider and persona produce the only user-facing reply.
+                event.is_at_or_wake_command = True
+                return
+            if like_result.reply:
+                yield event.plain_result(like_result.reply)
+            event.should_call_llm(True)
+            if self.qq_like.stop_after_response():
+                event.stop_event()
+            return
 
         wallpaper_result = await self.wallpaper.handle_message(event, text)
         if wallpaper_result.handled:

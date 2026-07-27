@@ -1,8 +1,8 @@
 # AstrBot 辅助工具合集
 
-为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、QQ 信息、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
+为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、QQ 信息、QQ 名片点赞、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.5.3`
+- 当前版本：`v0.5.9`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -12,6 +12,7 @@
 | --- | --- |
 | B站视频理解 | 识别链接、BV/av、b23.tv、分享文本和 QQ 小程序卡片；支持管理员扫码登录、Gemini 视频分析，或默认模型结合字幕、转写和可选抽帧识图 |
 | QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
+| QQ 名片点赞 | 自动响应“赞我”或“赞@用户”；可选由当前人设自然回复 |
 | 引用媒体 | 保留引用图片识图，并标明图片来源；读取被引用的小程序、音乐和分享卡片 |
 | Anime1 | 查询剧集更新和观看地址 |
 | 收款码 | 由命令或 LLM 在合适场景发送收款码 |
@@ -29,7 +30,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.5.3` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装 B 站模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.5.9` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装 B 站模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -231,6 +232,16 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 
 手动测试使用管理员命令 `/random_avatar`、`/随机头像` 或 `/换头像`。多 QQ 平台时可配置 `platform_id` 指定账号。
 
+### QQ 名片点赞
+
+`qq_like.enabled` 默认关闭。开启后，不需要注册 LLM 工具，也没有新的命令：用户直接发送 `赞我`、`给我点赞`、`赞一下我`，或发送 `赞@某人` 即可触发。`allow_astrbot_wake_prefix` 默认开启，因此全局唤醒词缀为 `/` 时，`/赞我` 也可以触发。
+
+默认每个目标只调用一次 OneBot `send_like(times=10)`；可在 `likes_per_target` 调整为 1 至 10。原上游插件会连续调用五次，陌生人更容易撞到 QQ 的每日额度或风控。`group_whitelist`、私聊/群聊开关、冷却、最多 @ 几人均可在 `qq_like` 下单独配置。
+
+陌生人点赞不能由插件绕过：对方可能关闭了陌生人收赞权限，机器人也可能达到 QQ 对非好友的当日额度。新模块会短暂缓存好友列表，以便把“陌生人权限限制”“额度上限”“当前适配器不支持”分别提示。需要稳定点赞时，最有效的方法仍是让对方允许陌生人点赞或添加 bot 为好友。
+
+开启 `qq_like.persona_reply.enabled` 后，固定的“已点赞”文案会改为由当前 AstrBot 默认模型和当前人设自然回复。插件只向本轮请求附加一次点赞结果，回复完成后不会写入后续聊天历史。
+
 ### 引用图片和卡片
 
 - `reply_media_guard`：用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会交给 LLM 识图，同时明确“这是你先前发出，或者自带插件自动发出的图，不是当前用户上传的图片”。
@@ -288,12 +299,13 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 | `wake` | 唤醒、屏蔽、阻塞和防抖 |
 | `wallpaper` | 多图库、抽图、存图和删图 |
 | `qq_avatar` / `qq_member` / `qq_profile` | QQ 头像、群成员和综合资料 |
+| `qq_like` | 自动 QQ 名片点赞、陌生人限制提示和可选人设回复 |
 | `payqr` / `anime1` / `voice` / `steam` | 各辅助工具独立配置 |
 | `bot_profile` | Bot QQ 资料管理和高风险工具开关 |
 
 ## 平台与依赖
 
-QQ 资料、群成员、自动换头像和部分壁纸删除能力依赖 OneBot/AIOCQHTTP/NapCat 一类适配器。不同实现返回的资料字段可能不同，插件会输出已知字段，并按配置附加可用的其它字段。
+QQ 资料、群成员、自动换头像、名片点赞和部分壁纸删除能力依赖 OneBot/AIOCQHTTP/NapCat 一类适配器。不同实现返回的资料字段可能不同，插件会输出已知字段，并按配置附加可用的其它字段。
 
 B 站模块依赖：
 
@@ -342,6 +354,7 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 - B 站识别、字幕优先、yt-dlp 下载和必剪转写流程参考 [storyAura/astrbot_plugin_biliVideo](https://github.com/storyAura/astrbot_plugin_biliVideo)，Copyright (c) 2025 storyAura。
 - B 站短链的无 Cookie 展开请求策略参考 [drdon1234/astrbot_plugin_media_parser](https://github.com/drdon1234/astrbot_plugin_media_parser)。
 - B 站二维码获取、扫码轮询和凭据保存流程参考 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili)，并按本插件的视频理解场景重新实现。
+- QQ 名片点赞触发与 OneBot 调用思路参考 [Futureppo/astrbot_plugin_zanwo](https://github.com/Futureppo/astrbot_plugin_zanwo)，并重写为独立限流模块和可选的当前人设回复。
 - QQ 资料卡能力参考 [Zhalslar/astrbot_plugin_box](https://github.com/Zhalslar/astrbot_plugin_box)。
 - Anime1 更新列表能力参考 [zhist2028/astrbot_plugin_anime1_list](https://github.com/zhist2028/astrbot_plugin_anime1_list)。
 - 收款码能力参考 [luori7hao/astrbot_plugin_payqr](https://github.com/luori7hao/astrbot_plugin_payqr)。

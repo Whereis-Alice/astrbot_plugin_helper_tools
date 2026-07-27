@@ -1189,6 +1189,112 @@
       }
     }
   },
+  "qq_like": {
+    "type": "object",
+    "description": "QQ 名片点赞",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用自动 QQ 名片点赞",
+        "default": false,
+        "hint": "默认关闭。开启后，用户发送下方触发词或“赞@用户”时，插件会直接调用 OneBot 的 send_like；本模块不注册 LLM 工具。"
+      },
+      "trigger_phrases": {
+        "type": "list",
+        "description": "给自己点赞的触发词",
+        "default": [
+          "赞我",
+          "给我点赞",
+          "赞一下我"
+        ],
+        "hint": "完全匹配其中任一条时，bot 给当前发言者点赞。"
+      },
+      "mention_trigger_prefixes": {
+        "type": "list",
+        "description": "点赞 @ 用户的开头",
+        "default": [
+          "赞"
+        ],
+        "hint": "例如“赞@某人”或“赞一下 @某人”。只处理真正的 @，不会把普通 QQ 号文字当作目标。"
+      },
+      "allow_astrbot_wake_prefix": {
+        "type": "bool",
+        "description": "允许带 AstrBot 唤醒词缀触发",
+        "default": true,
+        "hint": "例如全局唤醒词缀是 / 时，/赞我 也可触发。关闭后只接受不带唤醒词缀的普通消息。"
+      },
+      "allow_group_messages": {
+        "type": "bool",
+        "description": "允许群聊触发",
+        "default": true
+      },
+      "allow_private_messages": {
+        "type": "bool",
+        "description": "允许私聊触发",
+        "default": true
+      },
+      "group_whitelist": {
+        "type": "list",
+        "description": "允许触发的群号白名单",
+        "default": [],
+        "hint": "留空表示所有群都可用；填写后仅列表内的群可触发，私聊不受影响。"
+      },
+      "likes_per_target": {
+        "type": "int",
+        "description": "每个目标本次点赞数量",
+        "default": 10,
+        "min": 1,
+        "max": 10,
+        "hint": "OneBot 单次 send_like 通常最多 10 个。原插件连续请求 5 次容易触发陌生人额度或风控，这里每次只请求一次。"
+      },
+      "max_targets_per_message": {
+        "type": "int",
+        "description": "一条消息最多处理几个 @ 目标",
+        "default": 3,
+        "min": 1,
+        "max": 10
+      },
+      "cooldown_seconds": {
+        "type": "int",
+        "description": "同一用户的点赞冷却秒数",
+        "default": 30,
+        "min": 0,
+        "max": 3600,
+        "hint": "设为 0 可关闭冷却。冷却只防止重复触发，不能绕过 QQ 自己的每日额度。"
+      },
+      "detect_friend_status": {
+        "type": "bool",
+        "description": "查询好友关系以改善失败提示",
+        "default": true,
+        "hint": "会调用 OneBot get_friend_list 并短暂缓存。关闭后仍可点赞，但无法区分好友和陌生人。"
+      },
+      "friend_status_cache_seconds": {
+        "type": "int",
+        "description": "好友关系缓存秒数",
+        "default": 300,
+        "min": 10,
+        "max": 3600
+      },
+      "stop_after_response": {
+        "type": "bool",
+        "description": "固定回复后停止本条消息后续处理",
+        "default": true,
+        "hint": "人设回复开启时需要继续 AstrBot 默认模型链路，因此不会停止事件；固定回复模式下建议保持开启，避免 LLM 再回复一次。"
+      },
+      "persona_reply": {
+        "type": "object",
+        "description": "使用当前 AstrBot 人设回复",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "点赞后让当前人设生成回复",
+            "default": false,
+            "hint": "开启后不使用固定点赞文案。插件会把本次成功或失败结果作为临时事实交给当前会话的默认模型和人格，结果不会写入后续上下文。"
+          }
+        }
+      }
+    }
+  },
   "payqr": {
     "type": "object",
     "description": "收款码",
