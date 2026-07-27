@@ -1245,7 +1245,7 @@
         "default": 10,
         "min": 1,
         "max": 10,
-        "hint": "OneBot 单次 send_like 通常最多 10 个。原插件连续请求 5 次容易触发陌生人额度或风控，这里每次只请求一次。"
+        "hint": "OneBot 单次 send_like 通常最多 10 个。原插件连续请求 5 次容易触发陌生人额度或风控，这里每次只请求一次；接口返回正常也不代表陌生人一定实际收到。"
       },
       "max_targets_per_message": {
         "type": "int",
@@ -1266,7 +1266,7 @@
         "type": "bool",
         "description": "查询好友关系以改善失败提示",
         "default": true,
-        "hint": "会调用 OneBot get_friend_list 并短暂缓存。关闭后仍可点赞，但无法区分好友和陌生人。"
+        "hint": "会调用 OneBot get_friend_list 并短暂缓存。关闭后仍可点赞，但无法区分好友和陌生人，因此不会把请求提交说成实际到账。"
       },
       "friend_status_cache_seconds": {
         "type": "int",

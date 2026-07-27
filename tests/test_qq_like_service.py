@@ -10,9 +10,16 @@ from astrbot_plugin_helper_tools.qq_like_service import (
 
 
 class FakeBot:
-    def __init__(self, *, friend_ids: list[str] | None = None, failure: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        friend_ids: list[str] | None = None,
+        failure: Exception | None = None,
+        response: object | None = None,
+    ) -> None:
         self.friend_ids = friend_ids or []
         self.failure = failure
+        self.response = {} if response is None else response
         self.likes: list[tuple[int, int]] = []
         self.friend_list_calls = 0
 
@@ -24,7 +31,7 @@ class FakeBot:
         if self.failure is not None:
             raise self.failure
         self.likes.append((user_id, times))
-        return {}
+        return self.response
 
 
 class FakeEvent:
@@ -91,8 +98,20 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.handled)
         self.assertEqual(bot.likes, [(20001, 10)])
-        self.assertIn("已给你点了 10 个赞", result.reply)
+        self.assertIn("已向 QQ 提交给你的 10 个赞请求", result.reply)
         self.assertEqual(bot.friend_list_calls, 1)
+
+    async def test_stranger_success_is_not_reported_as_delivered(self) -> None:
+        bot = FakeBot(friend_ids=[])
+        event = FakeEvent(text="赞我", bot=bot)
+        service = QQProfileLikeService(self._config())
+
+        result = await service.handle_message(event, event.message_str)
+
+        self.assertTrue(result.handled)
+        self.assertEqual(bot.likes, [(20001, 10)])
+        self.assertIn("无法核验是否到账", result.reply)
+        self.assertNotIn("已给你点了", result.reply)
 
     async def test_mention_trigger_limits_targets_and_skips_the_bot(self) -> None:
         bot = FakeBot(friend_ids=["20002", "20003"])
@@ -133,6 +152,23 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.likes, [(20001, 10)])
         self.assertIn("秒后再试", second.reply)
 
+    async def test_string_retcode_failure_is_not_treated_as_success(self) -> None:
+        bot = FakeBot(
+            friend_ids=["20001"],
+            response={
+                "status": "ok",
+                "retcode": "1200",
+                "wording": "点赞失败 今日同一好友点赞数已达上限",
+            },
+        )
+        event = FakeEvent(text="赞我", bot=bot)
+        service = QQProfileLikeService(self._config())
+
+        result = await service.handle_message(event, event.message_str)
+
+        self.assertIn("已达上限", result.reply)
+        self.assertNotIn("已向 QQ 提交", result.reply)
+
     async def test_persona_context_is_temporary_and_contains_only_result_facts(self) -> None:
         bot = FakeBot(friend_ids=["20001"])
         event = FakeEvent(text="赞我", bot=bot)
@@ -146,7 +182,7 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(attached)
         self.assertIn(QQ_LIKE_PERSONA_CONTEXT_PREFIX, consumed)
-        self.assertIn("已成功点赞 10 次", consumed)
+        self.assertIn("OneBot 已接受 10 个赞请求", consumed)
         self.assertEqual(service.take_persona_context(event), "")
 
     async def test_disabled_module_does_not_handle_messages(self) -> None:

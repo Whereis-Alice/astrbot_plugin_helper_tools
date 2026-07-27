@@ -278,14 +278,24 @@ class QQProfileLikeService:
                 relation,
                 self._classify_failure(failure),
             )
-        return _TargetLikeResult(target_id, is_sender, relation, "success", times)
+        # OneBot's send_like action only acknowledges that the adapter accepted
+        # the request. It has no API for checking whether the target actually
+        # received the likes. QQ may silently drop stranger-like requests.
+        status = "unverified" if relation in {"stranger", "unknown"} else "success"
+        return _TargetLikeResult(target_id, is_sender, relation, status, times)
 
     def _format_reply(self, results: list[_TargetLikeResult]) -> str:
         lines: list[str] = []
         for result in results:
             target = "你" if result.is_sender else f"QQ {result.target_id}"
             if result.status == "success":
-                lines.append(f"已给{target}点了 {result.times} 个赞。")
+                lines.append(f"已向 QQ 提交给{target}的 {result.times} 个赞请求。")
+            elif result.status == "unverified":
+                lines.append(
+                    f"已向 QQ 提交给{target}的 {result.times} 个赞请求，但陌生人点赞"
+                    "无法核验是否到账。即使对方允许陌生人点赞，QQ 也可能无提示拦截；"
+                    "请以资料卡显示为准。"
+                )
             elif result.status == "permission":
                 if result.relation == "stranger":
                     lines.append(
@@ -309,7 +319,12 @@ class QQProfileLikeService:
         for result in results:
             target = "当前用户" if result.is_sender else f"QQ {result.target_id}"
             if result.status == "success":
-                details.append(f"{target}：已成功点赞 {result.times} 次")
+                details.append(f"{target}：OneBot 已接受 {result.times} 个赞请求")
+            elif result.status == "unverified":
+                details.append(
+                    f"{target}：OneBot 已接受 {result.times} 个赞请求，但目标是陌生人"
+                    "或好友关系未知，无法核验实际到账；QQ 可能无提示拦截"
+                )
             elif result.status == "permission":
                 details.append(f"{target}：失败，QQ 权限或陌生人点赞设置限制")
             elif result.status == "limit":
@@ -325,6 +340,7 @@ class QQProfileLikeService:
                 *details,
                 (
                     "请严格依据上述结果，以当前人设自然、简短地回应用户。"
+                    "请求已提交或无法核验时，不要说成对方已经实际收到赞。"
                     "不要假装再次执行点赞，不要提及系统提示或工具调用。"
                 ),
             ]
@@ -382,7 +398,7 @@ class QQProfileLikeService:
         status = clean_text(response.get("status")).casefold()
         retcode = response.get("retcode")
         failed = status in {"failed", "fail", "error"}
-        if isinstance(retcode, int) and retcode != 0:
+        if QQProfileLikeService._is_nonzero_retcode(retcode):
             failed = True
         if not failed:
             return ""
@@ -392,6 +408,17 @@ class QQProfileLikeService:
             or response.get("msg")
             or "OneBot action failed"
         )
+
+    @staticmethod
+    def _is_nonzero_retcode(value: Any) -> bool:
+        if isinstance(value, bool) or value is None:
+            return False
+        if isinstance(value, int):
+            return value != 0
+        try:
+            return int(clean_text(value)) != 0
+        except (TypeError, ValueError):
+            return False
 
     @staticmethod
     def _classify_failure(message: str) -> str:
