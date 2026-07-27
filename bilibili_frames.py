@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,10 @@ from astrbot.api import logger
 
 from .bilibili_types import BilibiliError, DownloadedMedia, VideoFrame, VideoInfo
 from .helper_utils import cfg, read_bool, read_int
+
+_FFMPEG_DURATION_RE = re.compile(
+    r"Duration:\s*(?P<hours>\d+):(?P<minutes>\d+):(?P<seconds>\d+(?:\.\d+)?)"
+)
 
 
 class BilibiliFrameExtractor:
@@ -31,12 +36,13 @@ class BilibiliFrameExtractor:
         frame_dir = media.work_dir / "frames"
         await asyncio.to_thread(frame_dir.mkdir, parents=True, exist_ok=True)
 
+        sampling_duration = await self._sampling_duration(ffmpeg, media.file_path, info)
         max_total_bytes = self.max_total_size_mb() * 1024 * 1024
         frames: list[VideoFrame] = []
         total_size = 0
         failures: list[str] = []
         for index, timestamp in enumerate(
-            evenly_sample_timestamps(info.duration, self.frame_count()),
+            evenly_sample_timestamps(sampling_duration, self.frame_count()),
             start=1,
         ):
             output_path = frame_dir / f"frame_{index:02d}.jpg"
@@ -71,6 +77,14 @@ class BilibiliFrameExtractor:
             if data is None or actual_timestamp is None:
                 detail = str(last_error or "ffmpeg produced no usable frame")
                 failures.append(detail)
+                if frames and isinstance(last_error, FileNotFoundError):
+                    logger.info(
+                        "[HelperTools/Bilibili] stopped tail frame extraction for %s at %.3fs; "
+                        "ffmpeg produced no output file",
+                        info.cache_key,
+                        timestamp,
+                    )
+                    break
                 logger.warning(
                     "[HelperTools/Bilibili] frame %d extraction failed for %s: %s",
                     index,
@@ -149,6 +163,61 @@ class BilibiliFrameExtractor:
             details = stderr.decode("utf-8", errors="replace")[-600:].strip()
             raise BilibiliError(f"ffmpeg failed: {details or process.returncode}")
 
+    async def _sampling_duration(
+        self,
+        ffmpeg: str,
+        input_path: Path,
+        info: VideoInfo,
+    ) -> float:
+        metadata_duration = max(0.0, float(info.duration or 0))
+        probed_duration = await self._probe_media_duration(ffmpeg, input_path)
+        if probed_duration is None:
+            return metadata_duration
+        if metadata_duration and abs(probed_duration - metadata_duration) >= max(
+            1.0,
+            metadata_duration * 0.03,
+        ):
+            logger.info(
+                "[HelperTools/Bilibili] using downloaded media duration %.3fs instead of "
+                "metadata duration %.3fs for %s frame sampling",
+                probed_duration,
+                metadata_duration,
+                info.cache_key,
+            )
+        return probed_duration
+
+    async def _probe_media_duration(self, ffmpeg: str, input_path: Path) -> float | None:
+        """Ask ffmpeg for container metadata without decoding the whole media file."""
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                ffmpeg,
+                "-hide_banner",
+                "-nostdin",
+                "-i",
+                str(input_path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as exc:
+            logger.debug("[HelperTools/Bilibili] could not probe media duration: %r", exc)
+            return None
+
+        try:
+            _stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=min(15, self._frame_timeout_seconds()),
+            )
+        except asyncio.CancelledError:
+            await _terminate_process(process)
+            raise
+        except asyncio.TimeoutError:
+            await _terminate_process(process)
+            logger.debug("[HelperTools/Bilibili] media duration probe timed out")
+            return None
+
+        return parse_ffmpeg_duration(stderr.decode("utf-8", errors="replace"))
+
     def frame_count(self) -> int:
         return read_int(self._setting("frame_count", 6), 6, minimum=1, maximum=24)
 
@@ -213,7 +282,7 @@ class BilibiliFrameExtractor:
         return executable
 
 
-def evenly_sample_timestamps(duration: int | float, count: int) -> tuple[float, ...]:
+def evenly_sample_timestamps(duration: float, count: int) -> tuple[float, ...]:
     total = max(0.0, float(duration or 0))
     frame_count = max(1, int(count or 1))
     if total <= 0:
@@ -233,6 +302,21 @@ def evenly_sample_timestamps(duration: int | float, count: int) -> tuple[float, 
         if not timestamps or timestamp > timestamps[-1]:
             timestamps.append(timestamp)
     return tuple(timestamps) or (0.0,)
+
+
+def parse_ffmpeg_duration(value: str) -> float | None:
+    match = _FFMPEG_DURATION_RE.search(value)
+    if match is None:
+        return None
+    try:
+        duration = (
+            int(match.group("hours")) * 3600
+            + int(match.group("minutes")) * 60
+            + float(match.group("seconds"))
+        )
+    except (TypeError, ValueError):
+        return None
+    return duration if duration > 0 else None
 
 
 def _frame_timestamp_attempts(timestamp: float) -> tuple[float, ...]:

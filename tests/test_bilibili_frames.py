@@ -8,6 +8,7 @@ from pathlib import Path
 from astrbot_plugin_helper_tools.bilibili_frames import (
     BilibiliFrameExtractor,
     evenly_sample_timestamps,
+    parse_ffmpeg_duration,
 )
 from astrbot_plugin_helper_tools.bilibili_types import DownloadedMedia, VideoInfo
 
@@ -36,6 +37,13 @@ class FrameSamplingTests(unittest.TestCase):
         self.assertEqual(evenly_sample_timestamps(100, 3), (1.0, 50.0, 99.0))
         self.assertEqual(evenly_sample_timestamps(0, 6), (0.0,))
         self.assertEqual(evenly_sample_timestamps(100, 1), (50.0,))
+
+    def test_parses_ffmpeg_container_duration(self) -> None:
+        self.assertEqual(
+            parse_ffmpeg_duration("Duration: 01:02:03.450, start: 0.000000, bitrate: 0 kb/s"),
+            3723.45,
+        )
+        self.assertIsNone(parse_ffmpeg_duration("Duration: N/A"))
 
     def test_frame_settings_are_bounded(self) -> None:
         extractor = BilibiliFrameExtractor(
@@ -111,7 +119,7 @@ class FrameExtractionTests(unittest.IsolatedAsyncioTestCase):
 
             frames = await extractor.extract(
                 DownloadedMedia(video_path, work_dir, "video/mp4"),
-                make_info(),
+                make_info(duration=30),
             )
 
         self.assertEqual(len(frames), 3)

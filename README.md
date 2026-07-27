@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、网页浏览、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.6.2`
+- 当前版本：`v0.6.3`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -32,7 +32,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.6.2` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.6.3` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -120,7 +120,7 @@ Gemini 不直接面向用户说话，也不会替换 AstrBot 人格。外部视�
 
 ### 默认模型抽帧识图（可选）
 
-在 `bilibili_video.default_model.frame_vision.enabled` 开启后，插件会下载当前分 P 的视频，从开头到结尾均匀抽取 JPEG 画面，并把它们与字幕/转写一起交给当前 AstrBot 模型。这样默认模型可以同时参考文字、人物、场景、画面梗和屏幕文字。
+在 `bilibili_video.default_model.frame_vision.enabled` 开启后，插件会下载当前分 P 的视频，优先按下载文件的实际时长从开头到结尾均匀抽取 JPEG 画面，并把它们与字幕/转写一起交给当前 AstrBot 模型。这样默认模型可以同时参考文字、人物、场景、画面梗和屏幕文字。
 
 这不是另一个模型，也不会改变人格。它要求当前 AstrBot 会话模型支持图片输入；不支持视觉输入的模型可能忽略图片或返回模型侧错误，因此此功能默认关闭。
 
