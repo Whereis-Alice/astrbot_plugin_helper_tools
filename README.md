@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、网页浏览、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.6.3`
+- 当前版本：`v0.6.4`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -32,7 +32,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.6.3` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.6.4` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -319,6 +319,7 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 - 提及唤醒：支持 `@ bot`、通用唤醒词和管理员唤醒词。
 - 唤醒词位置可多选：自由触发、前缀触发、后缀触发。
 - 纯引用 bot 消息默认不唤醒；同一条消息带 `@` 或唤醒词时仍可唤醒。
+- 私聊默认不使用唤醒增强，而是完全交给 AstrBot 原生私聊流程，避免群聊防抖、冷却和屏蔽规则造成偶发无回复。确实需要私聊也应用这些规则时，开启 `wake.apply_to_private_messages`；全局黑名单不受此开关影响。
 - 未并入 wakepro 的智能唤醒和沉默检测。
 
 `block_keywords` 的默认列表只在旧配置迁移时补一次。初始化后可以自由删除、修改或清空，插件不会偷偷恢复。

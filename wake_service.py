@@ -12,8 +12,16 @@ from urllib.parse import urlparse
 
 import astrbot.api.message_components as Comp
 
-from .helper_utils import cfg, clean_text, core_wake_prefixes, read_bool, read_float, read_int, read_list, section
-
+from .helper_utils import (
+    cfg,
+    clean_text,
+    core_wake_prefixes,
+    read_bool,
+    read_float,
+    read_int,
+    read_list,
+    section,
+)
 
 WAKE_MODE_CONTAINS = "contains"
 WAKE_MODE_PREFIX = "prefix"
@@ -98,6 +106,10 @@ def _event_group_id(event: Any) -> str:
     return clean_text(getter()) if callable(getter) else ""
 
 
+def _is_private_chat(event: Any) -> bool:
+    return not _event_group_id(event)
+
+
 def _event_self_id(event: Any) -> str:
     getter = getattr(event, "get_self_id", None)
     return clean_text(getter()) if callable(getter) else ""
@@ -162,6 +174,12 @@ class WakeService:
 
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "wake", "enabled", True), True)
+
+    def apply_to_private_messages(self) -> bool:
+        return read_bool(
+            cfg(self.config, "wake", "apply_to_private_messages", False),
+            False,
+        )
 
     def at_wake_enabled(self) -> bool:
         return read_bool(cfg(self.config, "wake", "at_wake_enabled", True), True)
@@ -340,6 +358,11 @@ class WakeService:
         blacklist_result = self._apply_global_blacklist(event)
         if blacklist_result:
             return blacklist_result
+        # WakePro's original pipeline is group-oriented. Keeping private chats on
+        # AstrBot's native path avoids a group debounce/cooldown silently stopping
+        # an otherwise normal direct message.
+        if _is_private_chat(event) and not self.apply_to_private_messages():
+            return "private_bypassed"
 
         # Evaluate prefix command/LLM blocking before debounce. Otherwise a message
         # sent during the debounce window can be merged into an LLM request first.
@@ -380,6 +403,8 @@ class WakeService:
         sender_id = _event_sender_id(event)
         if sender_id:
             await self._clear_pending(self._pending_key(event))
+        if _is_private_chat(event) and not self.apply_to_private_messages():
+            return
         result_getter = getattr(event, "get_result", None)
         result = result_getter() if callable(result_getter) else None
         if result is None:
@@ -742,7 +767,9 @@ class WakeService:
         if not umo:
             return
         try:
-            from astrbot.core.pipeline.process_stage import follow_up as process_follow_up
+            from astrbot.core.pipeline.process_stage import (
+                follow_up as process_follow_up,
+            )
         except Exception:
             return
         active_runners = getattr(process_follow_up, "_ACTIVE_AGENT_RUNNERS", None)

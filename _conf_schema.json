@@ -516,6 +516,12 @@
         "description": "启用唤醒增强模块",
         "default": true
       },
+      "apply_to_private_messages": {
+        "type": "bool",
+        "description": "私聊使用唤醒增强",
+        "default": false,
+        "hint": "默认关闭。关闭时私聊完全交给 AstrBot 原生处理，不会经过本模块的防抖、冷却、屏蔽词、复读拦截和指令屏蔽；全局黑名单仍然生效。"
+      },
       "global_blacklist": {
         "type": "list",
         "description": "全局黑名单会话/群号/用户号",

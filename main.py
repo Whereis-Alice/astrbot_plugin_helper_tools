@@ -54,7 +54,7 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.6.3"
+PLUGIN_VERSION = "0.6.4"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、网页浏览、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -656,6 +656,16 @@ class HelperToolsPlugin(Star):
             logger.info(
                 "[%s] blocked wake-prefixed ordinary message from default LLM (session=%s)",
                 PLUGIN_ID,
+                clean_text(getattr(event, "unified_msg_origin", "")),
+            )
+            return
+
+        is_stopped = getattr(event, "is_stopped", None)
+        if result and callable(is_stopped) and is_stopped():
+            logger.info(
+                "[%s] wake enhancement stopped a message (reason=%s, session=%s)",
+                PLUGIN_ID,
+                result,
                 clean_text(getattr(event, "unified_msg_origin", "")),
             )
 
