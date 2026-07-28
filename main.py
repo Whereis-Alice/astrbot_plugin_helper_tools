@@ -54,7 +54,7 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.6.4"
+PLUGIN_VERSION = "0.6.5"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、网页浏览、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -671,12 +671,14 @@ class HelperToolsPlugin(Star):
 
     @filter.on_llm_request(priority=99998)
     async def wake_llm_request_guard(self, event: AstrMessageEvent, _request: Any):
-        """Last-resort guard for a wake-prefixed ordinary message."""
+        """Last-resort guard for LLM fallbacks blocked by wake enhancement."""
         if not self.enabled() or not self.wake.is_llm_request_blocked(event):
             return
+        reason = self.wake.llm_request_block_reason(event) or "unspecified"
         logger.warning(
-            "[%s] blocked a late LLM request for wake-prefixed ordinary message (session=%s)",
+            "[%s] blocked a late LLM request (reason=%s, session=%s)",
             PLUGIN_ID,
+            reason,
             clean_text(getattr(event, "unified_msg_origin", "")),
         )
         event.stop_event()

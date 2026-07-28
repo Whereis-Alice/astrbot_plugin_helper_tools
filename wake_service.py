@@ -62,6 +62,9 @@ DEFAULT_BUILTIN_COMMANDS = [
 
 DEFAULT_BLOCK_WORDS_PATH = Path(__file__).with_name("default_wake_block_words.json")
 LLM_REQUEST_BLOCK_EXTRA_KEY = "helper_tools_wake_block_llm_request"
+LLM_REQUEST_BLOCK_REASON_EXTRA_KEY = "helper_tools_wake_block_llm_reason"
+LLM_BLOCK_REASON_RECOGNIZED_COMMAND = "recognized_command"
+LLM_BLOCK_REASON_WAKE_PREFIX = "wake_prefix_ordinary_message"
 
 
 @dataclass(slots=True)
@@ -168,7 +171,6 @@ class WakeService:
         self._bot_messages: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=5))
         self._pending: dict[str, PendingWakeRequest] = {}
         self._pending_lock = asyncio.Lock()
-        self._commands_cache: set[str] | None = None
         self._default_block_keywords_cache: list[str] | None = None
         self._migrate_editable_block_keywords()
 
@@ -486,12 +488,19 @@ class WakeService:
         # even when a third-party command handler does not call stop_event itself.
         if is_command and self.suppress_llm_after_command():
             self._suppress_default_llm(event)
+            # Some third-party command handlers later call should_call_llm(False),
+            # which overwrites the early suppression. Keep a separate event marker
+            # so the final LLM-request hook can still reject that fallback.
+            self._mark_llm_request_blocked(
+                event,
+                LLM_BLOCK_REASON_RECOGNIZED_COMMAND,
+            )
 
         if prefix_match.matched and not is_command and self.block_prefix_llm():
             # Keep the event flowing so dynamically matched commands (wallpaper,
             # Steam, voice, etc.) can still run, while blocking AstrBot's default LLM.
             self._suppress_default_llm(event)
-            self._mark_llm_request_blocked(event)
+            self._mark_llm_request_blocked(event, LLM_BLOCK_REASON_WAKE_PREFIX)
             return "prefix_llm"
         return ""
 
@@ -578,33 +587,43 @@ class WakeService:
         except asyncio.CancelledError:
             return
 
-    def _registered_commands(self) -> set[str]:
-        if self._commands_cache is not None:
-            return self._commands_cache
+    def _registered_command_names(self) -> set[str]:
+        """Read the live command registry so plugin reloads are picked up."""
+
         commands: set[str] = set()
         try:
             from astrbot.core.star.filter.command import CommandFilter
             from astrbot.core.star.filter.command_group import CommandGroupFilter
             from astrbot.core.star.star_handler import star_handlers_registry
         except Exception:
-            self._commands_cache = commands
             return commands
         for handler in star_handlers_registry:
             for flt in getattr(handler, "event_filters", []):
-                if isinstance(flt, CommandFilter):
-                    commands.update(self._command_filter_names(flt))
-                    break
-                if isinstance(flt, CommandGroupFilter):
-                    commands.update(self._command_filter_names(flt, name_attr="group_name"))
+                if isinstance(flt, (CommandFilter, CommandGroupFilter)):
+                    commands.update(self._complete_command_names(flt))
                     break
         commands.update(self.builtin_commands())
         commands.discard("")
-        self._commands_cache = commands
         return commands
 
     @staticmethod
-    def _command_filter_names(flt: Any, *, name_attr: str = "command_name") -> set[str]:
-        names = {clean_text(getattr(flt, name_attr, ""))}
+    def _complete_command_names(flt: Any) -> set[str]:
+        getter = getattr(flt, "get_complete_command_names", None)
+        if callable(getter):
+            try:
+                values = getter()
+            except Exception:
+                values = []
+            if isinstance(values, (list, tuple, set)):
+                names = {clean_text(value) for value in values}
+                names.discard("")
+                if names:
+                    return names
+
+        names = {
+            clean_text(getattr(flt, "command_name", "")),
+            clean_text(getattr(flt, "group_name", "")),
+        }
         aliases = getattr(flt, "alias", ())
         if isinstance(aliases, str):
             aliases = (aliases,)
@@ -614,11 +633,12 @@ class WakeService:
         return names
 
     def _detect_command(self, event: Any) -> str:
-        registered_commands = self._registered_commands()
+        registered_commands = self._registered_command_names()
         for message in self._command_message_candidates(event):
-            first_arg = message.split(None, 1)[0]
-            if first_arg in registered_commands:
-                return first_arg
+            normalized = " ".join(message.split())
+            for command in sorted(registered_commands, key=len, reverse=True):
+                if normalized == command or normalized.startswith(command + " "):
+                    return command
         return ""
 
     def _detect_builtin_command(self, event: Any) -> str:
@@ -792,12 +812,14 @@ class WakeService:
             event.call_llm = True
 
     @staticmethod
-    def _mark_llm_request_blocked(event: Any) -> None:
+    def _mark_llm_request_blocked(event: Any, reason: str) -> None:
         setter = getattr(event, "set_extra", None)
         if callable(setter):
             setter(LLM_REQUEST_BLOCK_EXTRA_KEY, True)
+            setter(LLM_REQUEST_BLOCK_REASON_EXTRA_KEY, reason)
         else:
             setattr(event, LLM_REQUEST_BLOCK_EXTRA_KEY, True)
+            setattr(event, LLM_REQUEST_BLOCK_REASON_EXTRA_KEY, reason)
 
     @staticmethod
     def is_llm_request_blocked(event: Any) -> bool:
@@ -808,6 +830,16 @@ class WakeService:
             except TypeError:
                 pass
         return bool(getattr(event, LLM_REQUEST_BLOCK_EXTRA_KEY, False))
+
+    @staticmethod
+    def llm_request_block_reason(event: Any) -> str:
+        getter = getattr(event, "get_extra", None)
+        if callable(getter):
+            try:
+                return clean_text(getter(LLM_REQUEST_BLOCK_REASON_EXTRA_KEY, ""))
+            except TypeError:
+                pass
+        return clean_text(getattr(event, LLM_REQUEST_BLOCK_REASON_EXTRA_KEY, ""))
 
     def _pending_key(self, event: Any) -> str:
         return f"{clean_text(getattr(event, 'unified_msg_origin', ''))}:{_event_sender_id(event)}"
