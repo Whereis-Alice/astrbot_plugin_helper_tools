@@ -1,7 +1,7 @@
 {
   "general": {
     "type": "object",
-    "description": "基础设置",
+    "description": "【基础设置】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -12,7 +12,7 @@
   },
   "reply_media_guard": {
     "type": "object",
-    "description": "引用自身图片来源标记",
+    "description": "【引用自身图片来源标记】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -24,7 +24,7 @@
   },
   "reply_card_reader": {
     "type": "object",
-    "description": "引用小程序/音乐卡片识别",
+    "description": "【引用小程序/音乐卡片识别】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -49,7 +49,7 @@
   },
   "bilibili_video": {
     "type": "object",
-    "description": "B站视频理解",
+    "description": "【B站视频理解】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -382,7 +382,7 @@
   },
   "web_browser": {
     "type": "object",
-    "description": "网页浏览（Playwright）",
+    "description": "【网页浏览（Playwright）】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -509,7 +509,7 @@
   },
   "wake": {
     "type": "object",
-    "description": "唤醒增强",
+    "description": "【唤醒增强】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -980,7 +980,7 @@
   },
   "wallpaper": {
     "type": "object",
-    "description": "本地随机壁纸",
+    "description": "【本地随机壁纸】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1125,7 +1125,7 @@
   },
   "qq_avatar": {
     "type": "object",
-    "description": "QQ 头像工具",
+    "description": "【QQ 头像工具】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1247,7 +1247,7 @@
   },
   "qq_member": {
     "type": "object",
-    "description": "QQ群成员信息",
+    "description": "【QQ群成员信息】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1274,7 +1274,7 @@
   },
   "qq_profile": {
     "type": "object",
-    "description": "QQ 用户资料 / box",
+    "description": "【QQ 用户资料 / box】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1324,7 +1324,7 @@
   },
   "qq_like": {
     "type": "object",
-    "description": "QQ 名片点赞",
+    "description": "【QQ 名片点赞】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1430,7 +1430,7 @@
   },
   "rollpig": {
     "type": "object",
-    "description": "今日小猪",
+    "description": "【今日小猪】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1495,7 +1495,7 @@
   },
   "payqr": {
     "type": "object",
-    "description": "收款码",
+    "description": "【收款码】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1534,7 +1534,7 @@
   },
   "anime1": {
     "type": "object",
-    "description": "Anime1 番剧更新",
+    "description": "【Anime1 番剧更新】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1583,7 +1583,7 @@
   },
   "voice": {
     "type": "object",
-    "description": "随机语音",
+    "description": "【随机语音】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1656,7 +1656,7 @@
   },
   "steam": {
     "type": "object",
-    "description": "Steam 游戏查询",
+    "description": "【Steam 游戏查询】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1786,7 +1786,7 @@
   },
   "bot_profile": {
     "type": "object",
-    "description": "Bot QQ 资料管理",
+    "description": "【Bot QQ 资料管理】",
     "items": {
       "enabled": {
         "type": "bool",
