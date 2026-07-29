@@ -507,6 +507,255 @@
       }
     }
   },
+  "twitter": {
+    "type": "object",
+    "description": "【X / Twitter 资料检索】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 X / Twitter 模块",
+        "default": false,
+        "hint": "默认关闭。开启后，模型可查询公开的 X/Twitter 账号、推文和近期动态；不需要 X 登录 Cookie。"
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 X / Twitter LLM 工具",
+        "default": true,
+        "hint": "控制 find_x_account、get_x_post、get_x_recent_posts 和 search_x_posts。关闭后，命令和自动链接解析仍可单独使用。"
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用 X / Twitter 查询命令",
+        "default": true,
+        "hint": "控制 helper_x_search、helper_x_account、helper_x_recent 和 helper_x_post；使用 helper_ 命名空间，避免与其它 Twitter/X 插件撞指令。"
+      },
+      "auto_parse_mode": {
+        "type": "string",
+        "description": "用户发送 X / Twitter 链接时如何触发",
+        "options": [
+          "跟随 AstrBot（推荐）",
+          "看到 X/Twitter 链接就主动回复",
+          "关闭自动解析"
+        ],
+        "default": "跟随 AstrBot（推荐）",
+        "hint": "“跟随 AstrBot”只在消息本来就会进入 LLM 时补充推文资料，兼容 @、唤醒词和现有屏蔽规则；“主动回复”会让裸链接也触发当前人格回复。"
+      },
+      "auto_parse_attach_images": {
+        "type": "bool",
+        "description": "自动解析时附带通过过滤的图片",
+        "default": false,
+        "hint": "需要当前模型支持图片输入。图片只用于这一轮识图，回复结束后不会写入后续聊天上下文。"
+      },
+      "data_source": {
+        "type": "string",
+        "description": "X / Twitter 数据来源",
+        "options": [
+          "自动（优先 Nitter，失败回退 FxTwitter）",
+          "仅 Nitter",
+          "仅 FxTwitter"
+        ],
+        "default": "自动（优先 Nitter，失败回退 FxTwitter）",
+        "hint": "自动模式仅在下面填写 Nitter 服务地址后才会优先使用 Nitter。Nitter 无法读取、搜索未启用或实例异常时，会自动改用 FxTwitter。"
+      },
+      "nitter_base_url": {
+        "type": "string",
+        "description": "自建 Nitter 服务地址",
+        "default": "",
+        "hint": "填写 AstrBot 运行环境实际能访问的完整地址。若 AstrBot 与 Nitter 在同一台宿主机，可填写 http://127.0.0.1:8585；若它们在不同 Docker 容器，通常填写 http://nitter:8080。留空时自动模式直接使用 FxTwitter。"
+      },
+      "nitter_timeout_seconds": {
+        "type": "int",
+        "description": "Nitter 单次请求超时（秒）",
+        "default": 8,
+        "min": 2,
+        "max": 120,
+        "hint": "自动模式中 Nitter 超时后会改用 FxTwitter。保持较短超时可避免故障实例拖慢整次查询。"
+      },
+      "fxtwitter_api_base": {
+        "type": "string",
+        "description": "FxTwitter 备用 API 地址",
+        "default": "https://api.fxtwitter.com",
+        "hint": "通常不需要修改。只在你使用兼容的自建 FxTwitter API 时填写其它地址。"
+      },
+      "proxy": {
+        "type": "string",
+        "description": "可选 HTTP 代理地址",
+        "default": "",
+        "hint": "例如 http://127.0.0.1:7890。会用于 Nitter、FxTwitter 和媒体下载；本机 Nitter 不需要代理时请留空。"
+      },
+      "request_timeout_seconds": {
+        "type": "int",
+        "description": "FxTwitter 和图片请求超时（秒）",
+        "default": 20,
+        "min": 5,
+        "max": 120
+      },
+      "request_retry_count": {
+        "type": "int",
+        "description": "临时网络失败重试次数",
+        "default": 1,
+        "min": 0,
+        "max": 3,
+        "hint": "只重试连接和超时错误；限流、数据不存在和内容格式异常不会重复请求。"
+      },
+      "search_result_limit": {
+        "type": "int",
+        "description": "推文搜索默认返回条数",
+        "default": 8,
+        "min": 1,
+        "max": 30
+      },
+      "recent_post_limit": {
+        "type": "int",
+        "description": "账号最近动态默认返回条数",
+        "default": 8,
+        "min": 1,
+        "max": 30
+      },
+      "max_post_chars": {
+        "type": "int",
+        "description": "单条推文最大文本长度",
+        "default": 4000,
+        "min": 300,
+        "max": 20000,
+        "hint": "超出时自动截断，避免长串引用或正文占满当前模型上下文。"
+      },
+      "max_images_per_request": {
+        "type": "int",
+        "description": "一次最多处理几张安全图片",
+        "default": 4,
+        "min": 0,
+        "max": 12,
+        "hint": "设为 0 可完全关闭 X/Twitter 图片下载、发送和视觉输入。"
+      },
+      "max_image_size_mb": {
+        "type": "int",
+        "description": "单张图片下载大小上限（MB）",
+        "default": 8,
+        "min": 1,
+        "max": 32
+      },
+      "image_quality": {
+        "type": "string",
+        "description": "Twitter 图片清晰度",
+        "options": [
+          "原图",
+          "大图"
+        ],
+        "default": "原图",
+        "hint": "“原图”更清晰也可能更大，仍会受到图片大小上限保护。"
+      },
+      "download_media_before_send": {
+        "type": "bool",
+        "description": "发图前先下载到本地",
+        "default": true,
+        "hint": "推荐保持开启，发送更稳定。Nitter 代理的图片无论此项如何都会先下载，因为 QQ 客户端无法访问服务器的 127.0.0.1 或 Docker 内网地址。"
+      },
+      "include_video_previews": {
+        "type": "bool",
+        "description": "允许处理推文视频封面",
+        "default": true,
+        "hint": "不会下载或分析 X 视频本体，只会把数据源公开提供的封面当作一张图片处理。"
+      },
+      "media_cache_max_files": {
+        "type": "int",
+        "description": "本地 X 图片缓存最多保留文件数",
+        "default": 48,
+        "min": 4,
+        "max": 500,
+        "hint": "仅影响为了发送而下载的图片缓存；超出后删除最旧文件。"
+      },
+      "rate_window_seconds": {
+        "type": "int",
+        "description": "本地查询限速窗口（秒）",
+        "default": 300,
+        "min": 10,
+        "max": 3600
+      },
+      "rate_max_requests": {
+        "type": "int",
+        "description": "限速窗口内最多请求次数",
+        "default": 60,
+        "min": 1,
+        "max": 1000,
+        "hint": "Nitter 和 FxTwitter 请求都会计入，自动回退时可能使用两次请求。"
+      },
+      "r18_filter": {
+        "type": "object",
+        "description": "R18 内容过滤",
+        "items": {
+          "mode": {
+            "type": "string",
+            "description": "文字与敏感标记过滤方式",
+            "options": [
+              "严格过滤（推荐）",
+              "仅平台敏感标记",
+              "关闭"
+            ],
+            "default": "严格过滤（推荐）",
+            "hint": "严格过滤会拦截数据源标记为敏感的内容，也会按下面的关键词过滤推文、引用和账号简介。"
+          },
+          "keywords": {
+            "type": "list",
+            "description": "严格过滤使用的 R18 关键词",
+            "default": [
+              "r18",
+              "r-18",
+              "nsfw",
+              "18+",
+              "adult only",
+              "nudity",
+              "nude",
+              "porn",
+              "色情",
+              "成人向",
+              "成人视频",
+              "裸露",
+              "エロ",
+              "成人向け"
+            ],
+            "hint": "可自由添加、删除或清空。清空后严格模式仍会过滤平台明确标记为敏感的内容，但不再按关键词屏蔽。"
+          }
+        }
+      },
+      "ai_review": {
+        "type": "object",
+        "description": "可选：AI 图片 R18 审核",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "对每张待发送图片做视觉审核",
+            "default": false,
+            "hint": "默认关闭。开启后，图片只有通过 OpenAI 兼容视觉模型审核才会发送或交给模型；审核接口不可用时会保守地不发送图片。"
+          },
+          "api_base": {
+            "type": "string",
+            "description": "审核模型 OpenAI 兼容 API 地址",
+            "default": "",
+            "hint": "填写 API 根地址或完整的 /v1/chat/completions 地址。只会把待审核图片发送给这里配置的服务。"
+          },
+          "api_key": {
+            "type": "string",
+            "description": "审核模型 API Key",
+            "default": "",
+            "hint": "请勿把 Key 发到聊天中。AstrBot 插件配置会保存该值，请按你的部署环境做好配置文件权限保护。"
+          },
+          "model": {
+            "type": "string",
+            "description": "审核使用的视觉模型名",
+            "default": ""
+          },
+          "timeout_seconds": {
+            "type": "int",
+            "description": "单张图片审核超时（秒）",
+            "default": 25,
+            "min": 5,
+            "max": 120
+          }
+        }
+      }
+    }
+  },
   "wake": {
     "type": "object",
     "description": "【唤醒增强】",

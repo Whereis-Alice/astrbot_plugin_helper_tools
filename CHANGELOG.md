@@ -2,6 +2,26 @@
 
 本项目按语义化版本记录用户可见变更。
 
+## [v0.7.0] - 2026-07-29
+
+### 新增
+
+- 新增默认关闭的 `twitter` X/Twitter 资料检索模块，注册 `find_x_account`、`get_x_post`、`get_x_recent_posts` 和 `search_x_posts` LLM 工具。模型可查找画师、VTuber、公司或个人账号，读取公开推文、最近动态与按需返回的图片，并继续按当前 AstrBot 人格自然回复。
+- 新增 `helper_x_search`、`helper_x_account`、`helper_x_recent`、`helper_x_post` 命令，使用独立命名空间，避免与其它 X/Twitter 插件冲突。
+- 支持 `x.com`、`twitter.com` 和已配置 Nitter 实例的推文链接自动解析；可选择跟随 AstrBot 唤醒规则、看到链接主动回复或关闭自动解析。
+- 支持自建 Nitter 作为优先数据源，提供“自动（Nitter 失败回退 FxTwitter）”“仅 Nitter”“仅 FxTwitter”三种来源模式。
+
+### 安全与优化
+
+- 推文、账号简介、引用内容和媒体说明均作为不可信外部资料注入当前轮，不会覆盖 AstrBot 人格；自动注入的 X 图片与文字会在回复后排除出后续会话历史。
+- 默认严格过滤数据源敏感标记和可编辑 R18 关键词；可选使用 OpenAI 兼容视觉模型审核每张待发送图片，审核失败或不明确时保守拦截。
+- 自建 Nitter 的图片会先下载到 AstrBot 服务器后再发送，避免 QQ 客户端无法访问 `127.0.0.1`、Docker 内网地址或 Nitter 私有端口。
+- 新增 `beautifulsoup4` 依赖，并加入 Nitter 页面解析、FxTwitter 回退、R18 过滤、临时上下文和命令命名空间测试。
+
+### 致谢
+
+- X/Twitter 功能的产品场景参考 `Ars1027/astrbot_plugin_twitter`。该上游项目采用 AGPL-3.0；本模块独立实现，没有复制或并入其代码。
+
 ## [v0.6.6] - 2026-07-29
 
 ### 优化

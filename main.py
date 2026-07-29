@@ -42,6 +42,19 @@ from .reply_card_reader import ReplyCardReader
 from .reply_media_guard import ReplyMediaGuard
 from .rollpig_service import RollPigService
 from .steam_service import STEAM_TOOL_NAME, SteamService
+from .twitter_service import (
+    TWITTER_CONTEXT_PREFIX,
+    TWITTER_TOOL_IMAGE_MARKERS,
+    X_ACCOUNT_TOOL_NAME,
+    X_POST_TOOL_NAME,
+    X_RECENT_POSTS_TOOL_NAME,
+    X_SEARCH_TOOL_NAME,
+    TwitterContext,
+    TwitterError,
+    TwitterResult,
+    TwitterService,
+    request_has_twitter_context,
+)
 from .voice_service import VOICE_TOOL_NAME, VoiceService
 from .wake_service import WakeService
 from .wallpaper_service import WallpaperService
@@ -54,8 +67,8 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.6.6"
-PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、网页浏览、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
+PLUGIN_VERSION = "0.7.0"
+PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、X/Twitter资料检索、网页浏览、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
@@ -63,6 +76,8 @@ _BILIBILI_TOOL_IMAGE_MARKER = f"[Image from tool '{BILIBILI_TOOL_NAME}'"
 _TEMPORARY_TOOL_RESULT_MARKERS = (
     _BILIBILI_TOOL_IMAGE_MARKER,
     WEB_BROWSER_RESULT_MARKER,
+    TWITTER_CONTEXT_PREFIX,
+    *TWITTER_TOOL_IMAGE_MARKERS,
 )
 
 
@@ -76,6 +91,10 @@ def _missing_event() -> str:
 
 def _bool_arg(value: Any, default: bool) -> bool:
     return read_bool(value, default)
+
+
+def _join_command_terms(*values: Any) -> str:
+    return " ".join(item for value in values if (item := clean_text(value)))
 
 
 def _module_enabled(config: Any, module: str, default: bool = True) -> bool:
@@ -122,6 +141,62 @@ def _web_browser_tool_result(result: WebPageResult) -> ToolResult:
             )
         )
     return CallToolResult(content=content, isError=False)
+
+
+def _twitter_tool_result(context: TwitterContext) -> ToolResult:
+    if not context.images:
+        return context.text
+    content: list[Any] = [TextContent(type="text", text=context.text)]
+    for image in context.images:
+        if image.data is None:
+            continue
+        content.append(
+            ImageContent(
+                type="image",
+                data=base64.b64encode(image.data).decode("ascii"),
+                mimeType=image.mime_type,
+            )
+        )
+    return CallToolResult(content=content, isError=False)
+
+
+def _int_arg(value: Any, default: int | None = None) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+async def _twitter_result_for_tool(
+    plugin: Any,
+    context: ContextWrapper[AstrAgentContext],
+    result: TwitterResult,
+    *,
+    return_images: bool,
+    send_images: bool,
+    max_images: int | None,
+) -> ToolResult:
+    sent_message = ""
+    if send_images:
+        event = _tool_event(context)
+        if event is None:
+            return _missing_event()
+        sent_message = await plugin.twitter.send_images_to_event(
+            event,
+            result,
+            max_images=max_images,
+        )
+    output = await plugin.twitter.context_from_result(
+        result,
+        include_images=return_images,
+        max_images=max_images,
+    )
+    if sent_message:
+        output = TwitterContext(
+            text=f"{output.text}\n图片发送：{sent_message}",
+            images=output.images,
+        )
+    return _twitter_tool_result(output)
 
 
 def _mark_temporary_tool_results(run_context: Any) -> int:
@@ -497,6 +572,235 @@ class WebBrowserTool(FunctionTool[AstrAgentContext]):
 
 
 @pydantic_dataclass
+class FindXAccountTool(FunctionTool[AstrAgentContext]):
+    plugin: Any = Field(default=None, repr=False)
+    name: str = X_ACCOUNT_TOOL_NAME
+    description: str = (
+        "查找 X/Twitter 上的公开账号。适合定位画师、VTuber、公司或个人；"
+        "用户名、@用户名和 X/Twitter 主页链接可精确查询，昵称或关键词会返回候选账号。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "X/Twitter 用户名、@用户名、主页链接、画师名或 VTuber 名称。",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "候选账号数量，1 到 5。",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        }
+    )
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolResult:
+        if self.plugin is None:
+            return "X/Twitter 账号工具未绑定插件实例。"
+        try:
+            result = await self.plugin.twitter.find_accounts(
+                clean_text(kwargs.get("query")),
+                limit=_int_arg(kwargs.get("limit"), 5),
+            )
+            return await _twitter_result_for_tool(
+                self.plugin,
+                context,
+                result,
+                return_images=False,
+                send_images=False,
+                max_images=0,
+            )
+        except TwitterError as exc:
+            return exc.user_message
+        except Exception as exc:  # noqa: BLE001 - do not turn a lookup failure into an Agent crash
+            logger.warning("[%s] X account lookup failed: %r", PLUGIN_ID, exc)
+            return "X/Twitter 账号查询发生意外错误，未返回结果。"
+
+
+@pydantic_dataclass
+class GetXPostTool(FunctionTool[AstrAgentContext]):
+    plugin: Any = Field(default=None, repr=False)
+    name: str = X_POST_TOOL_NAME
+    description: str = (
+        "读取一条公开 X/Twitter 推文。输入可为 x.com 或 twitter.com 推文链接，或推文数字 ID。"
+        "只有在用户明确要求看图或把图发到聊天时，才把 return_images 或 send_images 设为 true。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "post": {
+                    "type": "string",
+                    "description": "X/Twitter 推文链接或推文数字 ID。",
+                },
+                "return_images": {
+                    "type": "boolean",
+                    "description": "把通过 R18 过滤的图片附给当前模型识图，仅在本轮保留。",
+                    "default": False,
+                },
+                "send_images": {
+                    "type": "boolean",
+                    "description": "把通过 R18 过滤的图片直接发送到当前聊天，仅在用户明确要求发图时使用。",
+                    "default": False,
+                },
+                "max_images": {
+                    "type": "integer",
+                    "description": "本次最多处理的图片数，0 到 12，留空使用插件配置。",
+                },
+            },
+            "required": ["post"],
+        }
+    )
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolResult:
+        if self.plugin is None:
+            return "X/Twitter 推文工具未绑定插件实例。"
+        try:
+            result = await self.plugin.twitter.get_post(clean_text(kwargs.get("post")))
+            return await _twitter_result_for_tool(
+                self.plugin,
+                context,
+                result,
+                return_images=_bool_arg(kwargs.get("return_images"), False),
+                send_images=_bool_arg(kwargs.get("send_images"), False),
+                max_images=_int_arg(kwargs.get("max_images")),
+            )
+        except TwitterError as exc:
+            return exc.user_message
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[%s] X post lookup failed: %r", PLUGIN_ID, exc)
+            return "X/Twitter 推文读取发生意外错误，未返回结果。"
+
+
+@pydantic_dataclass
+class GetXRecentPostsTool(FunctionTool[AstrAgentContext]):
+    plugin: Any = Field(default=None, repr=False)
+    name: str = X_RECENT_POSTS_TOOL_NAME
+    description: str = (
+        "读取指定 X/Twitter 账号的最近公开推文。适合在已经确认账号后查询近况、动态或近期作品。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "account": {
+                    "type": "string",
+                    "description": "@用户名、用户名或 X/Twitter 主页链接。",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "读取数量，1 到 30。",
+                    "default": 8,
+                },
+                "return_images": {
+                    "type": "boolean",
+                    "description": "把通过 R18 过滤的图片附给当前模型识图，仅在本轮保留。",
+                    "default": False,
+                },
+                "send_images": {
+                    "type": "boolean",
+                    "description": "把通过 R18 过滤的图片直接发送到当前聊天，仅在用户明确要求发图时使用。",
+                    "default": False,
+                },
+                "max_images": {
+                    "type": "integer",
+                    "description": "本次最多处理的图片数，0 到 12，留空使用插件配置。",
+                },
+            },
+            "required": ["account"],
+        }
+    )
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolResult:
+        if self.plugin is None:
+            return "X/Twitter 最近动态工具未绑定插件实例。"
+        try:
+            result = await self.plugin.twitter.get_recent_posts(
+                clean_text(kwargs.get("account")),
+                limit=_int_arg(kwargs.get("limit"), 8),
+            )
+            return await _twitter_result_for_tool(
+                self.plugin,
+                context,
+                result,
+                return_images=_bool_arg(kwargs.get("return_images"), False),
+                send_images=_bool_arg(kwargs.get("send_images"), False),
+                max_images=_int_arg(kwargs.get("max_images")),
+            )
+        except TwitterError as exc:
+            return exc.user_message
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[%s] X recent-post lookup failed: %r", PLUGIN_ID, exc)
+            return "X/Twitter 最近动态读取发生意外错误，未返回结果。"
+
+
+@pydantic_dataclass
+class SearchXPostsTool(FunctionTool[AstrAgentContext]):
+    plugin: Any = Field(default=None, repr=False)
+    name: str = X_SEARCH_TOOL_NAME
+    description: str = (
+        "在公开 X/Twitter 推文中按关键词检索资料。可使用自然语言关键词，也支持常见 X 搜索写法，"
+        "例如 from:用户名。只有用户明确要求看图或发图时才处理图片。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "要检索的 X/Twitter 关键词或搜索表达式。",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "返回推文数量，1 到 30。",
+                    "default": 8,
+                },
+                "return_images": {
+                    "type": "boolean",
+                    "description": "把通过 R18 过滤的图片附给当前模型识图，仅在本轮保留。",
+                    "default": False,
+                },
+                "send_images": {
+                    "type": "boolean",
+                    "description": "把通过 R18 过滤的图片直接发送到当前聊天，仅在用户明确要求发图时使用。",
+                    "default": False,
+                },
+                "max_images": {
+                    "type": "integer",
+                    "description": "本次最多处理的图片数，0 到 12，留空使用插件配置。",
+                },
+            },
+            "required": ["query"],
+        }
+    )
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolResult:
+        if self.plugin is None:
+            return "X/Twitter 搜索工具未绑定插件实例。"
+        try:
+            result = await self.plugin.twitter.search_posts(
+                clean_text(kwargs.get("query")),
+                limit=_int_arg(kwargs.get("limit"), 8),
+            )
+            return await _twitter_result_for_tool(
+                self.plugin,
+                context,
+                result,
+                return_images=_bool_arg(kwargs.get("return_images"), False),
+                send_images=_bool_arg(kwargs.get("send_images"), False),
+                max_images=_int_arg(kwargs.get("max_images")),
+            )
+        except TwitterError as exc:
+            return exc.user_message
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[%s] X post search failed: %r", PLUGIN_ID, exc)
+            return "X/Twitter 推文搜索发生意外错误，未返回结果。"
+
+
+@pydantic_dataclass
 class BotQQProfileTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = BOT_PROFILE_TOOL_NAME
@@ -564,6 +868,7 @@ class HelperToolsPlugin(Star):
         self.wallpaper = WallpaperService(self.config, self.data_dir, self.context)
         self.rollpig = RollPigService(self.config, self.data_dir, self.context)
         self.web_browser = WebBrowserService(self.config)
+        self.twitter = TwitterService(self.config, self.data_dir)
 
         self.context.add_llm_tools(*self._build_tools())
 
@@ -576,6 +881,7 @@ class HelperToolsPlugin(Star):
         logger.info("[%s] initialized", PLUGIN_ID)
 
     async def terminate(self) -> None:
+        await self.twitter.close()
         await self.web_browser.close()
         await self.bilibili_qr_login.close()
         await self.bilibili.close()
@@ -622,6 +928,13 @@ class HelperToolsPlugin(Star):
             and read_bool(cfg(self.config, "web_browser", "llm_tool_enabled", True), True)
         )
 
+    def _twitter_commands_enabled(self) -> bool:
+        return (
+            self.enabled()
+            and _module_enabled(self.config, "twitter", False)
+            and self.twitter.commands_enabled()
+        )
+
     def _bilibili_qr_login_commands_enabled(self) -> bool:
         return (
             self.enabled()
@@ -644,6 +957,10 @@ class HelperToolsPlugin(Star):
                 active=self._tool_active("bilibili_video"),
             ),
             WebBrowserTool(plugin=self, active=self._web_browser_tool_active()),
+            FindXAccountTool(plugin=self, active=self._tool_active("twitter", False)),
+            GetXPostTool(plugin=self, active=self._tool_active("twitter", False)),
+            GetXRecentPostsTool(plugin=self, active=self._tool_active("twitter", False)),
+            SearchXPostsTool(plugin=self, active=self._tool_active("twitter", False)),
             BotQQProfileTool(plugin=self, active=self._tool_active("bot_profile", False)),
         ]
 
@@ -744,6 +1061,66 @@ class HelperToolsPlugin(Star):
             len(context_result.frames),
         )
 
+    @filter.on_llm_request(priority=18)
+    async def twitter_context_handler(
+        self,
+        event: AstrMessageEvent,
+        request: Any,
+    ) -> None:
+        """Attach a referenced X post as temporary, untrusted evidence for this turn only."""
+        if (
+            not self.enabled()
+            or not _module_enabled(self.config, "twitter", False)
+            or self.twitter.auto_parse_mode() == "off"
+            or request_has_twitter_context(request)
+        ):
+            return
+        is_stopped = getattr(event, "is_stopped", None)
+        if callable(is_stopped) and is_stopped():
+            return
+
+        context_result = getattr(event, "_helper_tools_twitter_context_result", None)
+        if not isinstance(context_result, TwitterContext):
+            context_result = await self.twitter.context_for_event_result(
+                event,
+                include_images=self.twitter.auto_parse_attach_images(),
+            )
+            if not context_result.text:
+                return
+            event._helper_tools_twitter_context_result = context_result
+
+        parts = getattr(request, "extra_user_content_parts", None)
+        if isinstance(parts, list):
+            parts.append(_mark_content_part_temporary(TextPart(text=context_result.text)))
+            for index, image in enumerate(context_result.images, start=1):
+                if not image.data_url:
+                    continue
+                parts.append(
+                    _mark_content_part_temporary(
+                        ImageURLPart(
+                            image_url=ImageURLPart.ImageURL(
+                                url=image.data_url,
+                                id=f"twitter-image-{index}",
+                            )
+                        )
+                    )
+                )
+        else:
+            original_prompt = clean_text(getattr(request, "prompt", ""))
+            fallback_text = context_result.text
+            if context_result.images:
+                fallback_text += (
+                    "\n\n通过过滤的 X/Twitter 图片已读取，但当前请求不支持附加图片，"
+                    "本轮不会使用图片内容。"
+                )
+            request.prompt = f"{original_prompt}\n\n{fallback_text}".strip()
+        logger.info(
+            "[%s] attached X/Twitter context (session=%s, images=%d)",
+            PLUGIN_ID,
+            clean_text(getattr(event, "unified_msg_origin", "")),
+            len(context_result.images),
+        )
+
     @filter.on_llm_request(priority=19)
     async def qq_like_persona_context_handler(
         self,
@@ -815,12 +1192,21 @@ class HelperToolsPlugin(Star):
             )
 
         reference = self.bilibili.prepare_event(event)
+        twitter_reference = self.twitter.prepare_event(event)
         is_stopped = getattr(event, "is_stopped", None)
         stopped = callable(is_stopped) and is_stopped()
         if (
             reference is not None
             and _module_enabled(self.config, "bilibili_video")
             and self.bilibili.auto_parse_mode() == "direct"
+            and not stopped
+            and not self.wake.is_llm_request_blocked(event)
+        ):
+            event.should_call_llm(True)
+        if (
+            twitter_reference is not None
+            and _module_enabled(self.config, "twitter", False)
+            and self.twitter.auto_parse_mode() == "direct"
             and not stopped
             and not self.wake.is_llm_request_blocked(event)
         ):
@@ -937,6 +1323,103 @@ class HelperToolsPlugin(Star):
         yield event.plain_result(
             "已清除本插件保存的 B 站扫码凭据。配置页中的 Cookie 文本和 cookies.txt 不会被修改。"
         )
+
+    @filter.command("helper_x_search", alias={"助手X搜索"})
+    async def twitter_search_command(
+        self,
+        event: AstrMessageEvent,
+        query: str = "",
+        query_2: str = "",
+        query_3: str = "",
+        query_4: str = "",
+        query_5: str = "",
+        query_6: str = "",
+    ):
+        """Search public X posts without colliding with generic social-media commands."""
+
+        event.stop_event()
+        if not self._twitter_commands_enabled():
+            yield event.plain_result("X/Twitter 查询命令当前未启用。")
+            return
+        try:
+            result = await self.twitter.search_posts(
+                _join_command_terms(query, query_2, query_3, query_4, query_5, query_6)
+            )
+            yield event.chain_result(await self.twitter.build_command_chain(result))
+        except TwitterError as exc:
+            yield event.plain_result(exc.user_message)
+        except Exception as exc:  # noqa: BLE001 - command failures must not enter LLM flow
+            logger.warning("[%s] X search command failed: %r", PLUGIN_ID, exc)
+            yield event.plain_result("X/Twitter 搜索发生意外错误，未返回结果。")
+
+    @filter.command("helper_x_account", alias={"助手X账号"})
+    async def twitter_account_command(
+        self,
+        event: AstrMessageEvent,
+        query: str = "",
+        query_2: str = "",
+        query_3: str = "",
+        query_4: str = "",
+        query_5: str = "",
+        query_6: str = "",
+    ):
+        """Find an account by handle or public name."""
+
+        event.stop_event()
+        if not self._twitter_commands_enabled():
+            yield event.plain_result("X/Twitter 查询命令当前未启用。")
+            return
+        try:
+            result = await self.twitter.find_accounts(
+                _join_command_terms(query, query_2, query_3, query_4, query_5, query_6)
+            )
+            yield event.chain_result(
+                await self.twitter.build_command_chain(result, include_images=False)
+            )
+        except TwitterError as exc:
+            yield event.plain_result(exc.user_message)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[%s] X account command failed: %r", PLUGIN_ID, exc)
+            yield event.plain_result("X/Twitter 账号查询发生意外错误，未返回结果。")
+
+    @filter.command("helper_x_recent", alias={"助手X近况"})
+    async def twitter_recent_command(
+        self,
+        event: AstrMessageEvent,
+        account: str,
+        limit: int = 8,
+    ):
+        """Read recent public posts from a known X account."""
+
+        event.stop_event()
+        if not self._twitter_commands_enabled():
+            yield event.plain_result("X/Twitter 查询命令当前未启用。")
+            return
+        try:
+            result = await self.twitter.get_recent_posts(clean_text(account), limit=limit)
+            yield event.chain_result(await self.twitter.build_command_chain(result))
+        except TwitterError as exc:
+            yield event.plain_result(exc.user_message)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[%s] X recent-post command failed: %r", PLUGIN_ID, exc)
+            yield event.plain_result("X/Twitter 最近动态读取发生意外错误，未返回结果。")
+
+    @filter.command("helper_x_post", alias={"助手X推文"})
+    async def twitter_post_command(self, event: AstrMessageEvent, post: str):
+        """Read a public post by its X/Twitter or configured Nitter URL."""
+
+        event.stop_event()
+        if not self._twitter_commands_enabled():
+            yield event.plain_result("X/Twitter 查询命令当前未启用。")
+            return
+        try:
+            result = await self.twitter.get_post(clean_text(post))
+            yield event.chain_result(await self.twitter.build_command_chain(result))
+        except TwitterError as exc:
+            yield event.plain_result(exc.user_message)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[%s] X post command failed: %r", PLUGIN_ID, exc)
+            yield event.plain_result("X/Twitter 推文读取发生意外错误，未返回结果。")
 
     @filter.command("qq_avatar", alias={"qq头像", "头像"})
     async def qq_avatar_command(

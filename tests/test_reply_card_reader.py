@@ -57,7 +57,10 @@ class ReplyCardReaderTests(unittest.TestCase):
         self.assertIn("标题：测试视频标题", marker)
         self.assertIn("描述：测试视频简介", marker)
         self.assertIn("链接：https://b23.tv/example", marker)
-        self.assertIs(reply.chain[0], card)
+        # Recent AstrBot component validation may clone the supplied Json object.
+        # Verify the quoted card remains intact rather than relying on object identity.
+        self.assertIsInstance(reply.chain[0], Comp.Json)
+        self.assertEqual(reply.chain[0].data, card.data)
         self.assertEqual(reply.id, "101")
 
     def test_makes_a_quoted_netease_music_card_readable(self) -> None:

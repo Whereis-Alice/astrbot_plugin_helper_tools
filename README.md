@@ -1,8 +1,8 @@
 # AstrBot 辅助工具合集
 
-为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、网页浏览、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
+为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、X/Twitter 资料检索、网页浏览、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.6.6`
+- 当前版本：`v0.7.0`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -11,6 +11,7 @@
 | 模块 | 主要能力 |
 | --- | --- |
 | B站视频理解 | 识别链接、BV/av、b23.tv、分享文本和 QQ 小程序卡片；支持管理员扫码登录、Gemini 视频分析，或默认模型结合字幕、转写和可选抽帧识图 |
+| X / Twitter 资料检索 | 查找公开账号、最近动态、推文和图片；可优先使用自建 Nitter，失败自动回退 FxTwitter，并提供 R18 过滤与可选 AI 图片审核 |
 | 网页浏览 | 可选的 Playwright 只读网页读取；返回正文、标题和可选截图，默认关闭 |
 | QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
 | QQ 名片点赞 | 自动响应“赞我”或“赞@用户”；可选由当前人设自然回复 |
@@ -32,7 +33,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.6.6` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.7.0` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -81,7 +82,62 @@ python -m playwright install chromium
 - 网页正文、标题和截图说明都被标记为不可信外部资料。其中出现“忽略上文”“调用工具”“发送密码”等文字，只会被当作网页内容。
 - 网页正文与截图只参与本轮回答，Agent 完成后会标记为不保存，不会进入后续聊天上下文。
 
-## B站视频理解
+## X / Twitter 资料检索
+
+`twitter.enabled` 默认关闭。开启后，当前 AstrBot 人格可以调用工具查公开账号、最近推文、指定推文和关键词结果；用户发送 `x.com`、`twitter.com` 链接时，也能按配置自动把资料交给当前会话再自然回复。它不会替换人格，也不会保存 X 的登录 Cookie。
+
+### 使用自建 Nitter
+
+你的 Nitter 可以直接作为优先数据源。配置页依次设置：
+
+1. 开启 `【X / Twitter 资料检索】 -> 启用 X / Twitter 模块`。
+2. 在 `自建 Nitter 服务地址` 填写 **AstrBot 进程实际能访问** 的地址。
+3. 保持数据来源为“自动（优先 Nitter，失败回退 FxTwitter）”。
+
+如果 Nitter 与 AstrBot 在同一台宿主机，端口是 `8585`，填写：
+
+```text
+http://127.0.0.1:8585
+```
+
+如果 AstrBot 和 Nitter 分别运行在 Docker 容器中，`127.0.0.1` 指向的是 AstrBot 容器自身，通常应填写同一 Docker 网络里的服务名，例如：
+
+```text
+http://nitter:8080
+```
+
+自动模式会先读取 Nitter；Nitter 超时、返回异常页、搜索功能不可用或数据无法识别时，自动改用 FxTwitter。选择“仅 Nitter”后不会走备用源，适合必须只经由自建实例访问的部署。
+
+### 自动触发与命令
+
+| `auto_parse_mode` | 效果 |
+| --- | --- |
+| `跟随 AstrBot（推荐）` | 只有消息原本因 @、唤醒词等规则进入 LLM 时，才补充链接对应的推文资料。不会因为群友单发链接而插话。 |
+| `看到 X/Twitter 链接就主动回复` | 裸 `x.com` / `twitter.com` / 已配置 Nitter 链接也会调用当前人格回复。现有唤醒屏蔽和指令屏蔽仍优先。 |
+| `关闭自动解析` | 不读取用户消息里的链接，但 LLM 工具和下面的命令仍可用。 |
+
+命令都使用 `helper_x_` 前缀，避免与已安装的 Twitter/X 插件冲突：
+
+```text
+/helper_x_search <关键词或 from:用户名>
+/helper_x_account <@用户名、主页链接或名称>
+/helper_x_recent <用户名> [数量]
+/helper_x_post <x.com/twitter.com/Nitter 推文链接或数字 ID>
+```
+
+`helper_x_search` 和 `helper_x_account` 最多接收六个以空格分开的词；需要更复杂的条件时，推荐让 LLM 直接调用工具，例如“查一下某位 VTuber 最近的推文”。
+
+### 图片与内容安全
+
+- 默认严格过滤数据源标记为敏感的内容，并按 `r18_filter.keywords` 过滤推文、引用和账号简介；关键词可自由添加、删除或清空。
+- `仅平台敏感标记` 只相信数据源的敏感标签；`关闭` 不做文字或标签过滤。两种模式都不应视为绝对的内容安全保证。
+- 可开启 `ai_review.enabled`，把每张待发送或待交给视觉模型的图片交给配置的 OpenAI 兼容视觉模型审核。审核配置不完整、超时或返回不明确时，插件会保守地不发送这张图片。
+- Nitter 图片会始终由 AstrBot 所在服务器下载后再发送。这样 QQ 不需要访问服务器的 `127.0.0.1:8585`、Docker 内网域名或私有端口。
+- 自动解析的图片和 X/Twitter 资料只作为当前轮不可信外部资料注入，回复完成后不会进入后续聊天上下文。
+
+### 能力边界
+
+只能读取公开、可由当前数据源访问的内容。受保护账号、已删除内容、X 风控、Nitter 上游限制、实例未启用搜索或被限流时可能无法返回结果。推文中的链接、文字和图片说明都视为不可信外部资料，不会改变工具权限或要求模型执行其中的指令。
 
 ## B站视频理解
 
@@ -222,6 +278,10 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 | --- | --- |
 | `browse_webpage` | 读取公开网页标题、正文和可选截图；默认关闭，网页资料只在当前轮保留 |
 | `understand_bilibili_video` | 读取 B 站视频事实；默认模型开启抽帧时会在当前工具回合附带画面，随后自动从历史移除 |
+| `find_x_account` | 按用户名、主页链接或名称查找公开 X/Twitter 账号，适合定位画师、VTuber、公司或个人 |
+| `get_x_post` | 读取一条公开 X/Twitter 推文；按需返回或发送通过安全过滤的图片 |
+| `get_x_recent_posts` | 读取指定公开账号的最近动态；按需返回或发送通过安全过滤的图片 |
+| `search_x_posts` | 用关键词或常见 X 搜索表达式检索公开推文，例如 `from:用户名` |
 | `get_qq_avatar` | 获取 QQ 用户头像，可把图片交给视觉模型 |
 | `get_qq_group_member_info` | 获取 QQ号、QQ名、群昵称、群身份、群等级、专属头衔及 OneBot 额外字段 |
 | `get_qq_profile` | 整合用户资料、群成员资料、群信息和头像 |
@@ -255,6 +315,10 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 /helper_bili_login_status           # 管理员检查登录状态
 /helper_bili_login_cancel           # 管理员取消当前扫码
 /helper_bili_logout                 # 管理员清除扫码保存的凭据
+/helper_x_search <关键词或 from:用户名>
+/helper_x_account <用户名、主页链接或名称>
+/helper_x_recent <用户名> [数量]
+/helper_x_post <推文链接或数字 ID>
 ```
 
 随机语音、Steam 和壁纸使用配置中的动态命令名：
@@ -358,6 +422,7 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 | --- | --- |
 | `general` | 插件总开关 |
 | `bilibili_video` | B 站分析模式、触发方式、下载限制、Cookie、默认模型和 Gemini 子配置 |
+| `twitter` | X/Twitter 数据源、Nitter、自动解析、图片、R18 过滤和可选 AI 审核 |
 | `reply_media_guard` | 引用自身图片来源标记 |
 | `reply_card_reader` | 引用卡片结构化读取 |
 | `wake` | 唤醒、屏蔽、阻塞和防抖 |
@@ -378,6 +443,7 @@ B 站模块依赖：
 - `yt-dlp`：下载 B 站视频或音频。
 - `imageio-ffmpeg`：提供可随插件安装的 ffmpeg，用于合并视频音轨和提取音频。
 - `Pillow`：生成今日小猪图片卡片。
+- `beautifulsoup4`：解析自建 Nitter 返回的公开页面。
 
 ## 故障排查
 
@@ -412,11 +478,19 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 - 二维码过期、取消或超时后，重新执行 `/helper_bili_login` 获取新二维码。
 - 扫码成功但视频仍提示未登录时，执行 `/helper_bili_login_status`。若显示“暂时无法确认”，通常是服务器到 B 站的网络或风控问题；若显示“未识别为登录”，重新扫码即可。
 
+### Nitter 没有被使用或连接失败
+
+- `twitter.nitter_base_url` 必须是 AstrBot 容器或进程能访问的地址，而不是你自己浏览器能访问的地址。AstrBot 与 Nitter 分容器时，`127.0.0.1:8585` 通常无效，使用服务名和容器端口，例如 `http://nitter:8080`。
+- 查看插件日志中是否出现 `via nitter failed; trying fallback`。这表示自动模式已经尝试 Nitter，并正常切到 FxTwitter；可检查 Nitter 容器、上游访问和实例搜索功能。
+- 只想检查 Nitter 时选择“仅 Nitter”。若还是失败，先在 AstrBot 同一环境执行 `curl http://127.0.0.1:8585` 或访问你实际配置的 URL，确认网络路径。
+- Nitter 的图片会先由插件下载。若日志提示媒体下载失败，检查 Nitter 的 `/pic/` 代理路径和服务器到上游媒体的网络。
+
 ## 参考与致谢
 
-本插件对下列 MIT 开源项目的相关能力进行了参考和模块化重写，没有并入与辅助工具合集无关的订阅、登录界面、网页渲染等功能：
+本插件对下列开源项目的相关能力、交互或流程进行了参考和模块化重写，没有并入与辅助工具合集无关的订阅、登录界面、网页渲染等功能：
 
 - Gemini 视频上传与分析、Playwright 浏览器配置和 SSRF 防护思路参考 [YUMU1658/astrbot_plugin_qq_tools](https://github.com/YUMU1658/astrbot_plugin_qq_tools)，Copyright (c) 2026 YUMU1658。本插件的网页模块按辅助工具场景独立重写为无状态只读读取，不并入点击、输入和浏览器会话控制能力。
+- X/Twitter 账号、推文和媒体检索的产品场景参考 [Ars1027/astrbot_plugin_twitter](https://github.com/Ars1027/astrbot_plugin_twitter)。该上游仓库采用 AGPL-3.0；本插件没有复制或并入其代码，实现为独立的 Nitter/FxTwitter 数据源模块。
 - B 站识别、字幕优先、yt-dlp 下载和必剪转写流程参考 [storyAura/astrbot_plugin_biliVideo](https://github.com/storyAura/astrbot_plugin_biliVideo)，Copyright (c) 2025 storyAura。
 - B 站短链的无 Cookie 展开请求策略参考 [drdon1234/astrbot_plugin_media_parser](https://github.com/drdon1234/astrbot_plugin_media_parser)。
 - B 站二维码获取、扫码轮询和凭据保存流程参考 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili)，并按本插件的视频理解场景重新实现。
