@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、X/Twitter 资料检索、网页浏览、环境感知、群聊历史检索、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.8.4`
+- 当前版本：`v0.8.5`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -35,7 +35,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.8.4` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.8.5` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -197,6 +197,7 @@ LLM 工具 `get_x_recent_posts` 和 `search_x_posts` 另有 `include_reposts` �
 - Nitter 图片会始终由 AstrBot 所在服务器下载后再发送。这样 QQ 不需要访问服务器的 `127.0.0.1:8585`、Docker 内网域名或私有端口。
 - 保持默认的 `download_media_before_send` 开启时，图片会逐块读取到网络响应结束，再由 Pillow 校验文件结构和实际像素解码。Nitter 代理图片无论此项如何都执行该检查。连接中断、JPEG 截断或上游返回损坏图片时会按配置重试；仍然损坏就跳过，不会把带大片灰块的不完整图片发到 QQ。
 - 工具返回给视觉模型及直接发送到聊天的图片都会附带来源标签，说明是作者本人发布，或由哪个账号转推、原作者是谁。
+- NapCat/OneBot 偶尔会在图片已经送达 QQ 后返回 `retcode=1200` 的 `sendMsg` 回执超时。插件会保留正常检索结果并告诉模型“图片可能已经发出，请勿重复发送”，不会自动重试，避免同一批图片发两遍；其他发送错误仍按失败处理。
 - 自动解析的图片和 X/Twitter 资料只作为当前轮不可信外部资料注入，回复完成后不会进入后续聊天上下文。
 
 ### 能力边界

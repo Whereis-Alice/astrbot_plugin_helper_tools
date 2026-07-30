@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,11 +15,19 @@ from astrbot.core.agent.message import (
 )
 from mcp.types import ImageContent, TextContent
 
-from astrbot_plugin_helper_tools.main import HelperToolsPlugin, _twitter_tool_result
+from astrbot_plugin_helper_tools.main import (
+    HelperToolsPlugin,
+    _twitter_result_for_tool,
+    _twitter_tool_result,
+)
 from astrbot_plugin_helper_tools.twitter_service import (
     TWITTER_CONTEXT_PREFIX,
+    TwitterAccount,
     TwitterContext,
     TwitterImage,
+    TwitterPost,
+    TwitterResult,
+    TwitterService,
     request_has_twitter_context,
 )
 
@@ -49,6 +58,48 @@ class _FakeEvent:
 
     def is_stopped(self) -> bool:
         return False
+
+
+class _ActionFailedLike(Exception):
+    def __init__(self, *, retcode: int | str, message: str) -> None:
+        super().__init__(message)
+        self.retcode = retcode
+        self.message = message
+        self.wording = message
+
+
+class _FailingSendEvent:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.send_calls = 0
+
+    @staticmethod
+    def chain_result(chain):
+        return chain
+
+    async def send(self, _result) -> None:
+        self.send_calls += 1
+        raise self.error
+
+
+class _PreparedImageTwitterService(TwitterService):
+    async def collect_safe_images(
+        self,
+        _posts,
+        *,
+        limit: int,
+        require_bytes: bool,
+    ) -> tuple[tuple[TwitterImage, ...], int]:
+        del limit, require_bytes
+        return (
+            (
+                TwitterImage(
+                    source_url="https://pbs.twimg.com/media/example.jpg",
+                    caption="Artist (@artist)（本人发布）",
+                ),
+            ),
+            0,
+        )
 
 
 class TwitterContextHookTests(unittest.IsolatedAsyncioTestCase):
@@ -131,6 +182,67 @@ class TwitterContextHookTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result.content[1], TextContent)
         self.assertIn("原作者 Other", result.content[1].text)
         self.assertIsInstance(result.content[2], ImageContent)
+
+    async def test_qq_send_ack_timeout_keeps_tool_result_without_retry(self) -> None:
+        error = _ActionFailedLike(
+            retcode="1200",
+            message=(
+                "Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg "
+                "ListenerName:NodeIKernelMsgListener/onMsgInfoListUpdate"
+            ),
+        )
+        event = _FailingSendEvent(error)
+        with tempfile.TemporaryDirectory() as temporary:
+            service = _PreparedImageTwitterService(
+                {"twitter": {"download_media_before_send": False}},
+                Path(temporary),
+            )
+            result = TwitterResult(
+                title="X/Twitter 本人发布内容检索",
+                query="from:artist",
+                posts=(
+                    TwitterPost(
+                        post_id="123",
+                        author=TwitterAccount(username="artist", name="Artist"),
+                        text="测试原创内容",
+                        url="https://x.com/artist/status/123",
+                    ),
+                ),
+            )
+            tool_result = await _twitter_result_for_tool(
+                SimpleNamespace(twitter=service),
+                SimpleNamespace(context=SimpleNamespace(event=event)),
+                result,
+                return_images=False,
+                send_images=True,
+                max_images=1,
+            )
+
+        self.assertIsInstance(tool_result, str)
+        self.assertEqual(event.send_calls, 1)
+        self.assertIn("测试原创内容", tool_result)
+        self.assertIn("QQ 回执超时", tool_result)
+        self.assertIn("请勿重复发送", tool_result)
+
+    async def test_unrelated_send_action_failure_still_propagates(self) -> None:
+        error = _ActionFailedLike(
+            retcode=1200,
+            message="sendMsg failed because permission was denied",
+        )
+        event = _FailingSendEvent(error)
+        with tempfile.TemporaryDirectory() as temporary:
+            service = _PreparedImageTwitterService(
+                {"twitter": {"download_media_before_send": False}},
+                Path(temporary),
+            )
+            with self.assertRaises(_ActionFailedLike):
+                await service.send_images_to_event(
+                    event,
+                    TwitterResult(title="测试", query="artist"),
+                    max_images=1,
+                )
+
+        self.assertEqual(event.send_calls, 1)
 
 
 class TwitterCommandNamespaceTests(unittest.TestCase):

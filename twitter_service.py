@@ -114,6 +114,46 @@ class _RetryableTwitterMediaError(RuntimeError):
     pass
 
 
+def _is_qq_send_ack_timeout(exc: Exception) -> bool:
+    """Recognize OneBot/NapCat timeouts after a send request was submitted."""
+
+    payloads = [
+        getattr(exc, "info", None),
+        getattr(exc, "response", None),
+        *(item for item in getattr(exc, "args", ()) if isinstance(item, dict)),
+    ]
+    retcode = getattr(exc, "retcode", None)
+    if retcode is None:
+        for payload in payloads:
+            if isinstance(payload, dict) and payload.get("retcode") is not None:
+                retcode = payload["retcode"]
+                break
+    try:
+        if int(retcode) != 1200:
+            return False
+    except (TypeError, ValueError):
+        return False
+
+    details = [str(exc), repr(exc)]
+    for field in ("message", "wording"):
+        value = getattr(exc, field, None)
+        if value:
+            details.append(str(value))
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        details.extend(
+            str(payload[field])
+            for field in ("message", "wording")
+            if payload.get(field)
+        )
+    normalized = " ".join(details).casefold()
+    return "timeout" in normalized and any(
+        marker in normalized
+        for marker in ("sendmsg", "nodeikernelmsgservice", "onmsginfolistupdate")
+    )
+
+
 @dataclass(frozen=True)
 class TwitterReference:
     post_id: str
@@ -1277,7 +1317,22 @@ class TwitterService:
             if hidden_count:
                 return "没有发送图片：媒体未通过内容安全审核或无法安全读取。"
             return "没有找到可发送的 X/Twitter 图片。"
-        await event.send(event.chain_result(chain))
+        try:
+            await event.send(event.chain_result(chain))
+        except Exception as exc:
+            if not _is_qq_send_ack_timeout(exc):
+                raise
+            logger.warning(
+                "[HelperTools/Twitter] QQ send acknowledgement timed out after "
+                "submitting %d image(s); not retrying to avoid duplicates: %r",
+                sent_count,
+                exc,
+            )
+            hidden_note = "（另有部分媒体被过滤或无法完整读取）" if hidden_count else ""
+            return (
+                f"已提交 {sent_count} 张 X/Twitter 安全图片的发送请求{hidden_note}，"
+                "但 QQ 回执超时；图片可能已经发出，请勿重复发送。"
+            )
         suffix = "；另有部分媒体被过滤或无法完整读取" if hidden_count else ""
         return f"已发送 {sent_count} 张 X/Twitter 安全图片{suffix}。"
 
