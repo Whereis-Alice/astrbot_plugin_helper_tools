@@ -226,6 +226,14 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
             "怒撕",
             poke["command_reply"]["items"]["commands"]["default"],
         )
+        self.assertIn(
+            "首先检查上下文",
+            poke["llm_reply"]["items"]["prompt_template"]["default"],
+        )
+        self.assertIn(
+            "身份比这人低",
+            poke["mute_reply"]["items"]["failure_prompt_template"]["default"],
+        )
 
     def test_notice_parser_rejects_non_poke_payloads(self) -> None:
         event = FakeEvent.poke_notice()

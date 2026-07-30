@@ -72,8 +72,22 @@ _DEFAULT_FACE_IDS = (
 )
 _DEFAULT_KEYWORDS = ("笨蛋", "人机", "机器人", "bot")
 _DEFAULT_LLM_PROMPT = (
-    "{username}（QQ {user_id}）刚刚戳了你一下。请结合当前对话和既有人格，"
-    "用一句自然的话回应；可以表现轻微不满或玩笑，不要解释系统行为。"
+    "{username}（QQ {user_id}）戳了你一下。"
+    "【重要】请按优先级判断并回应：\n"
+    "1. 首先检查上下文中用户最近的消息：\n"
+    "   - 如果用户刚发了消息但没@你，直接回应那条消息。\n"
+    "   - 如果有未回答的问题，回答它。\n"
+    "   - 如果有正在讨论的话题，继续该话题。\n"
+    "2. 如果你之前说了什么，用户可能在回应，顺着对话继续。\n"
+    "3. 只有当上下文完全为空时，才可以俏皮回应戳一戳本身。\n"
+    "不要主动开新话题，不要撒娇卖萌，优先延续现有对话。"
+)
+_DEFAULT_MUTE_SUCCESS_PROMPT = (
+    "{username} 戳了你一下，随后被禁言 {duration} 秒。请按当前人格用一句话自然回应。"
+)
+_DEFAULT_MUTE_FAILURE_PROMPT = (
+    "{username} 戳了你一下，（{reason}）。你因为你不是管理员或者身份比这人低而无法禁言这人，"
+    "请你用一句话吐槽一下，考虑上下文。"
 )
 _ACTION_DEFAULT_WEIGHTS = {
     "antipoke": 10,
@@ -330,9 +344,9 @@ class PokeService:
             section = self._section(action)
             key = "success_prompt_template" if success else "failure_prompt_template"
             default = (
-                "{username} 戳了你一下，随后被禁言 {duration} 秒。请按当前人格用一句话自然回应。"
+                _DEFAULT_MUTE_SUCCESS_PROMPT
                 if success
-                else "{username} 戳了你一下，但禁言没有成功（{reason}）。请按当前人格用一句话自然回应。"
+                else _DEFAULT_MUTE_FAILURE_PROMPT
             )
             prompt = self._render_llm_prompt(
                 event,
