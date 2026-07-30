@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import astrbot.api.message_components as Comp
@@ -11,6 +12,9 @@ from astrbot.core.agent.message import TextPart
 from astrbot_plugin_helper_tools.main import HelperToolsPlugin
 from astrbot_plugin_helper_tools.perception_service import (
     PERCEPTION_CONTEXT_PREFIX,
+    PERCEPTION_LOG_FULL,
+    PERCEPTION_LOG_OFF,
+    PERCEPTION_LOG_SUMMARY,
     EnvironmentPerceptionService,
     request_has_perception_context,
 )
@@ -27,6 +31,7 @@ class DummyEvent:
         self._platform = platform
         self._sender_id = sender_id
         self._group_id = group_id
+        self.unified_msg_origin = f"default:GroupMessage:{group_id}"
         self.message_obj = SimpleNamespace(
             group=SimpleNamespace(group_name="测试群"),
             sender=SimpleNamespace(card="小明", nickname="小明"),
@@ -93,13 +98,45 @@ class PerceptionServiceTests(unittest.IsolatedAsyncioTestCase):
         plugin = SimpleNamespace(enabled=lambda: True, perception=service)
         request = SimpleNamespace(prompt="", extra_user_content_parts=[])
 
-        await HelperToolsPlugin.perception_context_handler(plugin, DummyEvent(), request)
+        with patch("astrbot_plugin_helper_tools.main.logger.info") as log_info:
+            await HelperToolsPlugin.perception_context_handler(
+                plugin, DummyEvent(), request
+            )
 
         self.assertEqual(len(request.extra_user_content_parts), 1)
         part = request.extra_user_content_parts[0]
         self.assertIsInstance(part, TextPart)
         self.assertTrue(getattr(part, "_no_save", False))
         self.assertTrue(request_has_perception_context(request))
+        self.assertEqual(service.log_mode(), PERCEPTION_LOG_SUMMARY)
+        log_info.assert_called_once()
+        self.assertNotIn(PERCEPTION_CONTEXT_PREFIX, str(log_info.call_args))
+
+    async def test_full_logging_can_be_enabled_or_logging_disabled(self) -> None:
+        event = DummyEvent()
+        full_service = EnvironmentPerceptionService(
+            {"perception": {"enabled": True, "log_mode": PERCEPTION_LOG_FULL}}
+        )
+        full_plugin = SimpleNamespace(enabled=lambda: True, perception=full_service)
+        full_request = SimpleNamespace(prompt="", extra_user_content_parts=[])
+
+        with patch("astrbot_plugin_helper_tools.main.logger.info") as log_info:
+            await HelperToolsPlugin.perception_context_handler(
+                full_plugin, event, full_request
+            )
+        self.assertIn(PERCEPTION_CONTEXT_PREFIX, str(log_info.call_args))
+
+        off_service = EnvironmentPerceptionService(
+            {"perception": {"enabled": True, "log_mode": PERCEPTION_LOG_OFF}}
+        )
+        off_plugin = SimpleNamespace(enabled=lambda: True, perception=off_service)
+        off_request = SimpleNamespace(prompt="", extra_user_content_parts=[])
+
+        with patch("astrbot_plugin_helper_tools.main.logger.info") as log_info:
+            await HelperToolsPlugin.perception_context_handler(
+                off_plugin, event, off_request
+            )
+        log_info.assert_not_called()
 
 
 if __name__ == "__main__":

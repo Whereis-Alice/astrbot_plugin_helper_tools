@@ -36,6 +36,8 @@ from .chat_history_service import (
 from .helper_utils import cfg, clean_text, core_wake_prefixes, read_bool
 from .payqr_service import PAYQR_TOOL_NAME, PayQRService
 from .perception_service import (
+    PERCEPTION_LOG_FULL,
+    PERCEPTION_LOG_OFF,
     EnvironmentPerceptionService,
     request_has_perception_context,
 )
@@ -79,7 +81,7 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.8.0"
+PLUGIN_VERSION = "0.8.1"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -1253,6 +1255,29 @@ class HelperToolsPlugin(Star):
         else:
             original_prompt = clean_text(getattr(request, "prompt", ""))
             request.prompt = f"{original_prompt}\n\n{context}".strip()
+
+        log_mode = self.perception.log_mode()
+        if log_mode == PERCEPTION_LOG_OFF:
+            return
+        session = clean_text(getattr(event, "unified_msg_origin", ""))
+        context_chars = len(context)
+        if log_mode == PERCEPTION_LOG_FULL:
+            logger.info(
+                "[%s] attached temporary environment perception context "
+                "(session=%s, chars=%d, content=%r)",
+                PLUGIN_ID,
+                session,
+                context_chars,
+                context,
+            )
+            return
+        logger.info(
+            "[%s] attached temporary environment perception context "
+            "(session=%s, chars=%d)",
+            PLUGIN_ID,
+            session,
+            context_chars,
+        )
 
     @filter.on_llm_request(priority=20)
     async def bilibili_video_context_handler(

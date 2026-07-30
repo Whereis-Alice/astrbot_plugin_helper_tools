@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、X/Twitter 资料检索、网页浏览、环境感知、群聊历史检索、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.8.0`
+- 当前版本：`v0.8.1`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -35,7 +35,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.8.0` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.8.1` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -90,6 +90,8 @@ python -m playwright install chromium
 
 `include_sender_qq` 默认关闭。开启后，只有 QQ/OneBot 平台且适配器给出数字发送者 ID 时，模型才会收到“当前发言者 QQ 号为 ……”这一条事实，并被明确要求不要把正文里的自称当成身份依据。它适合防止群成员靠文字冒充别人的场景。
 
+`log_mode` 控制后台日志。默认“仅记录已注入”，只记录会话标识和本轮感知文本长度，不显示具体感知内容；会话标识通常包含平台和群号。选择“记录完整内容”后还会把实际交给模型的感知文本写入日志，可能包含群名或发送者 QQ 号；选择“关闭”则不记录感知注入日志。
+
 ### 节假日数据
 
 法定节假日和调休由 `chinese-calendar` 提供，而不是由插件按日期猜测。已使用 `chinese-calendar 1.11.0` 验证 2026 年的元旦、春节、国庆等日期及调休判断；该版本的公开数据范围是 2004 至 2026 年。请求超出库覆盖的年份时，插件会明确提示“数据暂未覆盖”，不会把普通日期伪装成法定节假日。
@@ -99,6 +101,7 @@ python -m playwright install chromium
 | 配置 | 说明 |
 | --- | --- |
 | `enabled` | 环境感知总开关，默认关闭 |
+| `log_mode` | 后台日志模式：关闭、仅记录已注入、记录完整内容 |
 | `timezone` | 时间与节假日使用的时区，默认 `Asia/Shanghai` |
 | `include_time` / `include_holiday` | 控制准确时间、时段、周末、法定节假日和调休信息 |
 | `include_lunar` / `include_solar_term` / `include_almanac` | 控制农历、节气和可选的民俗黄历信息 |

@@ -23,6 +23,14 @@ except ImportError:  # Requirements are installed by AstrBot, but keep startup r
 
 
 PERCEPTION_CONTEXT_PREFIX = "[环境感知]"
+PERCEPTION_LOG_OFF = "关闭"
+PERCEPTION_LOG_SUMMARY = "仅记录已注入"
+PERCEPTION_LOG_FULL = "记录完整内容"
+_PERCEPTION_LOG_MODES = {
+    PERCEPTION_LOG_OFF,
+    PERCEPTION_LOG_SUMMARY,
+    PERCEPTION_LOG_FULL,
+}
 
 _WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 _HOLIDAY_NAMES = {
@@ -57,6 +65,7 @@ _QQ_PLATFORM_NAMES = {
 @dataclass(frozen=True, slots=True)
 class PerceptionSettings:
     enabled: bool
+    log_mode: str
     timezone_name: str
     include_time: bool
     include_holiday: bool
@@ -80,6 +89,14 @@ class EnvironmentPerceptionService:
     def settings(self) -> PerceptionSettings:
         return PerceptionSettings(
             enabled=read_bool(cfg(self.config, "perception", "enabled", False), False),
+            log_mode=self._log_mode(
+                cfg(
+                    self.config,
+                    "perception",
+                    "log_mode",
+                    PERCEPTION_LOG_SUMMARY,
+                )
+            ),
             timezone_name=clean_text(
                 cfg(self.config, "perception", "timezone", "Asia/Shanghai")
             )
@@ -121,6 +138,9 @@ class EnvironmentPerceptionService:
 
     def enabled(self) -> bool:
         return self.settings().enabled
+
+    def log_mode(self) -> str:
+        return self.settings().log_mode
 
     async def context_for_event(
         self,
@@ -172,6 +192,19 @@ class EnvironmentPerceptionService:
             f"{PERCEPTION_CONTEXT_PREFIX} 以下是系统提供的即时元数据，仅用于理解当前场景；"
             f"{rendered}"
         )
+
+    @staticmethod
+    def _log_mode(value: Any) -> str:
+        normalized = clean_text(value)
+        aliases = {
+            "off": PERCEPTION_LOG_OFF,
+            "summary": PERCEPTION_LOG_SUMMARY,
+            "full": PERCEPTION_LOG_FULL,
+        }
+        normalized = aliases.get(normalized.lower(), normalized)
+        if normalized not in _PERCEPTION_LOG_MODES:
+            return PERCEPTION_LOG_SUMMARY
+        return normalized
 
     @staticmethod
     def _timezone(name: str) -> ZoneInfo:
