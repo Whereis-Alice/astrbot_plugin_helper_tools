@@ -1,8 +1,8 @@
 # AstrBot 辅助工具合集
 
-为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、X/Twitter 资料检索、网页浏览、环境感知、群聊历史检索、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
+为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、X/Twitter 资料检索、网页浏览、环境感知、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.8.5`
+- 当前版本：`v0.9.0`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -17,6 +17,7 @@
 | 群聊历史检索 | 让模型只检索当前 QQ 群的本地/OneBot 历史；支持关键词、时间、发送者和可选 T2I 摘要卡片，默认关闭 |
 | QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
 | QQ 名片点赞 | 自动响应“赞我”或“赞@用户”；可选由当前人设自然回复 |
+| 戳一戳互动 | 被戳后按权重反戳、人设回复、发 QQ 表情/图片/语音、可选禁言或调用其它插件；支持主动命令、定时任务和 LLM 工具，默认关闭 |
 | 今日小猪 | 每日抽取固定的小猪卡片；可选查看被 @ 用户的结果和使用自定义素材库 |
 | 引用媒体 | 保留引用图片识图，并标明图片来源；读取被引用的小程序、音乐和分享卡片 |
 | Anime1 | 查询剧集更新和观看地址 |
@@ -35,7 +36,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.8.5` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.9.0` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -351,6 +352,7 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 | `get_qq_avatar` | 获取 QQ 用户头像，可把图片交给视觉模型 |
 | `get_qq_group_member_info` | 获取 QQ号、QQ名、群昵称、群身份、群等级、专属头衔及 OneBot 额外字段 |
 | `get_qq_profile` | 整合用户资料、群成员资料、群信息和头像 |
+| `poke_qq_user` | 在当前 QQ 会话戳指定用户，默认随戳一戳模块关闭，并受次数上限约束 |
 | `send_payment_qr` | 在转账、赞助、请客等场景发送收款码 |
 | `get_anime1_updates` | 查询 Anime1 更新列表 |
 | `get_anime1_watch_url` | 按 Anime1 ID 获取观看地址 |
@@ -372,6 +374,9 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 /rollpig
 /今日小猪
 /今日小猪 @用户                 # 需开启 rollpig.allow_mentioned_user
+/戳 @用户 2
+/戳我
+/戳全体成员                     # 仅管理员
 /payqr
 /anime1_update
 /anime1 [关键词] [年|月|周|日|全部] [数量]
@@ -434,6 +439,38 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 图片渲染会把所有尺寸、字体字号和坐标转换成整数，因此已修复上游在部分环境中报出的 `'float' object cannot be interpreted as an integer`。渲染失败时会自动降级为原图和文字说明，不会中断命令处理。
 
 本模块与原独立插件使用相同的命令名。更新到本版本后，请在 AstrBot 中禁用或卸载 `astrbot_plugin_rollpig`，避免两个插件同时处理 `/今日小猪` 等命令。
+
+### 戳一戳互动
+
+`poke.enabled` 默认关闭。开启后，用户戳 Bot 时会从当前可用且权重大于 0 的动作中随机选择一个；实际概率为本动作权重除以所有可用动作的权重总和。图片、语音或命令池为空时，对应动作会自动退出候选，不会因空配置抛异常。
+
+可选动作包括：
+
+- 反戳用户 1 至配置上限次。
+- 使用当前会话的默认模型、上下文和 AstrBot 人格自然回复；内部提示和本次回复只参与当前轮，不伪装成用户消息留在后续历史中。
+- 发送随机 QQ 表情、本地图片或本地语音；图片和语音目录可递归扫描。
+- 在 Bot 具备足够群权限时禁言触发者，再由当前人格回复；默认权重为 0，权限不足会明确按失败事实回复。
+- 在群聊中随机调用 `command_reply.commands` 的一条命令，并把原先戳一戳的用户作为真实 @ 目标交给其它插件。默认列表包含 `怒撕`、`咖波撕` 等可供 `astrbot_plugin_memelite` 使用的命令，也可自由删除或替换。
+
+随机命令不会先向 QQ 发送一条可见文字，而是作为内部事件交给 AstrBot 的插件命令系统。因此目标插件生成的表情包或其它结果会正常发出，同时不会额外触发默认 LLM。配置里可以写 `怒撕`、`/怒撕` 或当前 AstrBot 的其它唤醒词缀写法，插件会规范化后再分发。
+
+为解决原插件把 `怒撕` 一类内部命令记成用户发言的问题，本模块会把合成事件标记为当前 Bot 账号发起，并在其它插件处理前恢复作者身份；本地群聊历史直接跳过该事件。如果目标插件显式调用 Agent，模型会收到“这是戳一戳模块自动发起的内部命令，不是群成员发送”的本轮归属说明，相关用户/助手消息也会在保存前标为临时，不进入下一轮上下文。AstrBot 开启“忽略机器人自身消息”时，会在唤醒检查期间使用兼容传输身份，进入处理器后仍立即恢复正确作者。
+
+主动能力：
+
+```text
+/戳 @用户 2
+/戳我
+/戳全体成员
+```
+
+- 普通 `/戳` 一次最多处理 `outgoing.max_direct_targets` 位目标；`/戳全体成员` 仅管理员可用，人数超过 `outgoing.max_group_targets` 时随机抽取，并按 `interval_seconds` 控制调用间隔。
+- `poke_qq_user` 允许 LLM 在当前 QQ 会话按需戳明确的数字 QQ 号；不能戳自己，也不能突破 `outgoing.max_times`。
+- 关键词主动戳默认关闭；开启后建议保留“必须先正常唤醒 Bot”，避免普通群聊误触发。
+- 定时戳默认关闭且不预置任何群号或 QQ 号。目标格式为 `群号:QQ号`，Cron 使用 AstrBot 的五段“分 时 日 月 周”格式。
+- 随机调用其它插件命令仅在群聊参与候选。私聊适配器通常依赖发送者 ID 决定回复目标，把作者改成 Bot 后可能误发给自己，因此私聊会自动选择其它回复动作。
+
+本模块与 `astrbot_plugin_pokepro` 都会监听同一类事件。迁移完成后应禁用或卸载原独立插件，避免一次戳一戳得到两份回复。
 
 ### 引用图片和卡片
 
@@ -500,12 +537,13 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 | `qq_avatar` / `qq_member` / `qq_profile` | QQ 头像、群成员和综合资料 |
 | `qq_like` | 自动 QQ 名片点赞、陌生人限制提示和可选人设回复 |
 | `rollpig` | 今日小猪、查看被 @ 用户、自定义素材和卡片缓存 |
+| `poke` | 被戳随机回复、主动戳、随机插件命令、LLM 工具和定时戳 |
 | `payqr` / `anime1` / `voice` / `steam` | 各辅助工具独立配置 |
 | `bot_profile` | Bot QQ 资料管理和高风险工具开关 |
 
 ## 平台与依赖
 
-QQ 资料、群成员、自动换头像、名片点赞和部分壁纸删除能力依赖 OneBot/AIOCQHTTP/NapCat 一类适配器。不同实现返回的资料字段可能不同，插件会输出已知字段，并按配置附加可用的其它字段。
+QQ 资料、群成员、自动换头像、名片点赞、戳一戳和部分壁纸删除能力依赖 OneBot/AIOCQHTTP/NapCat 一类适配器。不同实现返回的资料字段或动作支持可能不同，插件会输出已知字段，并按配置附加可用的其它字段。
 
 B 站模块依赖：
 
@@ -570,6 +608,7 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 - B 站二维码获取、扫码轮询和凭据保存流程参考 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili)，并按本插件的视频理解场景重新实现。
 - QQ 名片点赞触发与 OneBot 调用思路参考 [Futureppo/astrbot_plugin_zanwo](https://github.com/Futureppo/astrbot_plugin_zanwo)，并重写为独立限流模块和可选的当前人设回复。
 - 今日小猪素材库、图片和原始玩法参考 [MegSopern/astrbot_plugin_rollpig](https://github.com/MegSopern/astrbot_plugin_rollpig)，Copyright (c) 2025 Bear_lele、MegSopern；本插件重写了缓存、@ 目标解析和图片渲染。完整许可证声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- 戳一戳互动的产品场景参考 [Zhalslar/astrbot_plugin_pokepro](https://github.com/Zhalslar/astrbot_plugin_pokepro)。该上游仓库采用 GPL-3.0；本模块按照 AstrBot 事件接口独立实现，没有复制或并入其源码，并重新设计了安全默认值、内置 Cron、OneBot 兼容和内部命令归属保护。与 `astrbot_plugin_memelite` 的默认命令仅使用其公开、MIT 许可的命令关键词。
 - QQ 资料卡能力参考 [Zhalslar/astrbot_plugin_box](https://github.com/Zhalslar/astrbot_plugin_box)。
 - Anime1 更新列表能力参考 [zhist2028/astrbot_plugin_anime1_list](https://github.com/zhist2028/astrbot_plugin_anime1_list)。
 - 收款码能力参考 [luori7hao/astrbot_plugin_payqr](https://github.com/luori7hao/astrbot_plugin_payqr)。

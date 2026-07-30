@@ -41,6 +41,15 @@ from .perception_service import (
     EnvironmentPerceptionService,
     request_has_perception_context,
 )
+from .poke_service import (
+    POKE_SYNTHETIC_COMMAND_EXTRA,
+    POKE_TOOL_NAME,
+    PokeService,
+    is_poke_synthetic_command,
+    mark_poke_agent_messages_temporary,
+    mark_poke_persona_reply,
+    materialize_poke_synthetic_command_author,
+)
 from .qq_features import (
     ALLOWED_AVATAR_SIZES,
     DEFAULT_AVATAR_SIZE,
@@ -81,12 +90,13 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.8.5"
-PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
+PLUGIN_VERSION = "0.9.0"
+PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、戳一戳互动、B站视频理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
 _BILIBILI_TOOL_IMAGE_MARKER = f"[Image from tool '{BILIBILI_TOOL_NAME}'"
+_POKE_SYNTHETIC_CONTEXT_MARKER = "[戳一戳插件内部命令]"
 _TEMPORARY_TOOL_RESULT_MARKERS = (
     _BILIBILI_TOOL_IMAGE_MARKER,
     WEB_BROWSER_RESULT_MARKER,
@@ -368,6 +378,46 @@ class QQProfileTool(FunctionTool[AstrAgentContext]):
             group_id=clean_text(kwargs.get("group_id")),
             include_avatar=_bool_arg(kwargs.get("include_avatar"), True),
             return_image=_bool_arg(kwargs.get("return_image"), True),
+        )
+
+
+@pydantic_dataclass
+class PokeQQUserTool(FunctionTool[AstrAgentContext]):
+    plugin: Any = Field(default=None, repr=False)
+    name: str = POKE_TOOL_NAME
+    description: str = (
+        "在当前 QQ 群聊或私聊中戳一戳指定 QQ 用户。仅在确实适合主动互动时调用，"
+        "不要重复调用或用来骚扰用户。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "type": "string",
+                    "description": "要戳的用户 QQ 号，必须是纯数字。",
+                },
+                "times": {
+                    "type": "integer",
+                    "description": "戳一戳次数，默认 1 次，并受插件配置上限限制。",
+                    "default": 1,
+                    "minimum": 1,
+                },
+            },
+            "required": ["user_id"],
+        }
+    )
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
+        if self.plugin is None:
+            return "戳一戳工具未绑定插件实例。"
+        event = _tool_event(context)
+        if event is None:
+            return _missing_event()
+        return await self.plugin.poke.poke_from_tool(
+            event,
+            kwargs.get("user_id"),
+            kwargs.get("times", 1),
         )
 
 
@@ -1014,6 +1064,7 @@ class HelperToolsPlugin(Star):
         self.wake = WakeService(self.config, self.context)
         self.wallpaper = WallpaperService(self.config, self.data_dir, self.context)
         self.rollpig = RollPigService(self.config, self.data_dir, self.context)
+        self.poke = PokeService(self.config, self.data_dir, self.context)
         self.web_browser = WebBrowserService(self.config)
         self.twitter = TwitterService(self.config, self.data_dir)
 
@@ -1023,6 +1074,7 @@ class HelperToolsPlugin(Star):
         await self.anime1.start()
         if self.enabled():
             await self.avatar_rotation.start()
+            await self.poke.start()
             if _module_enabled(self.config, "bilibili_video"):
                 await self.bilibili.start()
         logger.info("[%s] initialized", PLUGIN_ID)
@@ -1034,6 +1086,7 @@ class HelperToolsPlugin(Star):
         await self.bilibili_qr_login.close()
         await self.bilibili.close()
         await self.avatar_rotation.stop()
+        await self.poke.stop()
         await self.anime1.stop()
         await self.wake.stop()
         logger.info("[%s] terminated", PLUGIN_ID)
@@ -1095,6 +1148,7 @@ class HelperToolsPlugin(Star):
             QQAvatarTool(plugin=self, active=self._tool_active("qq_avatar")),
             QQGroupMemberTool(plugin=self, active=self._tool_active("qq_member")),
             QQProfileTool(plugin=self, active=self._tool_active("qq_profile")),
+            PokeQQUserTool(plugin=self, active=self._tool_active("poke", False)),
             PaymentQRTool(plugin=self, active=self._tool_active("payqr")),
             Anime1UpdatesTool(plugin=self, active=self._tool_active("anime1")),
             Anime1WatchURLTool(plugin=self, active=self._tool_active("anime1")),
@@ -1166,11 +1220,27 @@ class HelperToolsPlugin(Star):
             return False, "历史摘要卡片已生成，但发送失败。"
         return True, ""
 
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=100000)
+    async def poke_synthetic_command_identity_guard(
+        self,
+        event: AstrMessageEvent,
+    ) -> None:
+        """Restore bot authorship before any plugin consumes a queued poke command."""
+
+        if not is_poke_synthetic_command(event):
+            return
+        materialize_poke_synthetic_command_author(event)
+        event.should_call_llm(True)
+
     @filter.event_message_type(filter.EventMessageType.ALL, priority=99999)
     async def chat_history_capture_handler(self, event: AstrMessageEvent) -> None:
         """Record only normalized text for explicitly enabled QQ group history search."""
 
-        if not self.enabled() or not self.chat_history.enabled():
+        if (
+            is_poke_synthetic_command(event)
+            or not self.enabled()
+            or not self.chat_history.enabled()
+        ):
             return
         try:
             await self.chat_history.capture_event(event)
@@ -1179,7 +1249,7 @@ class HelperToolsPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=99998)
     async def wake_enhance_handler(self, event: AstrMessageEvent):
-        if not self.enabled():
+        if is_poke_synthetic_command(event) or not self.enabled():
             return
         result = await self.wake.apply(event)
         if result == "prefix_llm":
@@ -1198,6 +1268,35 @@ class HelperToolsPlugin(Star):
                 result,
                 clean_text(getattr(event, "unified_msg_origin", "")),
             )
+
+    @filter.on_llm_request(priority=99999)
+    async def poke_synthetic_command_llm_context_handler(
+        self,
+        event: AstrMessageEvent,
+        request: Any,
+    ) -> None:
+        """Tell an explicitly invoked Agent that this command is plugin-authored."""
+
+        if not is_poke_synthetic_command(event) or _request_has_text_marker(
+            request,
+            _POKE_SYNTHETIC_CONTEXT_MARKER,
+        ):
+            return
+        metadata = event.get_extra(POKE_SYNTHETIC_COMMAND_EXTRA, {})
+        metadata = metadata if isinstance(metadata, dict) else {}
+        source_user_id = clean_text(metadata.get("source_user_id"), "未知")
+        context_text = (
+            f"{_POKE_SYNTHETIC_CONTEXT_MARKER}\n"
+            "当前输入中的命令由你先前的戳一戳互动模块自动发起，"
+            "不是群成员发送的消息。"
+            f"原始触发者 QQ 为 {source_user_id}，其动作只是戳了你一下。"
+        )
+        parts = getattr(request, "extra_user_content_parts", None)
+        if isinstance(parts, list):
+            parts.append(_mark_content_part_temporary(TextPart(text=context_text)))
+            return
+        original_prompt = clean_text(getattr(request, "prompt", ""))
+        request.prompt = f"{original_prompt}\n\n{context_text}".strip()
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=99997)
     async def reply_media_guard_handler(self, event: AstrMessageEvent) -> None:
@@ -1454,12 +1553,22 @@ class HelperToolsPlugin(Star):
         )
 
     @filter.on_agent_done(priority=20)
-    async def bilibili_tool_frame_history_guard(
+    async def temporary_agent_history_guard(
         self,
-        _event: AstrMessageEvent,
+        event: AstrMessageEvent,
         run_context: ContextWrapper[AstrAgentContext],
         _response: Any,
     ) -> None:
+        poke_messages = mark_poke_agent_messages_temporary(
+            event,
+            run_context,
+        )
+        if poke_messages:
+            logger.info(
+                "[%s] excluded %d poke-triggered Agent message(s) from future history",
+                PLUGIN_ID,
+                poke_messages,
+            )
         marked_messages = _mark_temporary_tool_results(run_context)
         if marked_messages:
             logger.info(
@@ -1758,6 +1867,19 @@ class HelperToolsPlugin(Star):
         yield event.plain_result(await self.avatar_rotation.change_once(event, reason="manual"))
         event.stop_event()
 
+    @filter.command("戳", alias={"戳我", "戳全体成员"})
+    async def poke_command(self, event: AstrMessageEvent):
+        if (
+            not self.enabled()
+            or not self.poke.enabled()
+            or not self.poke.commands_enabled()
+        ):
+            return
+        result = await self.poke.handle_command(event)
+        yield event.plain_result(result)
+        event.should_call_llm(True)
+        event.stop_event()
+
     @filter.command("qq_member", alias={"群成员信息", "qq成员"})
     async def qq_member_command(
         self,
@@ -1850,7 +1972,7 @@ class HelperToolsPlugin(Star):
             return
         try:
             count = await self.anime1.update_cache()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - surface upstream fetch failures
             yield event.plain_result(f"Anime1 更新失败: {exc}")
             event.stop_event()
             return
@@ -1958,6 +2080,30 @@ class HelperToolsPlugin(Star):
         yield event.plain_result(self.bot_profile.list_personas())
         event.stop_event()
 
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=25)
+    async def poke_interaction_handler(self, event: AstrMessageEvent):
+        if not self.enabled():
+            return
+        try:
+            response = await self.poke.handle_event(event)
+        except Exception as exc:  # noqa: BLE001 - OneBot notice payloads vary by client
+            logger.warning("[%s] poke interaction failed: %r", PLUGIN_ID, exc)
+            return
+        if not response.handled:
+            return
+
+        event.should_call_llm(True)
+        if response.llm_prompt:
+            mark_poke_persona_reply(event)
+            conversation = await self.poke.conversation_for_event(event)
+            yield event.request_llm(
+                prompt=response.llm_prompt,
+                conversation=conversation,
+            )
+            return
+        if response.chain:
+            yield event.chain_result(list(response.chain))
+
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def dynamic_message_handler(self, event: AstrMessageEvent):
         if not self.enabled():
@@ -2009,7 +2155,7 @@ class HelperToolsPlugin(Star):
         if steam_match.handled:
             try:
                 chain, error = await self.steam.build_chain_for_message(steam_match.query)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - convert service errors to a reply
                 yield event.plain_result(f"Steam 查询失败: {exc}")
                 if steam_match.stop_event:
                     event.stop_event()
@@ -2028,7 +2174,7 @@ class HelperToolsPlugin(Star):
         if self.voice.should_handle_message(text, wake_triggered=wake_triggered):
             try:
                 chain = await self.voice.build_chain()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - convert service errors to a reply
                 yield event.plain_result(f"随机语音发送失败: {exc}")
                 if self.voice.stop_after_response():
                     event.stop_event()

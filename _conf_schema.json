@@ -2042,6 +2042,400 @@
       }
     }
   },
+  "poke": {
+    "type": "object",
+    "description": "【戳一戳互动】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用戳一戳互动模块",
+        "default": false,
+        "hint": "默认关闭。开启后才会启用本模块的监听、命令、LLM 工具和可选定时任务。"
+      },
+      "listen_enabled": {
+        "type": "bool",
+        "description": "监听用户戳一戳",
+        "default": true,
+        "hint": "Bot 被戳时按下方权重随机选择一种回复；关闭后仍可单独使用主动戳命令、LLM 工具和定时任务。"
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用戳一戳命令",
+        "default": true,
+        "hint": "支持“/戳 @某人 2”“/戳我”和管理员专用的“/戳全体成员”。实际前缀由 AstrBot 全局唤醒词缀决定。"
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 poke_qq_user LLM 工具",
+        "default": true,
+        "hint": "允许当前模型在合适的互动场景中主动戳指定 QQ 用户；次数仍受主动戳上限约束。"
+      },
+      "user_cooldown_seconds": {
+        "type": "float",
+        "description": "同一用户触发冷却秒数",
+        "default": 10,
+        "slider": {
+          "min": 0,
+          "max": 300,
+          "step": 1
+        },
+        "hint": "冷却期间该用户继续戳 Bot 不会再次回复。设为 0 可关闭用户冷却。"
+      },
+      "group_cooldown_seconds": {
+        "type": "float",
+        "description": "同一群触发冷却秒数",
+        "default": 2,
+        "slider": {
+          "min": 0,
+          "max": 300,
+          "step": 1
+        },
+        "hint": "一个群刚触发回复后，短时间内该群其他人的戳一戳也不会触发。设为 0 可关闭。"
+      },
+      "follow_probability": {
+        "type": "float",
+        "description": "跟戳其他人的概率",
+        "default": 0,
+        "slider": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "hint": "检测到群里有人戳了别人时，Bot 跟着戳被戳者一次的概率。0 表示关闭，1 表示每次都跟戳。"
+      },
+      "antipoke": {
+        "type": "object",
+        "description": "【回复动作：反戳】",
+        "items": {
+          "weight": {
+            "type": "int",
+            "description": "反戳权重",
+            "default": 10,
+            "min": 0,
+            "max": 100,
+            "hint": "概率等于本项权重除以所有当前可用动作的权重总和；0 表示禁用。"
+          },
+          "max_times": {
+            "type": "int",
+            "description": "单次最多反戳几下",
+            "default": 3,
+            "min": 1,
+            "max": 10
+          }
+        }
+      },
+      "llm_reply": {
+        "type": "object",
+        "description": "【回复动作：当前人设回复】",
+        "items": {
+          "weight": {
+            "type": "int",
+            "description": "人设回复权重",
+            "default": 10,
+            "min": 0,
+            "max": 100,
+            "hint": "使用当前会话的默认模型、上下文和 AstrBot 人格自然回复；0 表示禁用。"
+          },
+          "prompt_template": {
+            "type": "text",
+            "description": "人设回复提示模板",
+            "default": "{username}（QQ {user_id}）刚刚戳了你一下。请结合当前对话和既有人格，用一句自然的话回应；可以表现轻微不满或玩笑，不要解释系统行为。",
+            "hint": "可用变量：{username}、{user_id}、{group_id}。"
+          }
+        }
+      },
+      "qq_face": {
+        "type": "object",
+        "description": "【回复动作：QQ 表情】",
+        "items": {
+          "weight": {
+            "type": "int",
+            "description": "QQ 表情权重",
+            "default": 10,
+            "min": 0,
+            "max": 100
+          },
+          "face_ids": {
+            "type": "list",
+            "description": "可随机使用的 QQ 表情 ID",
+            "default": [
+              1,
+              14,
+              23,
+              46,
+              97,
+              98,
+              265,
+              266,
+              267,
+              312
+            ]
+          },
+          "max_count": {
+            "type": "int",
+            "description": "一条消息最多重复几个表情",
+            "default": 3,
+            "min": 1,
+            "max": 8
+          }
+        }
+      },
+      "image_reply": {
+        "type": "object",
+        "description": "【回复动作：本地图片】",
+        "items": {
+          "weight": {
+            "type": "int",
+            "description": "本地图片权重",
+            "default": 0,
+            "min": 0,
+            "max": 100,
+            "hint": "先配置图片或目录，再把权重调到大于 0；没有可用图片时本动作会自动跳过。"
+          },
+          "files": {
+            "type": "file",
+            "description": "上传或选择图片",
+            "default": [],
+            "file_types": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".gif"
+            ]
+          },
+          "directories": {
+            "type": "list",
+            "description": "额外图片目录",
+            "default": [],
+            "hint": "支持绝对路径；相对路径也会从插件数据目录查找。"
+          },
+          "recursive": {
+            "type": "bool",
+            "description": "同时扫描图片目录的子目录",
+            "default": true
+          }
+        }
+      },
+      "voice_reply": {
+        "type": "object",
+        "description": "【回复动作：本地语音】",
+        "items": {
+          "weight": {
+            "type": "int",
+            "description": "本地语音权重",
+            "default": 0,
+            "min": 0,
+            "max": 100,
+            "hint": "没有可用音频时本动作会自动跳过。"
+          },
+          "files": {
+            "type": "file",
+            "description": "上传或选择音频",
+            "default": [],
+            "file_types": [
+              ".mp3",
+              ".wav",
+              ".ogg",
+              ".flac",
+              ".m4a",
+              ".aac",
+              ".amr",
+              ".silk"
+            ]
+          },
+          "directories": {
+            "type": "list",
+            "description": "额外音频目录",
+            "default": []
+          },
+          "recursive": {
+            "type": "bool",
+            "description": "同时扫描音频目录的子目录",
+            "default": true
+          }
+        }
+      },
+      "mute_reply": {
+        "type": "object",
+        "description": "【回复动作：禁言后按人设回复】",
+        "items": {
+          "weight": {
+            "type": "int",
+            "description": "禁言权重",
+            "default": 0,
+            "min": 0,
+            "max": 100,
+            "hint": "默认关闭。只有群聊、Bot 权限足够且目标身份允许时才会禁言；失败时不会伪装成成功。"
+          },
+          "duration_seconds": {
+            "type": "int",
+            "description": "基础禁言秒数",
+            "default": 60,
+            "min": 1,
+            "max": 86400
+          },
+          "random_delta_seconds": {
+            "type": "int",
+            "description": "禁言时长随机浮动秒数",
+            "default": 30,
+            "min": 0,
+            "max": 3600,
+            "hint": "实际时长会在“基础时长 ± 浮动值”之间随机，并限制在 1 秒至 1 天。"
+          },
+          "success_prompt_template": {
+            "type": "text",
+            "description": "禁言成功的人设提示",
+            "default": "{username} 戳了你一下，随后被禁言 {duration} 秒。请按当前人格用一句话自然回应。",
+            "hint": "可用变量：{username}、{user_id}、{group_id}、{duration}。"
+          },
+          "failure_prompt_template": {
+            "type": "text",
+            "description": "禁言失败的人设提示",
+            "default": "{username} 戳了你一下，但禁言没有成功（{reason}）。请按当前人格用一句话自然回应。",
+            "hint": "可用变量：{username}、{user_id}、{group_id}、{reason}。"
+          }
+        }
+      },
+      "command_reply": {
+        "type": "object",
+        "description": "【回复动作：调用其它插件命令】",
+        "items": {
+          "weight": {
+            "type": "int",
+            "description": "随机命令权重",
+            "default": 10,
+            "min": 0,
+            "max": 100,
+            "hint": "随机选择下方一条命令作为 Bot 自己发起的内部事件，并把原戳一戳用户作为 @ 目标交给其它插件。"
+          },
+          "commands": {
+            "type": "list",
+            "description": "可随机调用的命令列表",
+            "default": [
+              "盒",
+              "怒撕",
+              "咖波撕",
+              "拍",
+              "摸",
+              "捏",
+              "啃",
+              "踩",
+              "锤",
+              "上香",
+              "小丑"
+            ],
+            "hint": "可直接填写命令名，也可带当前 AstrBot 唤醒词缀；插件会统一去掉词缀后再交给命令系统。目标插件不存在或命令无效时不会改为让 LLM 对话。"
+          }
+        }
+      },
+      "outgoing": {
+        "type": "object",
+        "description": "【主动戳设置】",
+        "items": {
+          "max_times": {
+            "type": "int",
+            "description": "单个目标每次最多戳几下",
+            "default": 5,
+            "min": 1,
+            "max": 20,
+            "hint": "命令和 LLM 工具都会受到此上限约束。"
+          },
+          "interval_seconds": {
+            "type": "float",
+            "description": "连续发送间隔秒数",
+            "default": 0.5,
+            "slider": {
+              "min": 0,
+              "max": 10,
+              "step": 0.1
+            },
+            "hint": "适当间隔可降低连续调用造成的风控风险。"
+          },
+          "max_group_targets": {
+            "type": "int",
+            "description": "戳全体成员最多处理人数",
+            "default": 200,
+            "min": 1,
+            "max": 500,
+            "hint": "群人数超过上限时随机抽取；戳全体成员仅管理员可用。"
+          },
+          "max_direct_targets": {
+            "type": "int",
+            "description": "普通戳命令最多指定人数",
+            "default": 5,
+            "min": 1,
+            "max": 50,
+            "hint": "限制一条“/戳”消息中通过 @ 或 QQ 号指定的目标数，避免一次调用过多用户。"
+          },
+          "keyword_enabled": {
+            "type": "bool",
+            "description": "启用关键词主动戳",
+            "default": false,
+            "hint": "用户消息包含下方关键词时戳该用户一次。默认关闭。"
+          },
+          "keyword_requires_wake": {
+            "type": "bool",
+            "description": "关键词必须先正常唤醒 Bot",
+            "default": true,
+            "hint": "建议保持开启，避免普通群聊中的关键词让 Bot 自行戳人。"
+          },
+          "keywords": {
+            "type": "list",
+            "description": "主动戳关键词",
+            "default": [
+              "笨蛋",
+              "人机",
+              "机器人",
+              "bot"
+            ]
+          }
+        }
+      },
+      "scheduler": {
+        "type": "object",
+        "description": "【定时戳设置】",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "启用定时戳",
+            "default": false,
+            "hint": "默认关闭；目标列表为空时即使开启也不会发送。"
+          },
+          "cron_expression": {
+            "type": "string",
+            "description": "五段 Cron 表达式",
+            "default": "30 22 * * *",
+            "hint": "格式为“分 时 日 月 周”。例如 30 22 * * * 表示每天 22:30。"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "定时任务时区",
+            "default": "Asia/Shanghai"
+          },
+          "targets": {
+            "type": "list",
+            "description": "定时戳目标",
+            "default": [],
+            "hint": "每行格式为 群号:QQ号，例如 123456789:987654321。插件不会预置任何真实群号或 QQ 号。"
+          },
+          "times": {
+            "type": "int",
+            "description": "每个目标每次戳几下",
+            "default": 1,
+            "min": 1,
+            "max": 20
+          },
+          "platform_id": {
+            "type": "string",
+            "description": "指定 OneBot 平台实例 ID",
+            "default": "",
+            "hint": "只有一个 AIOCQHTTP/NapCat 实例时留空；多实例时填写 AstrBot 平台配置 ID。"
+          }
+        }
+      }
+    }
+  },
   "payqr": {
     "type": "object",
     "description": "【收款码】",
