@@ -11,6 +11,7 @@ from astrbot.core.agent.message import ImageURLPart, TextPart
 from PIL import Image
 
 from astrbot_plugin_helper_tools.bilibili_article_service import (
+    ARTICLE_RESOLVED_ATTR,
     BILIBILI_ARTICLE_CONTEXT_PREFIX,
     BilibiliArticleContext,
     BilibiliArticleDocument,
@@ -153,6 +154,33 @@ class BilibiliArticleParsingTests(unittest.IsolatedAsyncioTestCase):
         context = await service.context_for_event_result(event)
 
         self.assertEqual(context.text, "")
+        self.assertFalse(getattr(event, ARTICLE_RESOLVED_ATTR))
+
+    async def test_main_video_handler_skips_a_resolved_article(self) -> None:
+        from astrbot_plugin_helper_tools.main import HelperToolsPlugin
+
+        class FakeBilibili:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def auto_parse_mode(self) -> str:
+                return "follow"
+
+            async def context_for_event_result(self, _event: object) -> None:
+                self.calls += 1
+
+        bilibili = FakeBilibili()
+        plugin = SimpleNamespace(
+            config={"bilibili_video": {"enabled": True}},
+            bilibili=bilibili,
+            enabled=lambda: True,
+        )
+        event = SimpleNamespace(**{ARTICLE_RESOLVED_ATTR: True})
+        request = SimpleNamespace(prompt="", extra_user_content_parts=[])
+
+        await HelperToolsPlugin.bilibili_video_context_handler(plugin, event, request)
+
+        self.assertEqual(bilibili.calls, 0)
 
     async def test_cover_is_validated_and_converted_to_data_url(self) -> None:
         output = io.BytesIO()

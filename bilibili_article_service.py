@@ -25,6 +25,7 @@ BILIBILI_ARTICLE_CONTEXT_PREFIX = "[B站专栏资料]"
 BILIBILI_ARTICLE_FAILURE_PREFIX = "[B站专栏解析失败]"
 ARTICLE_REFERENCE_ATTR = "_helper_tools_bilibili_article_reference"
 ARTICLE_CONTEXT_ATTR = "_helper_tools_bilibili_article_context"
+ARTICLE_RESOLVED_ATTR = "_helper_tools_bilibili_article_resolved"
 
 _ARTICLE_ID_RE = re.compile(r"/read/(?:cv)?(\d+)", re.IGNORECASE)
 _GENERIC_URL_RE = re.compile(
@@ -145,7 +146,9 @@ class BilibiliArticleService:
             return BilibiliArticleContext("")
 
         try:
-            document = await self._document_for_reference(reference)
+            resolved = await self._resolve_reference(reference)
+            setattr(event, ARTICLE_RESOLVED_ATTR, True)
+            document = await self._document_for_reference(reference, resolved=resolved)
             cover_data_url = ""
             if self.cover_enabled():
                 cover_url = document.cover_url or reference.fallback_cover_url
@@ -156,7 +159,8 @@ class BilibiliArticleService:
                 cover_data_url=cover_data_url,
             )
         except BilibiliArticleNotFound:
-            return BilibiliArticleContext("")
+            setattr(event, ARTICLE_RESOLVED_ATTR, False)
+            result = BilibiliArticleContext("")
         except asyncio.TimeoutError:
             result = BilibiliArticleContext(
                 f"{BILIBILI_ARTICLE_FAILURE_PREFIX}\n"
@@ -235,12 +239,14 @@ class BilibiliArticleService:
     async def _document_for_reference(
         self,
         reference: BilibiliArticleReference,
+        *,
+        resolved: BilibiliArticleReference | None = None,
     ) -> BilibiliArticleDocument:
         cached = self._cache_get(reference.lookup_key)
         if cached is not None:
             return cached
 
-        resolved = await self._resolve_reference(reference)
+        resolved = resolved or await self._resolve_reference(reference)
         document: BilibiliArticleDocument | None = None
         if resolved.article_id:
             try:

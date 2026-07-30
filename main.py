@@ -18,6 +18,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from .anime1_service import Anime1Service
 from .avatar_rotation_service import AvatarRotationService
 from .bilibili_article_service import (
+    ARTICLE_RESOLVED_ATTR,
     BILIBILI_ARTICLE_CONTEXT_PREFIX,
     BILIBILI_ARTICLE_FAILURE_PREFIX,
     BilibiliArticleContext,
@@ -97,7 +98,7 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.9.1"
+PLUGIN_VERSION = "0.9.2"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -1489,6 +1490,7 @@ class HelperToolsPlugin(Star):
             or not _module_enabled(self.config, "bilibili_video")
             or self.bilibili.auto_parse_mode() == "off"
             or request_has_bilibili_context(request)
+            or getattr(event, ARTICLE_RESOLVED_ATTR, False) is True
         ):
             return
         is_stopped = getattr(event, "is_stopped", None)
