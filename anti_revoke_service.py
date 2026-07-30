@@ -202,6 +202,24 @@ def _message_to_text(message: Any) -> str:
     return labels.get(segment_type, f"[{segment_type or '未知消息'}]")
 
 
+def _text_segment(text: str) -> dict[str, Any]:
+    return {"type": "text", "data": {"text": text}}
+
+
+def _message_with_header(header: str, message: Any) -> Any:
+    """Prepend recall metadata while keeping the result as one QQ message."""
+
+    prefix = f"{header}\n\n"
+    if isinstance(message, str):
+        return f"{prefix}{message}" if message else header
+    if isinstance(message, list):
+        return [_text_segment(prefix), *message] if message else header
+    if isinstance(message, Mapping):
+        return [_text_segment(prefix), dict(message)]
+    text = clean_text(message)
+    return f"{prefix}{text}" if text else header
+
+
 class AntiRevokeService:
     """Cache and restore QQ group messages without depending on old event fields."""
 
@@ -690,10 +708,18 @@ class AntiRevokeService:
         action = "send_private_msg" if target_type == "private" else "send_group_msg"
         params = {"user_id" if target_type == "private" else "group_id": int(target_id)}
         try:
-            if self.include_recall_header():
-                await self._call_send(bot, action, params, header)
-            if self.send_original_message():
-                await self._call_send(bot, action, params, record.message)
+            include_header = self.include_recall_header()
+            include_original = self.send_original_message()
+            if include_header and include_original:
+                message = _message_with_header(header, record.message)
+            elif include_header:
+                message = header
+            elif include_original:
+                message = record.message
+            else:
+                message = ""
+            if message:
+                await self._call_send(bot, action, params, message)
             logger.info(
                 "[HelperTools/AntiRevoke] restored recall successfully group=%s message=%s target=%s:%s",
                 record.group_id,

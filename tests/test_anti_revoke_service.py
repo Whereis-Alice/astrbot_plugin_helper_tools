@@ -99,10 +99,13 @@ class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
             }
             await service.handle_event(FakeEvent(recall, bot))
 
-            self.assertEqual(len(bot.sent), 2)
+            self.assertEqual(len(bot.sent), 1)
+            sent_message = bot.sent[0][1]["message"]
             self.assertEqual(bot.sent[0][1]["group_id"], 999)
-            self.assertIn("撤回消息", str(bot.sent[0][1]["message"]))
-            self.assertEqual(bot.sent[1][1]["message"], original["message"])
+            self.assertIsInstance(sent_message, list)
+            assert isinstance(sent_message, list)
+            self.assertIn("撤回消息", str(sent_message[0]))
+            self.assertEqual(sent_message[1:], original["message"])
 
     async def test_custom_target_commands_are_persisted_and_override_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

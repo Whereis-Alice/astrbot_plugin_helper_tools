@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频与专栏理解、X/Twitter 资料检索、网页浏览、环境感知、QQ 防撤回、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.9.7`
+- 当前版本：`v0.9.8`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -38,7 +38,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.9.7` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.9.8` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -113,7 +113,7 @@ python -m playwright install chromium
 
 ## QQ 防撤回
 
-`anti_revoke.enabled` 默认关闭，且只处理 `aiocqhttp`/OneBot 群聊。开启后，插件会在内存和插件数据目录中短暂保存群消息的 OneBot 原始消息段；撤回发生时，先发送撤回说明，再把原消息段转发到配置的私聊或群聊目标。支持文本、图片、语音、视频、文件、卡片和合并转发等消息段；适配器拒绝原消息时会自动发送文字占位说明，不会让异常打断 AstrBot。
+`anti_revoke.enabled` 默认关闭，且只处理 `aiocqhttp`/OneBot 群聊。开启后，插件会在内存和插件数据目录中短暂保存群消息的 OneBot 原始消息段；撤回发生时，会把撤回说明和原消息内容组合成一条普通 QQ 消息发送到配置的私聊或群聊目标。支持文本、图片、语音、视频、文件、卡片和合并转发等消息段；适配器拒绝混合消息时会自动降级为同一条文字说明，不会让异常打断 AstrBot。
 
 ### 配置方式
 
