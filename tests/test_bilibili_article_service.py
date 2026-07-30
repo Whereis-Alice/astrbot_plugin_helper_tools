@@ -50,10 +50,14 @@ class BilibiliArticleReferenceTests(unittest.TestCase):
     def test_extracts_article_id_from_url_and_bare_path(self) -> None:
         direct = extract_article_reference("https://www.bilibili.com/read/cv123456")
         bare = extract_article_reference("请查看 /read/cv123456 的专栏")
+        opus = extract_article_reference(
+            "https://www.bilibili.com/opus/1230454709532229640?share_from=article"
+        )
 
         self.assertIsNotNone(direct)
         self.assertEqual(direct.article_id, "123456")
         self.assertEqual(bare.url, "https://www.bilibili.com/read/cv123456")
+        self.assertEqual(opus.article_id, "1230454709532229640")
 
     def test_rejects_lookalike_domain(self) -> None:
         self.assertIsNone(
@@ -142,6 +146,32 @@ class BilibiliArticleParsingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(document.summary, "网页摘要")
         self.assertEqual(document.content, "网页正文")
         self.assertEqual(document.cover_url, "https://i0.hdslb.com/cover.jpg")
+
+    async def test_parses_modern_opus_article_html(self) -> None:
+        service = make_service()
+        reference = extract_article_reference(
+            "https://www.bilibili.com/opus/1230454709532229640"
+        )
+
+        async def request_bytes(_url: str, **_kwargs: object) -> tuple[bytes, str, str]:
+            return (
+                """<html><head><meta property='og:title' content='现代专栏标题'>
+                </head><body><div class='opus-module-top__album'><img src='//i0.hdslb.com/cover.jpg'></div>
+                <div class='opus-module-author__name'>作者 Alice</div>
+                <div class='opus-module-content'><p>现代专栏正文</p>
+                <img src='https://i0.hdslb.com/content.jpg'></div></body></html>""".encode(),
+                "text/html",
+                reference.url,
+            )
+
+        service._request_bytes = request_bytes
+        document = await service._fetch_page_document(reference)
+
+        self.assertEqual(document.title, "现代专栏标题")
+        self.assertEqual(document.author, "作者 Alice")
+        self.assertEqual(document.cover_url, "https://i0.hdslb.com/cover.jpg")
+        self.assertIn("现代专栏正文", document.content)
+        self.assertIn("[文章图片]", document.content)
 
     async def test_short_video_link_is_not_reported_as_article(self) -> None:
         service = make_service()

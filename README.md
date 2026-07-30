@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频与专栏理解、X/Twitter 资料检索、网页浏览、环境感知、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.9.2`
+- 当前版本：`v0.9.3`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -326,6 +326,7 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 开启 `bilibili_article.enabled` 和 `bilibili_article.auto_parse_enabled` 后，用户发送或引用 B站专栏卡片时，插件会自动读取专栏资料并交给当前 AstrBot 模型。支持：
 
 - B站专栏链接，例如 `https://www.bilibili.com/read/cv123456`；
+- 新版专栏/动态文章链接，例如 `https://www.bilibili.com/opus/123456789`；
 - QQ 中引用的 B站专栏小程序/分享卡片；
 - B站短链。短链会先跳转并确认最终页面确实是专栏，视频短链不会被当成专栏处理；引用专栏卡片时也不会再被视频模块重复解析。
 

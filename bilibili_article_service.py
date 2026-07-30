@@ -28,6 +28,7 @@ ARTICLE_CONTEXT_ATTR = "_helper_tools_bilibili_article_context"
 ARTICLE_RESOLVED_ATTR = "_helper_tools_bilibili_article_resolved"
 
 _ARTICLE_ID_RE = re.compile(r"/read/(?:cv)?(\d+)", re.IGNORECASE)
+_OPUS_ID_RE = re.compile(r"/opus/(\d+)", re.IGNORECASE)
 _GENERIC_URL_RE = re.compile(
     r"https?://[^\s<>\"',\]\[\}\{\)\(，。！？；：、（）【】]+",
     re.IGNORECASE,
@@ -355,11 +356,21 @@ class BilibiliArticleService:
             "description",
         )
         cover_url = _meta_content(soup, "og:image")
+        if not cover_url:
+            top_cover = soup.select_one(".opus-module-top__album img")
+            if top_cover is not None:
+                cover_url = _normalize_url(top_cover.get("src", ""))
+        author_node = soup.select_one(".opus-module-author__name")
+        author = (
+            clean_text(author_node.get_text(" ", strip=True))
+            if author_node is not None
+            else ""
+        )
         content = _html_to_text(_article_root_html(soup))
         return BilibiliArticleDocument(
             url=final_url or reference.url,
             title=title,
-            author="",
+            author=author,
             summary=summary,
             content=content,
             cover_url=cover_url,
@@ -542,13 +553,17 @@ def extract_article_reference(
                 original=normalized[:2000],
             )
     path_match = re.search(
-        r"(?<![\w/])/?read/(?:cv)?(\d+)(?!\w)",
+        r"(?<![\w/])/?(?:read/(?:cv)?|opus/)(\d+)(?!\w)",
         normalized,
         re.IGNORECASE,
     )
     if path_match:
         article_id = path_match.group(1)
-        path = f"/read/cv{article_id}"
+        path = (
+            f"/opus/{article_id}"
+            if "/opus/" in path_match.group(0).casefold()
+            else f"/read/cv{article_id}"
+        )
         return BilibiliArticleReference(
             url=f"https://www.bilibili.com{path}",
             article_id=article_id,
@@ -602,6 +617,9 @@ def _is_short_host(url: str) -> bool:
 def _article_id_from_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
     match = _ARTICLE_ID_RE.search(parsed.path)
+    if match:
+        return match.group(1)
+    match = _OPUS_ID_RE.search(parsed.path)
     if match:
         return match.group(1)
     if parsed.path.rstrip("/").lower().endswith("/read"):
@@ -658,6 +676,8 @@ def _meta_content(soup: BeautifulSoup, name: str) -> str:
 
 def _article_root_html(soup: BeautifulSoup) -> str:
     for selector in (
+        ".opus-module-content",
+        ".opus-paragraph-children",
         ".article-content",
         ".article-holder",
         "#read-article-holder",
