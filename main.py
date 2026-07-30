@@ -58,6 +58,7 @@ from .poke_service import (
     mark_poke_agent_messages_temporary,
     mark_poke_persona_reply,
     materialize_poke_synthetic_command_author,
+    poke_persona_context_for_event,
 )
 from .qq_features import (
     ALLOWED_AVATAR_SIZES,
@@ -99,7 +100,7 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.9.5"
+PLUGIN_VERSION = "0.9.6"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、防撤回、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -1332,6 +1333,27 @@ class HelperToolsPlugin(Star):
             return
         original_prompt = clean_text(getattr(request, "prompt", ""))
         request.prompt = f"{original_prompt}\n\n{context_text}".strip()
+
+    @filter.on_llm_request(priority=99996)
+    async def poke_persona_llm_context_handler(
+        self,
+        event: AstrMessageEvent,
+        request: Any,
+    ) -> None:
+        """Disambiguate the current poker from other users in shared history."""
+
+        if not self.enabled():
+            return
+        context = poke_persona_context_for_event(event)
+        marker = context.split("\n", 1)[0] if context else ""
+        if not context or _request_has_text_marker(request, marker):
+            return
+        parts = getattr(request, "extra_user_content_parts", None)
+        if isinstance(parts, list):
+            parts.append(_mark_content_part_temporary(TextPart(text=context)))
+            return
+        original_prompt = clean_text(getattr(request, "prompt", ""))
+        request.prompt = f"{original_prompt}\n\n{context}".strip()
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=99997)
     async def reply_media_guard_handler(self, event: AstrMessageEvent) -> None:

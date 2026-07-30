@@ -375,6 +375,35 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("20001", part.text)
         self.assertTrue(getattr(part, "_no_save", False))
 
+    async def test_poke_persona_reply_attributes_current_user_without_persisting_context(self) -> None:
+        event = FakeEvent.poke_notice()
+        mark_poke_persona_reply(event)
+        request = SimpleNamespace(prompt="Alice 戳了你一下。", extra_user_content_parts=[])
+        plugin = SimpleNamespace(enabled=lambda: True)
+
+        await HelperToolsPlugin.poke_persona_llm_context_handler(plugin, event, request)
+
+        self.assertEqual(len(request.extra_user_content_parts), 1)
+        part = request.extra_user_content_parts[0]
+        self.assertIsInstance(part, TextPart)
+        self.assertIn("戳一戳当前触发者身份", part.text)
+        self.assertIn("Alice", part.text)
+        self.assertIn("20001", part.text)
+        self.assertIn("其他成员", part.text)
+        self.assertTrue(getattr(part, "_no_save", False))
+
+        await HelperToolsPlugin.poke_persona_llm_context_handler(plugin, event, request)
+        self.assertEqual(len(request.extra_user_content_parts), 1)
+
+        ordinary_event = FakeEvent.poke_notice()
+        ordinary_request = SimpleNamespace(prompt="普通消息", extra_user_content_parts=[])
+        await HelperToolsPlugin.poke_persona_llm_context_handler(
+            plugin,
+            ordinary_event,
+            ordinary_request,
+        )
+        self.assertEqual(ordinary_request.extra_user_content_parts, [])
+
     def test_synthetic_agent_turn_is_not_persisted(self) -> None:
         event = FakeEvent.poke_notice()
         event.set_extra(

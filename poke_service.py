@@ -30,6 +30,7 @@ from .qq_features import call_onebot
 POKE_TOOL_NAME = "poke_qq_user"
 POKE_SYNTHETIC_COMMAND_EXTRA = "helper_tools_poke_synthetic_command"
 POKE_PERSONA_REPLY_EXTRA = "helper_tools_poke_persona_reply"
+POKE_PERSONA_CONTEXT_MARKER = "[戳一戳当前触发者身份]"
 POKE_CRON_JOB_NAME = "astrbot_plugin_helper_tools:poke:scheduled"
 DEFAULT_POKE_CRON = "30 22 * * *"
 DEFAULT_POKE_TIMEZONE = "Asia/Shanghai"
@@ -1195,6 +1196,25 @@ def is_poke_persona_reply(event: Any) -> bool:
         return bool(getter(POKE_PERSONA_REPLY_EXTRA, None))
     extras = getattr(event, "_extras", None)
     return isinstance(extras, dict) and bool(extras.get(POKE_PERSONA_REPLY_EXTRA))
+
+
+def poke_persona_context_for_event(event: Any) -> str:
+    """Build temporary identity guidance for a persona reply triggered by a poke."""
+
+    if not is_poke_persona_reply(event):
+        return ""
+    user_id = clean_text(_event_value(event, "get_sender_id"), "未知")
+    username = clean_text(_event_value(event, "get_sender_name"), user_id)
+    group_id = clean_text(_event_value(event, "get_group_id"))
+    scope = f"当前群聊（群号 {group_id}）" if group_id else "当前会话"
+    return (
+        f"{POKE_PERSONA_CONTEXT_MARKER}\n"
+        "本次 LLM 回复由戳一戳触发。\n"
+        f"本次戳一戳的用户是：{username}（QQ {user_id}）。\n"
+        f"{scope}的历史消息可能来自多个用户；历史中的“用户”消息不一定由这位用户发送，"
+        "不能把其他成员说过的话归到本次触发者名下。\n"
+        "请以本次提示中明确的身份信息识别触发者，同时结合历史内容继续当前话题。"
+    )
 
 
 def materialize_poke_synthetic_command_author(event: Any) -> bool:
