@@ -10,17 +10,284 @@
       }
     }
   },
+  "perception": {
+    "type": "object",
+    "description": "【环境感知】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用当前对话环境感知",
+        "default": false,
+        "hint": "开启后，每次 LLM 请求都会附带当前时间、节假日、农历、平台等可信元数据；这些信息只用于本轮，不会写入后续会话历史。"
+      },
+      "timezone": {
+        "type": "string",
+        "description": "感知使用的时区",
+        "default": "Asia/Shanghai",
+        "hint": "例如 Asia/Shanghai、Asia/Tokyo 或 UTC。填写无效时区时会自动使用 Asia/Shanghai。"
+      },
+      "include_time": {
+        "type": "bool",
+        "description": "附带准确时间和时段",
+        "default": true
+      },
+      "include_holiday": {
+        "type": "bool",
+        "description": "附带中国法定节假日和调休信息",
+        "default": true,
+        "hint": "使用 chinese-calendar 的实际数据，不会用猜测日期冒充法定节假日。若该库尚未覆盖未来年份，会明确说明覆盖范围不足。"
+      },
+      "include_lunar": {
+        "type": "bool",
+        "description": "附带农历日期",
+        "default": true
+      },
+      "include_solar_term": {
+        "type": "bool",
+        "description": "附带二十四节气",
+        "default": true
+      },
+      "include_almanac": {
+        "type": "bool",
+        "description": "附带黄历宜忌（民俗参考）",
+        "default": false,
+        "hint": "黄历仅供娱乐和传统文化语境参考，不是医疗、法律、投资或现实决策依据。"
+      },
+      "include_platform": {
+        "type": "bool",
+        "description": "附带平台和群聊/私聊场景",
+        "default": true
+      },
+      "include_group_name": {
+        "type": "bool",
+        "description": "群聊时附带群名",
+        "default": true,
+        "hint": "仅在开启平台感知且群名可读取时生效；会优先读取消息携带的群名，缺失时才尝试调用适配器接口。"
+      },
+      "include_media_types": {
+        "type": "bool",
+        "description": "附带当前消息的图片、语音和视频类型",
+        "default": true
+      },
+      "include_sender_qq": {
+        "type": "bool",
+        "description": "附带当前发言者的真实 QQ 号",
+        "default": false,
+        "hint": "仅 QQ/OneBot 平台且发送者 ID 为数字时提供。开启后模型会知道当前消息实际来自哪个 QQ 号，可防止有人只靠文字冒充身份。"
+      },
+      "group_name_cache_seconds": {
+        "type": "int",
+        "description": "群名缓存时长（秒）",
+        "default": 300,
+        "min": 0,
+        "max": 86400,
+        "hint": "设为 0 表示不缓存。"
+      }
+    }
+  },
+  "chat_history": {
+    "type": "object",
+    "description": "【群聊历史检索】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用群聊历史检索模块",
+        "default": false,
+        "hint": "默认关闭。关闭时插件不会记录新消息，也不会把群聊历史工具提供给模型。开启后仅处理 QQ 群聊，记录内容保存在插件数据目录的独立 SQLite 文件中。"
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 search_current_group_chat_history LLM 工具",
+        "default": true,
+        "hint": "模型可按关键词、时间、发送者和分页检索当前群记录。工具不能跨群查询，也不能查询私聊。"
+      },
+      "capture_incoming_messages": {
+        "type": "bool",
+        "description": "记录插件收到的当前群消息",
+        "default": true,
+        "hint": "只保存规范化文字和媒体占位符，不保存图片字节、语音文件或完整 OneBot 原始报文。"
+      },
+      "onebot_backfill_enabled": {
+        "type": "bool",
+        "description": "检索时用 OneBot 补充较早记录",
+        "default": true,
+        "hint": "需要适配器支持 get_group_msg_history。回填只针对当前群，并受页数、超时和延迟限制。"
+      },
+      "allowed_group_ids": {
+        "type": "list",
+        "description": "允许使用历史检索的群号",
+        "default": [],
+        "hint": "留空表示开启模块后所有 QQ 群可用；填写群号后只允许这些群。"
+      },
+      "blocked_group_ids": {
+        "type": "list",
+        "description": "禁止使用历史检索的群号",
+        "default": [],
+        "hint": "黑名单优先于允许列表。"
+      },
+      "timezone": {
+        "type": "string",
+        "description": "时间参数和卡片使用的时区",
+        "default": "Asia/Shanghai"
+      },
+      "default_hours": {
+        "type": "int",
+        "description": "模型未指定范围时默认查询多久",
+        "default": 24,
+        "min": 1,
+        "max": 2160
+      },
+      "max_query_days": {
+        "type": "int",
+        "description": "单次最多查询多少天",
+        "default": 30,
+        "min": 1,
+        "max": 365,
+        "hint": "模型即使请求更早记录，也会被限制在这个范围内。"
+      },
+      "max_result_messages": {
+        "type": "int",
+        "description": "单次最多返回多少条消息",
+        "default": 80,
+        "min": 1,
+        "max": 300
+      },
+      "max_result_chars": {
+        "type": "int",
+        "description": "单次交给模型的历史文字上限",
+        "default": 12000,
+        "min": 1000,
+        "max": 50000
+      },
+      "max_message_chars": {
+        "type": "int",
+        "description": "单条保存消息的文字上限",
+        "default": 1200,
+        "min": 100,
+        "max": 8000
+      },
+      "max_backfill_pages": {
+        "type": "int",
+        "description": "一次检索最多回填多少页 OneBot 历史",
+        "default": 6,
+        "min": 0,
+        "max": 30,
+        "hint": "设为 0 可完全禁止回填，只检索插件开启后记录到的消息。"
+      },
+      "backfill_timeout_seconds": {
+        "type": "int",
+        "description": "每页 OneBot 历史回填超时（秒）",
+        "default": 8,
+        "min": 1,
+        "max": 30
+      },
+      "backfill_delay_milliseconds": {
+        "type": "int",
+        "description": "连续回填页之间等待（毫秒）",
+        "default": 150,
+        "min": 0,
+        "max": 3000
+      },
+      "retention_days": {
+        "type": "int",
+        "description": "本地历史保留天数",
+        "default": 30,
+        "min": 1,
+        "max": 365
+      },
+      "max_messages_per_group": {
+        "type": "int",
+        "description": "每个群本地最多保留消息数",
+        "default": 20000,
+        "min": 100,
+        "max": 200000
+      },
+      "include_sender_qq": {
+        "type": "bool",
+        "description": "在检索结果和卡片中显示发送者 QQ 号",
+        "default": false,
+        "hint": "关闭后仍可按 QQ 号筛选，但返回给模型的记录只显示昵称。"
+      },
+      "card_enabled": {
+        "type": "bool",
+        "description": "允许把检索结果渲染成图片卡片",
+        "default": false,
+        "hint": "使用 AstrBot 已配置的 T2I HTML 渲染能力。不开启时工具只把文字交给模型。"
+      },
+      "card_auto_render": {
+        "type": "bool",
+        "description": "每次历史检索都自动发送卡片",
+        "default": false,
+        "hint": "默认关闭。关闭后模型只会在用户明确需要卡片时调用工具的 render_card 参数。"
+      },
+      "card_default_skin": {
+        "type": "string",
+        "description": "历史卡片默认皮肤",
+        "options": ["夜航", "纸笺", "薄荷", "霓虹"],
+        "default": "夜航"
+      },
+      "card_max_messages": {
+        "type": "int",
+        "description": "一张历史卡片最多展示多少条消息",
+        "default": 24,
+        "min": 1,
+        "max": 80
+      },
+      "card_max_chars": {
+        "type": "int",
+        "description": "一张历史卡片最多排版多少文字",
+        "default": 8000,
+        "min": 500,
+        "max": 30000
+      }
+    }
+  },
   "reply_media_guard": {
     "type": "object",
     "description": "【引用自身图片来源标记】",
     "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "标记引用图片为你先前发出",
-        "default": true,
-        "hint": "用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会正常传给模型识图，同时模型会知道这不是当前用户上传的图片。"
+        "enabled": {
+          "type": "bool",
+          "description": "标记引用图片为你先前发出",
+          "default": true,
+          "hint": "用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会正常传给模型识图，同时模型会知道这不是当前用户上传的图片。"
+        },
+        "onebot_lookup_enabled": {
+          "type": "bool",
+          "description": "引用信息不完整时回查 OneBot 原消息",
+          "default": true,
+          "hint": "推荐保持开启。它会用被引用消息 ID 调用 get_msg，以识别其它插件自动发出的图片；不会下载图片内容。"
+        },
+        "max_onebot_lookups_per_message": {
+          "type": "int",
+          "description": "一条新消息最多回查几个引用",
+          "default": 3,
+          "min": 0,
+          "max": 20
+        },
+        "onebot_lookup_timeout_seconds": {
+          "type": "int",
+          "description": "单次引用回查超时（秒）",
+          "default": 3,
+          "min": 1,
+          "max": 15
+        },
+        "lookup_cache_seconds": {
+          "type": "int",
+          "description": "已回查引用的缓存时长（秒）",
+          "default": 3600,
+          "min": 0,
+          "max": 86400,
+          "hint": "设为 0 表示不缓存。"
+        },
+        "lookup_cache_limit": {
+          "type": "int",
+          "description": "引用回查缓存最多保留条目",
+          "default": 2048,
+          "min": 32,
+          "max": 20000
+        }
       }
-    }
   },
   "reply_card_reader": {
     "type": "object",

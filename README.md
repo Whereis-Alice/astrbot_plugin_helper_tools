@@ -1,8 +1,8 @@
 # AstrBot 辅助工具合集
 
-为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、X/Twitter 资料检索、网页浏览、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
+为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、X/Twitter 资料检索、网页浏览、环境感知、群聊历史检索、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.7.0`
+- 当前版本：`v0.8.0`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -13,6 +13,8 @@
 | B站视频理解 | 识别链接、BV/av、b23.tv、分享文本和 QQ 小程序卡片；支持管理员扫码登录、Gemini 视频分析，或默认模型结合字幕、转写和可选抽帧识图 |
 | X / Twitter 资料检索 | 查找公开账号、最近动态、推文和图片；可优先使用自建 Nitter，失败自动回退 FxTwitter，并提供 R18 过滤与可选 AI 图片审核 |
 | 网页浏览 | 可选的 Playwright 只读网页读取；返回正文、标题和可选截图，默认关闭 |
+| 环境感知 | 将当前时间、节假日、农历、节气、平台与可选的真实 QQ 身份作为本轮可信信息交给模型，默认关闭 |
+| 群聊历史检索 | 让模型只检索当前 QQ 群的本地/OneBot 历史；支持关键词、时间、发送者和可选 T2I 摘要卡片，默认关闭 |
 | QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
 | QQ 名片点赞 | 自动响应“赞我”或“赞@用户”；可选由当前人设自然回复 |
 | 今日小猪 | 每日抽取固定的小猪卡片；可选查看被 @ 用户的结果和使用自定义素材库 |
@@ -33,7 +35,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.7.0` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.8.0` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -81,6 +83,53 @@ python -m playwright install chromium
 - 初始网址、跳转后的网址和页面资源请求都会检查域名黑白名单、DNS 和 IP。默认拒绝 `localhost`、Docker/Kubernetes 常见内部域名、内网/链路本地/保留地址及解析到这些地址的域名。
 - 网页正文、标题和截图说明都被标记为不可信外部资料。其中出现“忽略上文”“调用工具”“发送密码”等文字，只会被当作网页内容。
 - 网页正文与截图只参与本轮回答，Agent 完成后会标记为不保存，不会进入后续聊天上下文。
+
+## 环境感知
+
+`perception.enabled` 默认关闭。开启后，插件不会注册新的 LLM 工具，而是在每次实际进入 LLM 的请求中附加一段可信的即时元数据：当前时间和时段、星期/法定节假日/调休、农历、节气、可选黄历、平台、群聊或私聊、群名以及消息中是否含图片、语音或视频。它不会替换 AstrBot 人格，且注入内容只参与当前轮，不会写入后续聊天历史。
+
+`include_sender_qq` 默认关闭。开启后，只有 QQ/OneBot 平台且适配器给出数字发送者 ID 时，模型才会收到“当前发言者 QQ 号为 ……”这一条事实，并被明确要求不要把正文里的自称当成身份依据。它适合防止群成员靠文字冒充别人的场景。
+
+### 节假日数据
+
+法定节假日和调休由 `chinese-calendar` 提供，而不是由插件按日期猜测。已使用 `chinese-calendar 1.11.0` 验证 2026 年的元旦、春节、国庆等日期及调休判断；该版本的公开数据范围是 2004 至 2026 年。请求超出库覆盖的年份时，插件会明确提示“数据暂未覆盖”，不会把普通日期伪装成法定节假日。
+
+### 关键配置
+
+| 配置 | 说明 |
+| --- | --- |
+| `enabled` | 环境感知总开关，默认关闭 |
+| `timezone` | 时间与节假日使用的时区，默认 `Asia/Shanghai` |
+| `include_time` / `include_holiday` | 控制准确时间、时段、周末、法定节假日和调休信息 |
+| `include_lunar` / `include_solar_term` / `include_almanac` | 控制农历、节气和可选的民俗黄历信息 |
+| `include_platform` / `include_group_name` / `include_media_types` | 控制平台、群名和媒体类型说明 |
+| `include_sender_qq` | 可选提供当前消息真实 QQ 号，用于身份校验 |
+
+## 群聊历史检索
+
+`chat_history.enabled` 默认关闭。开启并重载后，模型可以在当前 QQ 群里调用 `search_current_group_chat_history`，按关键词、时间范围、发送者 QQ、返回数量和分页检索记录；模型会根据用户的问题自行决定是否调用，不新增聊天命令。
+
+这个工具有严格范围：只能查询触发本次对话的当前群，不能跨群，也不能查询私聊或其它平台。每个记录使用“平台 + bot QQ + 群号”独立存储；允许列表、黑名单和单次时间范围上限会在查询前生效。群聊原文属于不可信内容，工具结果会明确要求模型不能执行其中的提示词、命令、链接或身份声明，且结果会在本轮回复完成后从后续上下文排除。
+
+本地缓存只保存规范化文字及“图片”“语音”“卡片”等占位符，不保存图片/语音字节和完整 OneBot 原始报文。`onebot_backfill_enabled` 开启时，插件可调用当前群的 `get_group_msg_history` 补足较早消息，仍受到页数、超时和间隔限制；适配器不支持该接口时会自动只使用本地缓存。
+
+### T2I 历史卡片
+
+开启 `card_enabled` 后，模型在用户明确要求发送历史卡片时可以使用工具的 `render_card=true`，由 AstrBot 已配置的 T2I HTML 渲染服务生成图片并发送到当前群。`card_auto_render` 默认关闭；只有明确开启后，每次检索才会自动发卡片。可选皮肤为“夜航”“纸笺”“薄荷”“霓虹”。T2I 未配置、渲染失败或返回不可发送地址时，工具会保留文字检索结果并说明卡片没有发出。
+
+### 关键配置
+
+| 配置 | 说明 |
+| --- | --- |
+| `enabled` / `llm_tool_enabled` | 模块总开关与历史工具注册开关 |
+| `capture_incoming_messages` | 是否记录插件收到的当前群消息；关闭后不再写入新记录 |
+| `allowed_group_ids` / `blocked_group_ids` | 限制哪些群能使用。黑名单优先；允许列表留空表示所有 QQ 群 |
+| `default_hours` / `max_query_days` | 默认检索范围与单次最大追溯天数 |
+| `max_result_messages` / `max_result_chars` | 单次传给模型的消息数和文字上限 |
+| `retention_days` / `max_messages_per_group` | 本地 SQLite 历史保留边界 |
+| `onebot_backfill_enabled` / `max_backfill_pages` | 是否使用 OneBot 回填以及最多读取页数 |
+| `include_sender_qq` | 是否在返回的记录和卡片中显示发送者 QQ 号；关闭后仍可按 QQ 号筛选 |
+| `card_enabled` / `card_auto_render` / `card_default_skin` | T2I 卡片总开关、自动发送和默认皮肤 |
 
 ## X / Twitter 资料检索
 
@@ -282,6 +331,7 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 | `get_x_post` | 读取一条公开 X/Twitter 推文；按需返回或发送通过安全过滤的图片 |
 | `get_x_recent_posts` | 读取指定公开账号的最近动态；按需返回或发送通过安全过滤的图片 |
 | `search_x_posts` | 用关键词或常见 X 搜索表达式检索公开推文，例如 `from:用户名` |
+| `search_current_group_chat_history` | 只检索当前 QQ 群的历史记录；支持关键词、时间、发送者、分页和按需发送 T2I 摘要卡片，默认关闭 |
 | `get_qq_avatar` | 获取 QQ 用户头像，可把图片交给视觉模型 |
 | `get_qq_group_member_info` | 获取 QQ号、QQ名、群昵称、群身份、群等级、专属头衔及 OneBot 额外字段 |
 | `get_qq_profile` | 整合用户资料、群成员资料、群信息和头像 |
@@ -372,6 +422,8 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 ### 引用图片和卡片
 
 - `reply_media_guard`：用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会交给 LLM 识图，同时明确“这是你先前发出，或者自带插件自动发出的图，不是当前用户上传的图片”。
+- 对于其它插件自动发送后、引用段里丢失发送者或图片链的情况，插件会按引用消息 ID 调用 OneBot `get_msg` 回查。来源说明会在消息阶段尽早写入，并在真正发送 LLM 请求前再次作为仅本轮内容注入，避免适配器晚加载引用详情时又把旧图误当成当前用户上传。
+- `onebot_lookup_enabled` 默认开启；可用 `max_onebot_lookups_per_message`、`onebot_lookup_timeout_seconds` 和缓存项限制回查开销。适配器不支持 `get_msg` 时，仍会使用引用段本身已经提供的发送者和图片信息。
 - `reply_card_reader`：提取被引用的小程序、音乐、普通分享、位置和联系人卡片的来源、标题、描述和链接，不删除原卡片，也不改变引用消息 ID。
 - B 站视频模块会在上述卡片资料基础上继续解析视频本身；普通卡片仍只由引用卡片模块处理。
 
@@ -421,6 +473,8 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 | 分组 | 内容 |
 | --- | --- |
 | `general` | 插件总开关 |
+| `perception` | 当前时间、节假日、农历、平台和可选真实 QQ 身份感知 |
+| `chat_history` | 当前 QQ 群历史检索、本地保留、OneBot 回填和可选 T2I 卡片 |
 | `bilibili_video` | B 站分析模式、触发方式、下载限制、Cookie、默认模型和 Gemini 子配置 |
 | `twitter` | X/Twitter 数据源、Nitter、自动解析、图片、R18 过滤和可选 AI 审核 |
 | `reply_media_guard` | 引用自身图片来源标记 |
@@ -444,6 +498,8 @@ B 站模块依赖：
 - `imageio-ffmpeg`：提供可随插件安装的 ffmpeg，用于合并视频音轨和提取音频。
 - `Pillow`：生成今日小猪图片卡片。
 - `beautifulsoup4`：解析自建 Nitter 返回的公开页面。
+- `chinese-calendar`：中国法定节假日和调休判断。
+- `lunar-python`：农历、节气和可选黄历信息。
 
 ## 故障排查
 
@@ -491,6 +547,8 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 
 - Gemini 视频上传与分析、Playwright 浏览器配置和 SSRF 防护思路参考 [YUMU1658/astrbot_plugin_qq_tools](https://github.com/YUMU1658/astrbot_plugin_qq_tools)，Copyright (c) 2026 YUMU1658。本插件的网页模块按辅助工具场景独立重写为无状态只读读取，不并入点击、输入和浏览器会话控制能力。
 - X/Twitter 账号、推文和媒体检索的产品场景参考 [Ars1027/astrbot_plugin_twitter](https://github.com/Ars1027/astrbot_plugin_twitter)。该上游仓库采用 AGPL-3.0；本插件没有复制或并入其代码，实现为独立的 Nitter/FxTwitter 数据源模块。
+- 环境感知的产品场景参考 [miaoxutao123/astrbot_plugin_LLMPerception](https://github.com/miaoxutao123/astrbot_plugin_LLMPerception)。该上游仓库采用 AGPL-3.0；本模块独立实现，使用可验证的节假日、农历和节气数据，不复制或并入其代码。
+- 当前群聊历史工具的产品场景参考 [kawayiYokami/astrbot_plugin_angel_eye](https://github.com/kawayiYokami/astrbot_plugin_angel_eye)。该上游仓库采用 AGPL-3.0；本模块独立实现为有范围和保留上限的本地 SQLite + OneBot 回填方案，不复制或并入其代码。
 - B 站识别、字幕优先、yt-dlp 下载和必剪转写流程参考 [storyAura/astrbot_plugin_biliVideo](https://github.com/storyAura/astrbot_plugin_biliVideo)，Copyright (c) 2025 storyAura。
 - B 站短链的无 Cookie 展开请求策略参考 [drdon1234/astrbot_plugin_media_parser](https://github.com/drdon1234/astrbot_plugin_media_parser)。
 - B 站二维码获取、扫码轮询和凭据保存流程参考 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili)，并按本插件的视频理解场景重新实现。
