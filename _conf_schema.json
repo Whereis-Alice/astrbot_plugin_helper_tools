@@ -96,1031 +96,94 @@
       }
     }
   },
-  "chat_history": {
+  "anti_revoke": {
     "type": "object",
-    "description": "【群聊历史检索】",
+    "description": "【QQ 防撤回】",
+    "hint": "仅支持 aiocqhttp/OneBot 群聊。开启后先缓存群消息，发生撤回时把原消息转发到配置的目标会话；默认关闭。",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用群聊历史检索模块",
-        "default": false,
-        "hint": "默认关闭。关闭时插件不会记录新消息，也不会把群聊历史工具提供给模型。开启后仅处理 QQ 群聊，记录内容保存在插件数据目录的独立 SQLite 文件中。"
-      },
-      "llm_tool_enabled": {
-        "type": "bool",
-        "description": "注册 search_current_group_chat_history LLM 工具",
-        "default": true,
-        "hint": "模型可按关键词、时间、发送者和分页检索当前群记录。工具不能跨群查询，也不能查询私聊。"
-      },
-      "capture_incoming_messages": {
-        "type": "bool",
-        "description": "记录插件收到的当前群消息",
-        "default": true,
-        "hint": "只保存规范化文字和媒体占位符，不保存图片字节、语音文件或完整 OneBot 原始报文。"
-      },
-      "onebot_backfill_enabled": {
-        "type": "bool",
-        "description": "检索时用 OneBot 补充较早记录",
-        "default": true,
-        "hint": "需要适配器支持 get_group_msg_history。回填只针对当前群，并受页数、超时和延迟限制。"
-      },
-      "allowed_group_ids": {
-        "type": "list",
-        "description": "允许使用历史检索的群号",
-        "default": [],
-        "hint": "留空表示开启模块后所有 QQ 群可用；填写群号后只允许这些群。"
-      },
-      "blocked_group_ids": {
-        "type": "list",
-        "description": "禁止使用历史检索的群号",
-        "default": [],
-        "hint": "黑名单优先于允许列表。"
-      },
-      "timezone": {
-        "type": "string",
-        "description": "时间参数和卡片使用的时区",
-        "default": "Asia/Shanghai"
-      },
-      "default_hours": {
-        "type": "int",
-        "description": "模型未指定范围时默认查询多久",
-        "default": 24,
-        "min": 1,
-        "max": 2160
-      },
-      "max_query_days": {
-        "type": "int",
-        "description": "单次最多查询多少天",
-        "default": 30,
-        "min": 1,
-        "max": 365,
-        "hint": "模型即使请求更早记录，也会被限制在这个范围内。"
-      },
-      "max_result_messages": {
-        "type": "int",
-        "description": "单次最多返回多少条消息",
-        "default": 80,
-        "min": 1,
-        "max": 300
-      },
-      "max_result_chars": {
-        "type": "int",
-        "description": "单次交给模型的历史文字上限",
-        "default": 12000,
-        "min": 1000,
-        "max": 50000
-      },
-      "max_message_chars": {
-        "type": "int",
-        "description": "单条保存消息的文字上限",
-        "default": 1200,
-        "min": 100,
-        "max": 8000
-      },
-      "max_backfill_pages": {
-        "type": "int",
-        "description": "一次检索最多回填多少页 OneBot 历史",
-        "default": 6,
-        "min": 0,
-        "max": 30,
-        "hint": "设为 0 可完全禁止回填，只检索插件开启后记录到的消息。"
-      },
-      "backfill_timeout_seconds": {
-        "type": "int",
-        "description": "每页 OneBot 历史回填超时（秒）",
-        "default": 8,
-        "min": 1,
-        "max": 30
-      },
-      "backfill_delay_milliseconds": {
-        "type": "int",
-        "description": "连续回填页之间等待（毫秒）",
-        "default": 150,
-        "min": 0,
-        "max": 3000
-      },
-      "retention_days": {
-        "type": "int",
-        "description": "本地历史保留天数",
-        "default": 30,
-        "min": 1,
-        "max": 365
-      },
-      "max_messages_per_group": {
-        "type": "int",
-        "description": "每个群本地最多保留消息数",
-        "default": 20000,
-        "min": 100,
-        "max": 200000
-      },
-      "include_sender_qq": {
-        "type": "bool",
-        "description": "在检索结果和卡片中显示发送者 QQ 号",
-        "default": false,
-        "hint": "关闭后仍可按 QQ 号筛选，但返回给模型的记录只显示昵称。"
-      },
-      "card_enabled": {
-        "type": "bool",
-        "description": "允许把检索结果渲染成图片卡片",
-        "default": false,
-        "hint": "使用 AstrBot 已配置的 T2I HTML 渲染能力。不开启时工具只把文字交给模型。"
-      },
-      "card_auto_render": {
-        "type": "bool",
-        "description": "每次历史检索都自动发送卡片",
-        "default": false,
-        "hint": "默认关闭。关闭后模型只会在用户明确需要卡片时调用工具的 render_card 参数。"
-      },
-      "card_default_skin": {
-        "type": "string",
-        "description": "历史卡片默认皮肤",
-        "options": ["夜航", "纸笺", "薄荷", "霓虹"],
-        "default": "夜航"
-      },
-      "card_max_messages": {
-        "type": "int",
-        "description": "一张历史卡片最多展示多少条消息",
-        "default": 24,
-        "min": 1,
-        "max": 80
-      },
-      "card_max_chars": {
-        "type": "int",
-        "description": "一张历史卡片最多排版多少文字",
-        "default": 8000,
-        "min": 500,
-        "max": 30000
-      }
-    }
-  },
-  "reply_media_guard": {
-    "type": "object",
-    "description": "【引用自身图片来源标记】",
-    "items": {
-        "enabled": {
-          "type": "bool",
-          "description": "标记引用图片为你先前发出",
-          "default": true,
-          "hint": "用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会正常传给模型识图，同时模型会知道这不是当前用户上传的图片。"
-        },
-        "onebot_lookup_enabled": {
-          "type": "bool",
-          "description": "引用信息不完整时回查 OneBot 原消息",
-          "default": true,
-          "hint": "推荐保持开启。它会用被引用消息 ID 调用 get_msg，以识别其它插件自动发出的图片；不会下载图片内容。"
-        },
-        "max_onebot_lookups_per_message": {
-          "type": "int",
-          "description": "一条新消息最多回查几个引用",
-          "default": 3,
-          "min": 0,
-          "max": 20
-        },
-        "onebot_lookup_timeout_seconds": {
-          "type": "int",
-          "description": "单次引用回查超时（秒）",
-          "default": 3,
-          "min": 1,
-          "max": 15
-        },
-        "lookup_cache_seconds": {
-          "type": "int",
-          "description": "已回查引用的缓存时长（秒）",
-          "default": 3600,
-          "min": 0,
-          "max": 86400,
-          "hint": "设为 0 表示不缓存。"
-        },
-        "lookup_cache_limit": {
-          "type": "int",
-          "description": "引用回查缓存最多保留条目",
-          "default": 2048,
-          "min": 32,
-          "max": 20000
-        }
-      }
-  },
-  "reply_card_reader": {
-    "type": "object",
-    "description": "【引用小程序/音乐卡片识别】",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "让模型看懂被引用的卡片",
-        "default": true,
-        "hint": "用户引用 QQ 小程序、哔哩哔哩分享、网易云音乐、普通分享、位置或联系人卡片时，提取卡片的来源、标题、描述和链接并放进引用上下文。不会修改原卡片，也不会影响其它插件触发。"
-      },
-      "include_urls": {
-        "type": "bool",
-        "description": "把卡片链接也交给模型",
-        "default": true
-      },
-      "max_summary_chars": {
-        "type": "int",
-        "description": "每条引用的卡片说明最多字符数",
-        "default": 1200,
-        "min": 200,
-        "max": 5000,
-        "hint": "卡片内容过长时会自动截断，避免占用过多上下文。"
-      }
-    }
-  },
-  "bilibili_video": {
-    "type": "object",
-    "description": "【B站视频理解】",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "启用 B 站视频理解模块",
-        "default": true
-      },
-      "llm_tool_enabled": {
-        "type": "bool",
-        "description": "注册 understand_bilibili_video LLM 工具",
-        "default": true,
-        "hint": "模型可主动读取用户给出的 B 站链接、BV号、av号、b23.tv短链或分享文本。"
-      },
-      "qr_login": {
-        "type": "object",
-        "description": "B站扫码登录（仅管理员命令）",
-        "items": {
-          "enabled": {
-            "type": "bool",
-            "description": "启用 B站扫码登录",
-            "default": true,
-            "hint": "管理员使用 /helper_bili_login 获取二维码；扫码成功后的凭据会自动保存到插件数据目录。"
-          },
-          "commands_enabled": {
-            "type": "bool",
-            "description": "启用扫码登录相关命令",
-            "default": true,
-            "hint": "控制 /helper_bili_login、/helper_bili_login_status、/helper_bili_login_cancel 和 /helper_bili_logout。这样可与 astrbot_plugin_bilibili 共存。"
-          },
-          "private_chat_only": {
-            "type": "bool",
-            "description": "仅允许私聊中发起扫码登录",
-            "default": true,
-            "hint": "推荐保持开启，避免登录二维码出现在群聊中。"
-          },
-          "direct_retry_on_invalid_response": {
-            "type": "bool",
-            "description": "二维码接口异常时自动尝试直连",
-            "default": true,
-            "hint": "二维码请求会先按服务器的 HTTP_PROXY/HTTPS_PROXY 设置发出；如果收到网页、空内容或其它非 JSON 回包，会自动再尝试一次不使用系统代理的直连。服务器不能直连 B 站时可关闭。"
-          },
-          "prefer_saved_credentials": {
-            "type": "bool",
-            "description": "优先使用扫码保存的凭据",
-            "default": true,
-            "hint": "关闭后，配置页的 Cookie 文本或 cookies.txt 会优先于扫码登录凭据。"
-          },
-          "poll_interval_seconds": {
-            "type": "int",
-            "description": "扫码状态检查间隔（秒）",
-            "default": 2,
-            "min": 1,
-            "max": 15
-          },
-          "timeout_seconds": {
-            "type": "int",
-            "description": "等待扫码确认最长时间（秒）",
-            "default": 180,
-            "min": 30,
-            "max": 600
-          }
-        }
-      },
-      "analysis_mode": {
-        "type": "string",
-        "description": "视频分析方式（二选一）",
-        "options": [
-          "AstrBot 默认模型（字幕/转写）",
-          "Gemini 直接视频分析"
-        ],
-        "default": "AstrBot 默认模型（字幕/转写）",
-        "hint": "默认模型方式读取官方字幕，无字幕时可用必剪转写；Gemini 方式会下载视频并让 Gemini 同时分析画面和声音。最终回复都由当前 AstrBot 人格生成。"
-      },
-      "auto_parse_mode": {
-        "type": "string",
-        "description": "用户发送 B 站视频时如何触发",
-        "options": [
-          "跟随 AstrBot（推荐）",
-          "看到视频就主动回复",
-          "关闭自动解析"
-        ],
-        "default": "跟随 AstrBot（推荐）",
-        "hint": "“跟随 AstrBot”不会单独唤醒机器人，只在消息本来就会进入 LLM 时补充视频资料；“主动回复”会让裸链接和小程序卡片也直接触发 LLM；关闭后仍可使用 LLM 工具。"
-      },
-      "max_duration_seconds": {
-        "type": "int",
-        "description": "单个分 P 最大时长（秒）",
-        "default": 600,
-        "min": 10,
-        "max": 21600,
-        "hint": "多 P 视频按当前 P 的时长判断。设置过大将增加下载时间、转写耗时和模型费用。"
-      },
-      "max_file_size_mb": {
-        "type": "int",
-        "description": "下载媒体最大大小（MB）",
-        "default": 80,
-        "min": 5,
-        "max": 2048
-      },
-      "download_quality": {
-        "type": "string",
-        "description": "视频下载画质（Gemini/抽帧）",
-        "options": [
-          "360p",
-          "480p",
-          "720p"
-        ],
-        "default": "360p",
-        "hint": "Gemini 模式会上传该画质的视频；默认模型开启抽帧识图后，也用它作为抽帧来源。"
-      },
-      "processing_timeout_seconds": {
-        "type": "int",
-        "description": "整条视频处理最长时间（秒）",
-        "default": 360,
-        "min": 30,
-        "max": 3600
-      },
-      "request_timeout_seconds": {
-        "type": "int",
-        "description": "单次 B 站网络请求超时（秒）",
-        "default": 20,
-        "min": 5,
-        "max": 120
-      },
-      "max_concurrency": {
-        "type": "int",
-        "description": "同时处理的视频数量",
-        "default": 1,
-        "min": 1,
-        "max": 4,
-        "hint": "同一视频会自动合并为一个任务。显存、带宽或 API 额度有限时建议保持 1。"
-      },
-      "cache_ttl_minutes": {
-        "type": "int",
-        "description": "视频分析缓存时间（分钟）",
-        "default": 360,
-        "min": 1,
-        "max": 10080
-      },
-      "max_cache_entries": {
-        "type": "int",
-        "description": "最多缓存视频数量",
-        "default": 64,
-        "min": 1,
-        "max": 1000
-      },
-      "cookie": {
-        "type": "text",
-        "description": "可选：B 站 Cookie 文本",
-        "default": "",
-        "hint": "例如 SESSDATA=...; bili_jct=...。只会发送给 B 站网页/API 与下载请求，不会发送给 b23.tv 短链；插件启动时会检查登录状态并写入不含 Cookie 内容的日志。更推荐使用下面的 cookies.txt 文件。请勿把 Cookie 发到聊天中。"
-      },
-      "cookies_file": {
-        "type": "file",
-        "description": "可选：Netscape 格式 cookies.txt",
-        "file_types": [
-          ".txt"
-        ],
-        "default": [],
-        "hint": "需要登录的视频可上传 yt-dlp/浏览器导出的 Netscape cookies.txt。插件启动日志会说明 Cookie 是否已被 B 站识别为登录状态。"
-      },
-      "default_model": {
-        "type": "object",
-        "description": "AstrBot 默认模型方式",
-        "items": {
-          "prefer_subtitles": {
-            "type": "bool",
-            "description": "优先读取 B 站官方字幕",
-            "default": true
-          },
-          "subtitle_languages": {
-            "type": "list",
-            "description": "字幕语言优先顺序",
-            "default": [
-              "zh-CN",
-              "zh-Hans",
-              "zh-Hant",
-              "zh-HK",
-              "ai-zh",
-              "en-US",
-              "en"
-            ]
-          },
-          "bcut_fallback_enabled": {
-            "type": "bool",
-            "description": "无字幕时使用必剪语音转写",
-            "default": true,
-            "hint": "开启后会下载该分 P 的音频并上传到 B 站必剪转写服务。该服务是非公开稳定接口，未来可能变化。"
-          },
-          "bcut_timeout_seconds": {
-            "type": "int",
-            "description": "必剪转写最长等待时间（秒）",
-            "default": 240,
-            "min": 30,
-            "max": 1800
-          },
-          "max_transcript_chars": {
-            "type": "int",
-            "description": "交给默认模型的字幕最多字符数",
-            "default": 30000,
-            "min": 1000,
-            "max": 200000,
-            "hint": "超出时会保留开头、中段代表片段和结尾，而不是只截断尾部。"
-          },
-          "frame_vision": {
-            "type": "object",
-            "description": "可选：视频抽帧识图",
-            "items": {
-              "enabled": {
-                "type": "bool",
-                "description": "让默认模型结合视频抽帧识图",
-                "default": false,
-                "hint": "只适用于当前 AstrBot 模型支持图片输入的情况。开启后会额外下载视频并抽帧；图片只用于本轮分析，不会写入后续对话历史。"
-              },
-              "frame_count": {
-                "type": "int",
-                "description": "每个分 P 均匀抽取的画面数量",
-                "default": 6,
-                "min": 1,
-                "max": 24,
-                "hint": "帧数越多越容易覆盖剧情变化，也会增加模型图片输入和处理时间。"
-              },
-              "max_frame_width": {
-                "type": "int",
-                "description": "单张抽帧最大宽度（像素）",
-                "default": 960,
-                "min": 320,
-                "max": 1920,
-                "hint": "更大的尺寸更利于看清屏幕文字，但会增加图片大小和视觉模型消耗。"
-              },
-              "jpeg_quality": {
-                "type": "int",
-                "description": "抽帧 JPEG 清晰度",
-                "default": 5,
-                "min": 2,
-                "max": 31,
-                "hint": "数值越小越清晰、文件越大；默认 5 通常适合识别人物和屏幕文字。"
-              },
-              "max_total_size_mb": {
-                "type": "int",
-                "description": "一条视频所有抽帧的总大小上限（MB）",
-                "default": 8,
-                "min": 1,
-                "max": 50,
-                "hint": "达到上限后会保留已抽出的前几张画面，避免占用过多上下文和内存。"
-              }
-            }
-          }
-        }
-      },
-      "gemini": {
-        "type": "object",
-        "description": "Gemini 直接视频分析方式",
-        "items": {
-          "api_key": {
-            "type": "string",
-            "description": "Gemini API Key",
-            "default": "",
-            "hint": "也可以通过 AstrBot 进程环境变量 GEMINI_API_KEY 提供。"
-          },
-          "api_base": {
-            "type": "string",
-            "description": "Gemini REST API 根地址",
-            "default": "https://generativelanguage.googleapis.com",
-            "hint": "代理地址必须兼容 Gemini v1beta generateContent 和 File API。"
-          },
-          "model": {
-            "type": "string",
-            "description": "Gemini 视频分析模型",
-            "default": "gemini-2.5-flash"
-          },
-          "upload_mode": {
-            "type": "string",
-            "description": "视频上传方式",
-            "options": [
-              "自动选择",
-              "Gemini File API",
-              "内嵌 Base64"
-            ],
-            "default": "自动选择",
-            "hint": "自动选择会让小文件使用 Base64，大文件使用 File API。代理不支持 File API 时可改为 Base64，但请求体会更大。"
-          },
-          "inline_limit_mb": {
-            "type": "int",
-            "description": "自动选择 Base64 的文件上限（MB）",
-            "default": 15,
-            "min": 1,
-            "max": 50
-          },
-          "timeout_seconds": {
-            "type": "int",
-            "description": "Gemini 上传与分析超时（秒）",
-            "default": 240,
-            "min": 30,
-            "max": 1800
-          },
-          "analysis_prompt": {
-            "type": "text",
-            "description": "Gemini 客观分析提示词",
-            "default": "请完整观看这个视频并输出客观、可供另一个对话模型使用的中文事实报告。\n至少覆盖：主题与结论、按时间顺序的重要场景、人物或主体、对白/旁白、屏幕文字、声音与情绪、梗或反转，以及无法确认的细节。\n不要扮演聊天机器人，不要直接回应发送视频的用户，不要加入当前会话人格。没有看清或听清的内容请明确标为不确定，不得编造。"
-          },
-          "temperature": {
-            "type": "float",
-            "description": "Gemini 分析温度",
-            "default": 0.2,
-            "min": 0,
-            "max": 2
-          },
-          "max_output_tokens": {
-            "type": "int",
-            "description": "Gemini 最多输出 Token",
-            "default": 4096,
-            "min": 256,
-            "max": 65536
-          },
-          "max_analysis_chars": {
-            "type": "int",
-            "description": "交给当前人格的分析最多字符数",
-            "default": 24000,
-            "min": 1000,
-            "max": 100000
-          },
-          "delete_uploaded_file": {
-            "type": "bool",
-            "description": "分析后删除 Gemini 已上传文件",
-            "default": true
-          }
-        }
-      }
-    }
-  },
-  "bilibili_article": {
-    "type": "object",
-    "description": "【B站专栏全文理解】",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "启用 B站专栏理解模块",
-        "default": true,
-        "hint": "引用 B站专栏卡片或发送专栏链接时，读取正文作为当前问题的资料。"
-      },
-      "auto_parse_enabled": {
-        "type": "bool",
-        "description": "自动读取专栏正文",
-        "default": true,
-        "hint": "关闭后不自动读取专栏，但不会影响引用卡片的基础信息识别。"
-      },
-      "cover_image_enabled": {
-        "type": "bool",
-        "description": "分析专栏封面图片",
-        "default": true,
-        "hint": "封面只作为当前轮视觉资料附加，不会保存到后续会话上下文。"
-      },
-      "max_article_chars": {
-        "type": "int",
-        "description": "专栏正文最大字符数",
-        "default": 20000,
-        "min": 1000,
-        "max": 100000,
-        "hint": "正文超过此长度时保留开头和结尾，中间内容省略；只限制本轮交给模型的正文长度。"
-      },
-      "max_response_bytes": {
-        "type": "int",
-        "description": "专栏接口或网页最大读取字节数",
-        "default": 8388608,
-        "min": 65536,
-        "max": 33554432,
-        "hint": "限制网络响应大小，避免异常页面占用过多内存。"
-      },
-      "max_cover_bytes": {
-        "type": "int",
-        "description": "专栏封面最大读取字节数",
-        "default": 8388608,
-        "min": 65536,
-        "max": 16777216
-      },
-      "request_timeout_seconds": {
-        "type": "int",
-        "description": "专栏网络请求超时（秒）",
-        "default": 25,
-        "min": 5,
-        "max": 120
-      },
-      "cache_ttl_minutes": {
-        "type": "int",
-        "description": "专栏正文缓存时间（分钟）",
-        "default": 180,
-        "min": 1,
-        "max": 10080
-      },
-      "cache_entries": {
-        "type": "int",
-        "description": "最多缓存的专栏数量",
-        "default": 32,
-        "min": 1,
-        "max": 256
-      }
-    }
-  },
-  "web_browser": {
-    "type": "object",
-    "description": "【网页浏览（Playwright）】",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "启用网页浏览模块",
-        "default": false,
-        "hint": "默认关闭。开启后模型才能读取公开网页；还需要在 AstrBot 使用的 Python 环境执行 python -m playwright install chromium。"
-      },
-      "llm_tool_enabled": {
-        "type": "bool",
-        "description": "注册 browse_webpage LLM 工具",
-        "default": true,
-        "hint": "关闭后即使模块已启用，模型也不能调用网页浏览。"
-      },
-      "navigation_timeout_seconds": {
-        "type": "int",
-        "description": "网页加载超时（秒）",
-        "default": 25,
-        "min": 5,
-        "max": 120,
-        "hint": "页面在这个时间内没有完成指定的加载阶段，就会停止并返回失败。"
-      },
-      "wait_until": {
-        "type": "string",
-        "description": "读取页面前等待到的加载阶段",
-        "options": [
-          "DOM 就绪（推荐）",
-          "页面 load 完成",
-          "网络空闲"
-        ],
-        "default": "DOM 就绪（推荐）",
-        "hint": "多数网站推荐保持 DOM 就绪；“网络空闲”对持续轮询的网站可能更容易超时。"
-      },
-      "extra_wait_ms": {
-        "type": "int",
-        "description": "加载后额外等待（毫秒）",
-        "default": 400,
-        "min": 0,
-        "max": 10000,
-        "hint": "给前端页面一点渲染时间。页面内容缺失时可适当调高，不宜设得过大。"
-      },
-      "max_page_text_chars": {
-        "type": "int",
-        "description": "交给模型的网页正文最大字符数",
-        "default": 12000,
-        "min": 1000,
-        "max": 50000,
-        "hint": "超长正文会保留开头和结尾，中间省略，避免单个网页占满上下文。"
-      },
-      "screenshot_enabled": {
-        "type": "bool",
-        "description": "允许网页工具附带页面截图",
-        "default": true,
-        "hint": "截图仅供当前轮支持视觉的模型阅读，工具完成后不会写入后续会话历史。"
-      },
-      "screenshot_quality": {
-        "type": "int",
-        "description": "截图 JPEG 清晰度",
-        "default": 60,
-        "min": 30,
-        "max": 90,
-        "hint": "数值越高越清晰、占用的视觉上下文也越大。"
-      },
-      "max_screenshot_size_mb": {
-        "type": "int",
-        "description": "单张截图大小上限（MB）",
-        "default": 2,
-        "min": 1,
-        "max": 8,
-        "hint": "超过上限时会放弃截图，只返回文字资料。"
-      },
-      "viewport_width": {
-        "type": "int",
-        "description": "浏览器视口宽度",
-        "default": 1280,
-        "min": 640,
-        "max": 1920
-      },
-      "viewport_height": {
-        "type": "int",
-        "description": "浏览器视口高度",
-        "default": 720,
-        "min": 480,
-        "max": 1440
-      },
-      "max_concurrent_pages": {
-        "type": "int",
-        "description": "同时读取网页数量",
-        "default": 1,
-        "min": 1,
-        "max": 3,
-        "hint": "浏览器较占内存，通常保持 1 即可。修改后建议重载插件。"
-      },
-      "allow_private_network": {
-        "type": "bool",
-        "description": "允许访问本机和内网地址",
-        "default": false,
-        "hint": "强烈建议保持关闭。关闭时会拒绝 localhost、内网/保留 IP，以及解析到这些地址的域名。"
-      },
-      "allowed_domains": {
-        "type": "list",
-        "description": "允许访问的域名白名单",
-        "default": [],
-        "hint": "留空表示允许所有公网域名。填写 example.com 会同时匹配其子域名；填写 *.example.com 只匹配子域名。白名单会同时限制页面资源请求。"
-      },
-      "blocked_domains": {
-        "type": "list",
-        "description": "禁止访问的域名黑名单",
-        "default": [],
-        "hint": "黑名单优先于白名单，填写 example.com 会同时阻止其子域名。"
-      },
-      "chromium_executable_path": {
-        "type": "string",
-        "description": "自定义 Chromium 可执行文件路径",
-        "default": "",
-        "hint": "通常留空，使用 playwright install chromium 下载的浏览器。只有部署环境已有兼容 Chromium 时才填写。"
-      },
-      "disable_chromium_sandbox": {
-        "type": "bool",
-        "description": "关闭 Chromium 沙箱",
-        "default": false,
-        "hint": "仅当容器以 root 运行且 Chromium 明确报 sandbox 错误时开启。关闭沙箱会降低隔离性。"
-      }
-    }
-  },
-  "twitter": {
-    "type": "object",
-    "description": "【X / Twitter 资料检索】",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "启用 X / Twitter 模块",
-        "default": false,
-        "hint": "默认关闭。开启后，模型可查询公开的 X/Twitter 账号、推文和近期动态；不需要 X 登录 Cookie。"
-      },
-      "llm_tool_enabled": {
-        "type": "bool",
-        "description": "注册 X / Twitter LLM 工具",
-        "default": true,
-        "hint": "控制 find_x_account、get_x_post、get_x_recent_posts 和 search_x_posts。关闭后，命令和自动链接解析仍可单独使用。"
+        "description": "启用 QQ 防撤回模块",
+        "default": false
       },
       "commands_enabled": {
         "type": "bool",
-        "description": "启用 X / Twitter 查询命令",
+        "description": "启用撤回转发管理命令",
         "default": true,
-        "hint": "控制 helper_x_search、helper_x_account、helper_x_recent 和 helper_x_post；使用 helper_ 命名空间，避免与其它 Twitter/X 插件撞指令。"
+        "hint": "管理员可使用“撤回转发”“取消撤回转发”“查看撤回转发”维护按群单独的通知目标。"
       },
-      "auto_parse_mode": {
-        "type": "string",
-        "description": "用户发送 X / Twitter 链接时如何触发",
-        "options": [
-          "跟随 AstrBot（推荐）",
-          "看到 X/Twitter 链接就主动回复",
-          "关闭自动解析"
-        ],
-        "default": "跟随 AstrBot（推荐）",
-        "hint": "“跟随 AstrBot”只在消息本来就会进入 LLM 时补充推文资料，兼容 @、唤醒词和现有屏蔽规则；“主动回复”会让裸链接也触发当前人格回复。"
+      "monitor_groups": {
+        "type": "list",
+        "description": "监控群聊列表",
+        "default": [],
+        "hint": "留空表示监控所有 QQ 群；填写群号后只处理这些群。"
       },
-      "auto_parse_attach_images": {
-        "type": "bool",
-        "description": "自动解析时附带通过过滤的图片",
-        "default": false,
-        "hint": "需要当前模型支持图片输入。图片只用于这一轮识图，回复结束后不会写入后续聊天上下文。"
+      "ignore_senders": {
+        "type": "list",
+        "description": "忽略发送者 QQ 号",
+        "default": [],
+        "hint": "列表中的用户发送的消息不会缓存，也不会在撤回时恢复。"
       },
-      "data_source": {
-        "type": "string",
-        "description": "X / Twitter 数据来源",
-        "options": [
-          "自动（优先 Nitter，失败回退 FxTwitter）",
-          "仅 Nitter",
-          "仅 FxTwitter"
-        ],
-        "default": "自动（优先 Nitter，失败回退 FxTwitter）",
-        "hint": "自动模式仅在下面填写 Nitter 服务地址后才会优先使用 Nitter。Nitter 无法读取、搜索未启用或实例异常时，会自动改用 FxTwitter。"
+      "ignore_operators": {
+        "type": "list",
+        "description": "忽略撤回操作者 QQ 号",
+        "default": [],
+        "hint": "列表中的用户执行撤回时不发送通知。"
       },
-      "nitter_base_url": {
-        "type": "string",
-        "description": "自建 Nitter 服务地址",
-        "default": "",
-        "hint": "填写 AstrBot 运行环境实际能访问的完整地址。若 AstrBot 与 Nitter 在同一台宿主机，可填写 http://127.0.0.1:8585；若它们在不同 Docker 容器，通常填写 http://nitter:8080。留空时自动模式直接使用 FxTwitter。"
+      "target_receivers": {
+        "type": "list",
+        "description": "默认私聊通知 QQ 号",
+        "default": [],
+        "hint": "撤回恢复消息发送到这些私聊；留空表示不发送到私聊。按群单独配置后会优先使用按群目标。"
       },
-      "nitter_timeout_seconds": {
+      "target_groups": {
+        "type": "list",
+        "description": "默认群聊通知群号",
+        "default": [],
+        "hint": "撤回恢复消息发送到这些群；留空表示不发送到群聊。按群单独配置后会优先使用按群目标。"
+      },
+      "cache_expiration_seconds": {
         "type": "int",
-        "description": "Nitter 单次请求超时（秒）",
-        "default": 8,
-        "min": 2,
-        "max": 120,
-        "hint": "自动模式中 Nitter 超时后会改用 FxTwitter。保持较短超时可避免故障实例拖慢整次查询。"
-      },
-      "fxtwitter_api_base": {
-        "type": "string",
-        "description": "FxTwitter 备用 API 地址",
-        "default": "https://api.fxtwitter.com",
-        "hint": "通常不需要修改。只在你使用兼容的自建 FxTwitter API 时填写其它地址。"
-      },
-      "proxy": {
-        "type": "string",
-        "description": "可选 HTTP 代理地址",
-        "default": "",
-        "hint": "例如 http://127.0.0.1:7890。会用于 Nitter、FxTwitter 和媒体下载；本机 Nitter 不需要代理时请留空。"
-      },
-      "request_timeout_seconds": {
-        "type": "int",
-        "description": "FxTwitter 和图片请求超时（秒）",
-        "default": 20,
-        "min": 5,
-        "max": 120
-      },
-      "request_retry_count": {
-        "type": "int",
-        "description": "临时网络失败重试次数",
-        "default": 1,
-        "min": 0,
-        "max": 3,
-        "hint": "资料接口会重试连接和超时错误；图片下载还会重试临时 HTTP 错误、传输截断和图片完整性校验失败。"
-      },
-      "search_result_limit": {
-        "type": "int",
-        "description": "推文搜索默认返回条数",
-        "default": 8,
-        "min": 1,
-        "max": 30
-      },
-      "recent_post_limit": {
-        "type": "int",
-        "description": "账号最近动态默认返回条数",
-        "default": 8,
-        "min": 1,
-        "max": 30
-      },
-      "include_reposts_by_default": {
-        "type": "bool",
-        "description": "账号动态和搜索默认包含转推",
-        "default": false,
-        "hint": "推荐关闭。关闭后，查询画师或 VTuber 的近期内容时只保留账号本人发布的帖子，避免把转推图片误认为该账号作品。LLM 工具仍可在用户明确要求时临时包含转推。"
-      },
-      "filtered_result_max_pages": {
-        "type": "int",
-        "description": "过滤后最多读取页数",
-        "default": 6,
-        "min": 1,
-        "max": 20,
-        "hint": "包含第一页。排除转推或 R18 内容后数量不足时，插件会继续读取更早结果，凑满返回条数或达到这里的上限。数值越大，查询可能越慢，也会增加数据源请求次数。"
-      },
-      "filtered_result_max_candidates": {
-        "type": "int",
-        "description": "过滤后最多扫描候选动态数",
-        "default": 120,
-        "min": 10,
-        "max": 500,
-        "hint": "防止账号连续大量转推时无限向前查找。达到此数量后即使还没凑满也会停止；最终返回条数仍由上面的默认返回条数或本次工具参数决定。"
-      },
-      "max_post_chars": {
-        "type": "int",
-        "description": "单条推文最大文本长度",
-        "default": 4000,
-        "min": 300,
-        "max": 20000,
-        "hint": "超出时自动截断，避免长串引用或正文占满当前模型上下文。"
-      },
-      "max_images_per_request": {
-        "type": "int",
-        "description": "一次最多处理几张安全图片",
-        "default": 4,
-        "min": 0,
-        "max": 12,
-        "hint": "设为 0 可完全关闭 X/Twitter 图片下载、发送和视觉输入。"
-      },
-      "max_image_size_mb": {
-        "type": "int",
-        "description": "单张图片下载大小上限（MB）",
-        "default": 8,
-        "min": 1,
-        "max": 32
-      },
-      "image_quality": {
-        "type": "string",
-        "description": "Twitter 图片清晰度",
-        "options": [
-          "原图",
-          "大图"
-        ],
-        "default": "原图",
-        "hint": "“原图”更清晰也可能更大，仍会受到图片大小上限保护。"
-      },
-      "download_media_before_send": {
-        "type": "bool",
-        "description": "发图前先下载到本地",
-        "default": true,
-        "hint": "推荐保持开启，发送更稳定。插件会逐块下载到文件结尾并校验图片完整性，截断或损坏的图片不会发送。Nitter 代理图片无论此项如何都会先下载，因为 QQ 客户端无法访问服务器的 127.0.0.1 或 Docker 内网地址。"
-      },
-      "include_video_previews": {
-        "type": "bool",
-        "description": "允许处理推文视频封面",
-        "default": true,
-        "hint": "不会下载或分析 X 视频本体，只会把数据源公开提供的封面当作一张图片处理。"
-      },
-      "media_cache_max_files": {
-        "type": "int",
-        "description": "本地 X 图片缓存最多保留文件数",
-        "default": 48,
-        "min": 4,
-        "max": 500,
-        "hint": "仅影响为了发送而下载的图片缓存；超出后删除最旧文件。"
-      },
-      "rate_window_seconds": {
-        "type": "int",
-        "description": "本地查询限速窗口（秒）",
+        "description": "消息缓存保留时长（秒）",
         "default": 300,
-        "min": 10,
-        "max": 3600
+        "min": 30,
+        "max": 86400,
+        "hint": "撤回需要发生在缓存时限内；缓存文件会自动清理。"
       },
-      "rate_max_requests": {
+      "max_cached_messages": {
         "type": "int",
-        "description": "限速窗口内最多请求次数",
-        "default": 60,
+        "description": "内存最多缓存消息数",
+        "default": 2000,
+        "min": 100,
+        "max": 20000
+      },
+      "max_message_bytes": {
+        "type": "int",
+        "description": "单条原始消息缓存上限（字节）",
+        "default": 2097152,
+        "min": 65536,
+        "max": 16777216,
+        "hint": "主要限制异常大的合并转发或媒体元数据；超过上限的消息不会缓存。"
+      },
+      "send_original_message": {
+        "type": "bool",
+        "description": "尝试重发撤回的原消息",
+        "default": true,
+        "hint": "支持文本、图片、语音、视频、文件、卡片和合并转发等 OneBot 消息段；原消息发送失败时自动降级为文字说明。"
+      },
+      "include_recall_header": {
+        "type": "bool",
+        "description": "发送撤回消息说明头",
+        "default": true,
+        "hint": "说明中包含群名、群号、发送者、撤回操作者和时间。"
+      },
+      "lookup_timeout_seconds": {
+        "type": "int",
+        "description": "缓存未命中时 get_msg 查询超时（秒）",
+        "default": 3,
         "min": 1,
-        "max": 1000,
-        "hint": "Nitter 和 FxTwitter 请求都会计入，自动回退时可能使用两次请求。"
-      },
-      "r18_filter": {
-        "type": "object",
-        "description": "R18 内容过滤",
-        "items": {
-          "mode": {
-            "type": "string",
-            "description": "文字与敏感标记过滤方式",
-            "options": [
-              "严格过滤（推荐）",
-              "仅平台敏感标记",
-              "关闭"
-            ],
-            "default": "严格过滤（推荐）",
-            "hint": "严格过滤会拦截数据源标记为敏感的内容，也会按下面的关键词过滤推文、引用和账号简介。"
-          },
-          "keywords": {
-            "type": "list",
-            "description": "严格过滤使用的 R18 关键词",
-            "default": [
-              "r18",
-              "r-18",
-              "nsfw",
-              "18+",
-              "adult only",
-              "nudity",
-              "nude",
-              "porn",
-              "色情",
-              "成人向",
-              "成人视频",
-              "裸露",
-              "エロ",
-              "成人向け"
-            ],
-            "hint": "可自由添加、删除或清空。清空后严格模式仍会过滤平台明确标记为敏感的内容，但不再按关键词屏蔽。"
-          }
-        }
-      },
-      "ai_review": {
-        "type": "object",
-        "description": "可选：AI 图片 R18 审核",
-        "items": {
-          "enabled": {
-            "type": "bool",
-            "description": "对每张待发送图片做视觉审核",
-            "default": false,
-            "hint": "默认关闭。开启后，图片只有通过 OpenAI 兼容视觉模型审核才会发送或交给模型；审核接口不可用时会保守地不发送图片。"
-          },
-          "api_base": {
-            "type": "string",
-            "description": "审核模型 OpenAI 兼容 API 地址",
-            "default": "",
-            "hint": "填写 API 根地址或完整的 /v1/chat/completions 地址。只会把待审核图片发送给这里配置的服务。"
-          },
-          "api_key": {
-            "type": "string",
-            "description": "审核模型 API Key",
-            "default": "",
-            "hint": "请勿把 Key 发到聊天中。AstrBot 插件配置会保存该值，请按你的部署环境做好配置文件权限保护。"
-          },
-          "model": {
-            "type": "string",
-            "description": "审核使用的视觉模型名",
-            "default": ""
-          },
-          "timeout_seconds": {
-            "type": "int",
-            "description": "单张图片审核超时（秒）",
-            "default": 25,
-            "min": 5,
-            "max": 120
-          }
-        }
+        "max": 15,
+        "hint": "部分 OneBot 实现可在撤回后短时间内返回原消息，查询失败不会阻塞后续消息处理。"
       }
     }
   },
@@ -1595,148 +658,1031 @@
       }
     }
   },
-  "wallpaper": {
+  "reply_media_guard": {
     "type": "object",
-    "description": "【本地随机壁纸】",
+    "description": "【引用自身图片来源标记】",
+    "items": {
+        "enabled": {
+          "type": "bool",
+          "description": "标记引用图片为你先前发出",
+          "default": true,
+          "hint": "用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会正常传给模型识图，同时模型会知道这不是当前用户上传的图片。"
+        },
+        "onebot_lookup_enabled": {
+          "type": "bool",
+          "description": "引用信息不完整时回查 OneBot 原消息",
+          "default": true,
+          "hint": "推荐保持开启。它会用被引用消息 ID 调用 get_msg，以识别其它插件自动发出的图片；不会下载图片内容。"
+        },
+        "max_onebot_lookups_per_message": {
+          "type": "int",
+          "description": "一条新消息最多回查几个引用",
+          "default": 3,
+          "min": 0,
+          "max": 20
+        },
+        "onebot_lookup_timeout_seconds": {
+          "type": "int",
+          "description": "单次引用回查超时（秒）",
+          "default": 3,
+          "min": 1,
+          "max": 15
+        },
+        "lookup_cache_seconds": {
+          "type": "int",
+          "description": "已回查引用的缓存时长（秒）",
+          "default": 3600,
+          "min": 0,
+          "max": 86400,
+          "hint": "设为 0 表示不缓存。"
+        },
+        "lookup_cache_limit": {
+          "type": "int",
+          "description": "引用回查缓存最多保留条目",
+          "default": 2048,
+          "min": 32,
+          "max": 20000
+        }
+      }
+  },
+  "reply_card_reader": {
+    "type": "object",
+    "description": "【引用小程序/音乐卡片识别】",
     "items": {
       "enabled": {
         "type": "bool",
-        "description": "启用本地随机壁纸模块",
-        "default": true
+        "description": "让模型看懂被引用的卡片",
+        "default": true,
+        "hint": "用户引用 QQ 小程序、哔哩哔哩分享、网易云音乐、普通分享、位置或联系人卡片时，提取卡片的来源、标题、描述和链接并放进引用上下文。不会修改原卡片，也不会影响其它插件触发。"
       },
-      "commands_enabled": {
+      "include_urls": {
         "type": "bool",
-        "description": "启用壁纸库随机发送指令",
+        "description": "把卡片链接也交给模型",
         "default": true
       },
-      "add_enabled": {
-        "type": "bool",
-        "description": "启用存图功能",
-        "default": true
-      },
-      "delete_enabled": {
-        "type": "bool",
-        "description": "启用删图功能",
-        "default": true
-      },
-      "mutate_admin_only": {
-        "type": "bool",
-        "description": "只有管理员可以存图/删图",
-        "default": true
-      },
-      "add_commands": {
-        "type": "list",
-        "description": "存图指令",
-        "default": [
-          "存图"
-        ],
-        "hint": "可直接用「存图 图库名」，也可使用「当前 AstrBot 唤醒词缀 + 存图 图库名」。旧配置里带 / 的写法也会兼容。"
-      },
-      "delete_commands": {
-        "type": "list",
-        "description": "删图指令",
-        "default": [
-          "删图"
-        ],
-        "hint": "可直接用「删图」，也可使用「当前 AstrBot 唤醒词缀 + 删图」。旧配置里带 / 的写法也会兼容。"
-      },
-      "allowed_extensions": {
-        "type": "list",
-        "description": "允许的图片扩展名",
-        "default": [
-          ".jpg",
-          ".jpeg",
-          ".png",
-          ".webp",
-          ".gif"
-        ]
-      },
-      "max_add_bytes": {
+      "max_summary_chars": {
         "type": "int",
-        "description": "单张图片最大保存字节数",
-        "default": 20971520,
-        "min": 65536,
-        "max": 209715200
-      },
-      "deduplicate_on_add": {
+        "description": "每条引用的卡片说明最多字符数",
+        "default": 1200,
+        "min": 200,
+        "max": 5000,
+        "hint": "卡片内容过长时会自动截断，避免占用过多上下文。"
+      }
+    }
+  },
+  "chat_history": {
+    "type": "object",
+    "description": "【群聊历史检索】",
+    "items": {
+      "enabled": {
         "type": "bool",
-        "description": "存图时按 SHA256 去重",
+        "description": "启用群聊历史检索模块",
+        "default": false,
+        "hint": "默认关闭。关闭时插件不会记录新消息，也不会把群聊历史工具提供给模型。开启后仅处理 QQ 群聊，记录内容保存在插件数据目录的独立 SQLite 文件中。"
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 search_current_group_chat_history LLM 工具",
+        "default": true,
+        "hint": "模型可按关键词、时间、发送者和分页检索当前群记录。工具不能跨群查询，也不能查询私聊。"
+      },
+      "capture_incoming_messages": {
+        "type": "bool",
+        "description": "记录插件收到的当前群消息",
+        "default": true,
+        "hint": "只保存规范化文字和媒体占位符，不保存图片字节、语音文件或完整 OneBot 原始报文。"
+      },
+      "onebot_backfill_enabled": {
+        "type": "bool",
+        "description": "检索时用 OneBot 补充较早记录",
+        "default": true,
+        "hint": "需要适配器支持 get_group_msg_history。回填只针对当前群，并受页数、超时和延迟限制。"
+      },
+      "allowed_group_ids": {
+        "type": "list",
+        "description": "允许使用历史检索的群号",
+        "default": [],
+        "hint": "留空表示开启模块后所有 QQ 群可用；填写群号后只允许这些群。"
+      },
+      "blocked_group_ids": {
+        "type": "list",
+        "description": "禁止使用历史检索的群号",
+        "default": [],
+        "hint": "黑名单优先于允许列表。"
+      },
+      "timezone": {
+        "type": "string",
+        "description": "时间参数和卡片使用的时区",
+        "default": "Asia/Shanghai"
+      },
+      "default_hours": {
+        "type": "int",
+        "description": "模型未指定范围时默认查询多久",
+        "default": 24,
+        "min": 1,
+        "max": 2160
+      },
+      "max_query_days": {
+        "type": "int",
+        "description": "单次最多查询多少天",
+        "default": 30,
+        "min": 1,
+        "max": 365,
+        "hint": "模型即使请求更早记录，也会被限制在这个范围内。"
+      },
+      "max_result_messages": {
+        "type": "int",
+        "description": "单次最多返回多少条消息",
+        "default": 80,
+        "min": 1,
+        "max": 300
+      },
+      "max_result_chars": {
+        "type": "int",
+        "description": "单次交给模型的历史文字上限",
+        "default": 12000,
+        "min": 1000,
+        "max": 50000
+      },
+      "max_message_chars": {
+        "type": "int",
+        "description": "单条保存消息的文字上限",
+        "default": 1200,
+        "min": 100,
+        "max": 8000
+      },
+      "max_backfill_pages": {
+        "type": "int",
+        "description": "一次检索最多回填多少页 OneBot 历史",
+        "default": 6,
+        "min": 0,
+        "max": 30,
+        "hint": "设为 0 可完全禁止回填，只检索插件开启后记录到的消息。"
+      },
+      "backfill_timeout_seconds": {
+        "type": "int",
+        "description": "每页 OneBot 历史回填超时（秒）",
+        "default": 8,
+        "min": 1,
+        "max": 30
+      },
+      "backfill_delay_milliseconds": {
+        "type": "int",
+        "description": "连续回填页之间等待（毫秒）",
+        "default": 150,
+        "min": 0,
+        "max": 3000
+      },
+      "retention_days": {
+        "type": "int",
+        "description": "本地历史保留天数",
+        "default": 30,
+        "min": 1,
+        "max": 365
+      },
+      "max_messages_per_group": {
+        "type": "int",
+        "description": "每个群本地最多保留消息数",
+        "default": 20000,
+        "min": 100,
+        "max": 200000
+      },
+      "include_sender_qq": {
+        "type": "bool",
+        "description": "在检索结果和卡片中显示发送者 QQ 号",
+        "default": false,
+        "hint": "关闭后仍可按 QQ 号筛选，但返回给模型的记录只显示昵称。"
+      },
+      "card_enabled": {
+        "type": "bool",
+        "description": "允许把检索结果渲染成图片卡片",
+        "default": false,
+        "hint": "使用 AstrBot 已配置的 T2I HTML 渲染能力。不开启时工具只把文字交给模型。"
+      },
+      "card_auto_render": {
+        "type": "bool",
+        "description": "每次历史检索都自动发送卡片",
+        "default": false,
+        "hint": "默认关闭。关闭后模型只会在用户明确需要卡片时调用工具的 render_card 参数。"
+      },
+      "card_default_skin": {
+        "type": "string",
+        "description": "历史卡片默认皮肤",
+        "options": ["夜航", "纸笺", "薄荷", "霓虹"],
+        "default": "夜航"
+      },
+      "card_max_messages": {
+        "type": "int",
+        "description": "一张历史卡片最多展示多少条消息",
+        "default": 24,
+        "min": 1,
+        "max": 80
+      },
+      "card_max_chars": {
+        "type": "int",
+        "description": "一张历史卡片最多排版多少文字",
+        "default": 8000,
+        "min": 500,
+        "max": 30000
+      }
+    }
+  },
+  "bilibili_video": {
+    "type": "object",
+    "description": "【B站视频理解】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 B 站视频理解模块",
         "default": true
       },
-      "stop_event_after_response": {
+      "llm_tool_enabled": {
         "type": "bool",
-        "description": "壁纸命令响应后阻止后续处理",
-        "default": true
+        "description": "注册 understand_bilibili_video LLM 工具",
+        "default": true,
+        "hint": "模型可主动读取用户给出的 B 站链接、BV号、av号、b23.tv短链或分享文本。"
       },
-      "libraries": {
-        "type": "template_list",
-        "description": "壁纸库列表",
-        "templates": {
-          "library": {
-            "name": "壁纸库",
+      "qr_login": {
+        "type": "object",
+        "description": "B站扫码登录（仅管理员命令）",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "启用 B站扫码登录",
+            "default": true,
+            "hint": "管理员使用 /helper_bili_login 获取二维码；扫码成功后的凭据会自动保存到插件数据目录。"
+          },
+          "commands_enabled": {
+            "type": "bool",
+            "description": "启用扫码登录相关命令",
+            "default": true,
+            "hint": "控制 /helper_bili_login、/helper_bili_login_status、/helper_bili_login_cancel 和 /helper_bili_logout。这样可与 astrbot_plugin_bilibili 共存。"
+          },
+          "private_chat_only": {
+            "type": "bool",
+            "description": "仅允许私聊中发起扫码登录",
+            "default": true,
+            "hint": "推荐保持开启，避免登录二维码出现在群聊中。"
+          },
+          "direct_retry_on_invalid_response": {
+            "type": "bool",
+            "description": "二维码接口异常时自动尝试直连",
+            "default": true,
+            "hint": "二维码请求会先按服务器的 HTTP_PROXY/HTTPS_PROXY 设置发出；如果收到网页、空内容或其它非 JSON 回包，会自动再尝试一次不使用系统代理的直连。服务器不能直连 B 站时可关闭。"
+          },
+          "prefer_saved_credentials": {
+            "type": "bool",
+            "description": "优先使用扫码保存的凭据",
+            "default": true,
+            "hint": "关闭后，配置页的 Cookie 文本或 cookies.txt 会优先于扫码登录凭据。"
+          },
+          "poll_interval_seconds": {
+            "type": "int",
+            "description": "扫码状态检查间隔（秒）",
+            "default": 2,
+            "min": 1,
+            "max": 15
+          },
+          "timeout_seconds": {
+            "type": "int",
+            "description": "等待扫码确认最长时间（秒）",
+            "default": 180,
+            "min": 30,
+            "max": 600
+          }
+        }
+      },
+      "analysis_mode": {
+        "type": "string",
+        "description": "视频分析方式（二选一）",
+        "options": [
+          "AstrBot 默认模型（字幕/转写）",
+          "Gemini 直接视频分析"
+        ],
+        "default": "AstrBot 默认模型（字幕/转写）",
+        "hint": "默认模型方式读取官方字幕，无字幕时可用必剪转写；Gemini 方式会下载视频并让 Gemini 同时分析画面和声音。最终回复都由当前 AstrBot 人格生成。"
+      },
+      "auto_parse_mode": {
+        "type": "string",
+        "description": "用户发送 B 站视频时如何触发",
+        "options": [
+          "跟随 AstrBot（推荐）",
+          "看到视频就主动回复",
+          "关闭自动解析"
+        ],
+        "default": "跟随 AstrBot（推荐）",
+        "hint": "“跟随 AstrBot”不会单独唤醒机器人，只在消息本来就会进入 LLM 时补充视频资料；“主动回复”会让裸链接和小程序卡片也直接触发 LLM；关闭后仍可使用 LLM 工具。"
+      },
+      "max_duration_seconds": {
+        "type": "int",
+        "description": "单个分 P 最大时长（秒）",
+        "default": 600,
+        "min": 10,
+        "max": 21600,
+        "hint": "多 P 视频按当前 P 的时长判断。设置过大将增加下载时间、转写耗时和模型费用。"
+      },
+      "max_file_size_mb": {
+        "type": "int",
+        "description": "下载媒体最大大小（MB）",
+        "default": 80,
+        "min": 5,
+        "max": 2048
+      },
+      "download_quality": {
+        "type": "string",
+        "description": "视频下载画质（Gemini/抽帧）",
+        "options": [
+          "360p",
+          "480p",
+          "720p"
+        ],
+        "default": "360p",
+        "hint": "Gemini 模式会上传该画质的视频；默认模型开启抽帧识图后，也用它作为抽帧来源。"
+      },
+      "processing_timeout_seconds": {
+        "type": "int",
+        "description": "整条视频处理最长时间（秒）",
+        "default": 360,
+        "min": 30,
+        "max": 3600
+      },
+      "request_timeout_seconds": {
+        "type": "int",
+        "description": "单次 B 站网络请求超时（秒）",
+        "default": 20,
+        "min": 5,
+        "max": 120
+      },
+      "max_concurrency": {
+        "type": "int",
+        "description": "同时处理的视频数量",
+        "default": 1,
+        "min": 1,
+        "max": 4,
+        "hint": "同一视频会自动合并为一个任务。显存、带宽或 API 额度有限时建议保持 1。"
+      },
+      "cache_ttl_minutes": {
+        "type": "int",
+        "description": "视频分析缓存时间（分钟）",
+        "default": 360,
+        "min": 1,
+        "max": 10080
+      },
+      "max_cache_entries": {
+        "type": "int",
+        "description": "最多缓存视频数量",
+        "default": 64,
+        "min": 1,
+        "max": 1000
+      },
+      "cookie": {
+        "type": "text",
+        "description": "可选：B 站 Cookie 文本",
+        "default": "",
+        "hint": "例如 SESSDATA=...; bili_jct=...。只会发送给 B 站网页/API 与下载请求，不会发送给 b23.tv 短链；插件启动时会检查登录状态并写入不含 Cookie 内容的日志。更推荐使用下面的 cookies.txt 文件。请勿把 Cookie 发到聊天中。"
+      },
+      "cookies_file": {
+        "type": "file",
+        "description": "可选：Netscape 格式 cookies.txt",
+        "file_types": [
+          ".txt"
+        ],
+        "default": [],
+        "hint": "需要登录的视频可上传 yt-dlp/浏览器导出的 Netscape cookies.txt。插件启动日志会说明 Cookie 是否已被 B 站识别为登录状态。"
+      },
+      "default_model": {
+        "type": "object",
+        "description": "AstrBot 默认模型方式",
+        "items": {
+          "prefer_subtitles": {
+            "type": "bool",
+            "description": "优先读取 B 站官方字幕",
+            "default": true
+          },
+          "subtitle_languages": {
+            "type": "list",
+            "description": "字幕语言优先顺序",
+            "default": [
+              "zh-CN",
+              "zh-Hans",
+              "zh-Hant",
+              "zh-HK",
+              "ai-zh",
+              "en-US",
+              "en"
+            ]
+          },
+          "bcut_fallback_enabled": {
+            "type": "bool",
+            "description": "无字幕时使用必剪语音转写",
+            "default": true,
+            "hint": "开启后会下载该分 P 的音频并上传到 B 站必剪转写服务。该服务是非公开稳定接口，未来可能变化。"
+          },
+          "bcut_timeout_seconds": {
+            "type": "int",
+            "description": "必剪转写最长等待时间（秒）",
+            "default": 240,
+            "min": 30,
+            "max": 1800
+          },
+          "max_transcript_chars": {
+            "type": "int",
+            "description": "交给默认模型的字幕最多字符数",
+            "default": 30000,
+            "min": 1000,
+            "max": 200000,
+            "hint": "超出时会保留开头、中段代表片段和结尾，而不是只截断尾部。"
+          },
+          "frame_vision": {
+            "type": "object",
+            "description": "可选：视频抽帧识图",
             "items": {
-              "name": {
-                "type": "string",
-                "description": "壁纸库名称",
-                "default": "卡比壁纸"
-              },
-              "path": {
-                "type": "string",
-                "description": "本地图片目录",
-                "default": "",
-                "hint": "留空时使用插件数据目录下的 wallpapers/<库名>。相对路径也会按插件数据目录解析。"
-              },
-              "commands": {
-                "type": "list",
-                "description": "随机抽图指令",
-                "default": [
-                  "卡比壁纸"
-                ],
-                "hint": "填写命令名即可，例如「卡比壁纸」。发送时使用当前 AstrBot 唤醒词缀触发，例如全局唤醒词缀是 / 时发送 /卡比壁纸，是 ! 时发送 !卡比壁纸。旧配置里带 / 的写法也会兼容。"
-              },
-              "caption": {
-                "type": "string",
-                "description": "发送图片时附带的文案",
-                "default": "随机给你摸一张 {library}。",
-                "hint": "可用占位符：{library}、{filename}、{path}"
-              },
-              "send_mode": {
-                "type": "string",
-                "description": "文案发送方式",
-                "options": [
-                  "同一条消息",
-                  "先发文案再发图",
-                  "只发图片"
-                ],
-                "default": "同一条消息"
-              },
-              "recursive": {
+              "enabled": {
                 "type": "bool",
-                "description": "递归扫描子目录",
-                "default": false
+                "description": "让默认模型结合视频抽帧识图",
+                "default": false,
+                "hint": "只适用于当前 AstrBot 模型支持图片输入的情况。开启后会额外下载视频并抽帧；图片只用于本轮分析，不会写入后续对话历史。"
+              },
+              "frame_count": {
+                "type": "int",
+                "description": "每个分 P 均匀抽取的画面数量",
+                "default": 6,
+                "min": 1,
+                "max": 24,
+                "hint": "帧数越多越容易覆盖剧情变化，也会增加模型图片输入和处理时间。"
+              },
+              "max_frame_width": {
+                "type": "int",
+                "description": "单张抽帧最大宽度（像素）",
+                "default": 960,
+                "min": 320,
+                "max": 1920,
+                "hint": "更大的尺寸更利于看清屏幕文字，但会增加图片大小和视觉模型消耗。"
+              },
+              "jpeg_quality": {
+                "type": "int",
+                "description": "抽帧 JPEG 清晰度",
+                "default": 5,
+                "min": 2,
+                "max": 31,
+                "hint": "数值越小越清晰、文件越大；默认 5 通常适合识别人物和屏幕文字。"
+              },
+              "max_total_size_mb": {
+                "type": "int",
+                "description": "一条视频所有抽帧的总大小上限（MB）",
+                "default": 8,
+                "min": 1,
+                "max": 50,
+                "hint": "达到上限后会保留已抽出的前几张画面，避免占用过多上下文和内存。"
               }
             }
           }
-        },
-        "default": [
-          {
-            "__template_key": "library",
-            "name": "卡比壁纸",
-            "path": "",
-            "commands": [
-              "卡比壁纸"
-            ],
-            "caption": "随机给你摸一张 {library}。",
-            "send_mode": "同一条消息",
-            "recursive": false
-          }
-        ]
+        }
       },
-      "auto_create_library_on_add": {
+      "gemini": {
+        "type": "object",
+        "description": "Gemini 直接视频分析方式",
+        "items": {
+          "api_key": {
+            "type": "string",
+            "description": "Gemini API Key",
+            "default": "",
+            "hint": "也可以通过 AstrBot 进程环境变量 GEMINI_API_KEY 提供。"
+          },
+          "api_base": {
+            "type": "string",
+            "description": "Gemini REST API 根地址",
+            "default": "https://generativelanguage.googleapis.com",
+            "hint": "代理地址必须兼容 Gemini v1beta generateContent 和 File API。"
+          },
+          "model": {
+            "type": "string",
+            "description": "Gemini 视频分析模型",
+            "default": "gemini-2.5-flash"
+          },
+          "upload_mode": {
+            "type": "string",
+            "description": "视频上传方式",
+            "options": [
+              "自动选择",
+              "Gemini File API",
+              "内嵌 Base64"
+            ],
+            "default": "自动选择",
+            "hint": "自动选择会让小文件使用 Base64，大文件使用 File API。代理不支持 File API 时可改为 Base64，但请求体会更大。"
+          },
+          "inline_limit_mb": {
+            "type": "int",
+            "description": "自动选择 Base64 的文件上限（MB）",
+            "default": 15,
+            "min": 1,
+            "max": 50
+          },
+          "timeout_seconds": {
+            "type": "int",
+            "description": "Gemini 上传与分析超时（秒）",
+            "default": 240,
+            "min": 30,
+            "max": 1800
+          },
+          "analysis_prompt": {
+            "type": "text",
+            "description": "Gemini 客观分析提示词",
+            "default": "请完整观看这个视频并输出客观、可供另一个对话模型使用的中文事实报告。\n至少覆盖：主题与结论、按时间顺序的重要场景、人物或主体、对白/旁白、屏幕文字、声音与情绪、梗或反转，以及无法确认的细节。\n不要扮演聊天机器人，不要直接回应发送视频的用户，不要加入当前会话人格。没有看清或听清的内容请明确标为不确定，不得编造。"
+          },
+          "temperature": {
+            "type": "float",
+            "description": "Gemini 分析温度",
+            "default": 0.2,
+            "min": 0,
+            "max": 2
+          },
+          "max_output_tokens": {
+            "type": "int",
+            "description": "Gemini 最多输出 Token",
+            "default": 4096,
+            "min": 256,
+            "max": 65536
+          },
+          "max_analysis_chars": {
+            "type": "int",
+            "description": "交给当前人格的分析最多字符数",
+            "default": 24000,
+            "min": 1000,
+            "max": 100000
+          },
+          "delete_uploaded_file": {
+            "type": "bool",
+            "description": "分析后删除 Gemini 已上传文件",
+            "default": true
+          }
+        }
+      }
+    }
+  },
+  "bilibili_article": {
+    "type": "object",
+    "description": "【B站专栏全文理解】",
+    "items": {
+      "enabled": {
         "type": "bool",
-        "description": "存图到不存在的图库时自动新建",
+        "description": "启用 B站专栏理解模块",
         "default": true,
-        "hint": "开启后，带图发送「存图 新图库名」会自动创建图库目录，并把图库条目写入配置。没带图时不会创建。"
+        "hint": "引用 B站专栏卡片或发送专栏链接时，读取正文作为当前问题的资料。"
+      },
+      "auto_parse_enabled": {
+        "type": "bool",
+        "description": "自动读取专栏正文",
+        "default": true,
+        "hint": "关闭后不自动读取专栏，但不会影响引用卡片的基础信息识别。"
+      },
+      "cover_image_enabled": {
+        "type": "bool",
+        "description": "分析专栏封面图片",
+        "default": true,
+        "hint": "封面只作为当前轮视觉资料附加，不会保存到后续会话上下文。"
+      },
+      "max_article_chars": {
+        "type": "int",
+        "description": "专栏正文最大字符数",
+        "default": 20000,
+        "min": 1000,
+        "max": 100000,
+        "hint": "正文超过此长度时保留开头和结尾，中间内容省略；只限制本轮交给模型的正文长度。"
+      },
+      "max_response_bytes": {
+        "type": "int",
+        "description": "专栏接口或网页最大读取字节数",
+        "default": 8388608,
+        "min": 65536,
+        "max": 33554432,
+        "hint": "限制网络响应大小，避免异常页面占用过多内存。"
+      },
+      "max_cover_bytes": {
+        "type": "int",
+        "description": "专栏封面最大读取字节数",
+        "default": 8388608,
+        "min": 65536,
+        "max": 16777216
+      },
+      "request_timeout_seconds": {
+        "type": "int",
+        "description": "专栏网络请求超时（秒）",
+        "default": 25,
+        "min": 5,
+        "max": 120
+      },
+      "cache_ttl_minutes": {
+        "type": "int",
+        "description": "专栏正文缓存时间（分钟）",
+        "default": 180,
+        "min": 1,
+        "max": 10080
+      },
+      "cache_entries": {
+        "type": "int",
+        "description": "最多缓存的专栏数量",
+        "default": 32,
+        "min": 1,
+        "max": 256
+      }
+    }
+  },
+  "twitter": {
+    "type": "object",
+    "description": "【X / Twitter 资料检索】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 X / Twitter 模块",
+        "default": false,
+        "hint": "默认关闭。开启后，模型可查询公开的 X/Twitter 账号、推文和近期动态；不需要 X 登录 Cookie。"
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 X / Twitter LLM 工具",
+        "default": true,
+        "hint": "控制 find_x_account、get_x_post、get_x_recent_posts 和 search_x_posts。关闭后，命令和自动链接解析仍可单独使用。"
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用 X / Twitter 查询命令",
+        "default": true,
+        "hint": "控制 helper_x_search、helper_x_account、helper_x_recent 和 helper_x_post；使用 helper_ 命名空间，避免与其它 Twitter/X 插件撞指令。"
+      },
+      "auto_parse_mode": {
+        "type": "string",
+        "description": "用户发送 X / Twitter 链接时如何触发",
+        "options": [
+          "跟随 AstrBot（推荐）",
+          "看到 X/Twitter 链接就主动回复",
+          "关闭自动解析"
+        ],
+        "default": "跟随 AstrBot（推荐）",
+        "hint": "“跟随 AstrBot”只在消息本来就会进入 LLM 时补充推文资料，兼容 @、唤醒词和现有屏蔽规则；“主动回复”会让裸链接也触发当前人格回复。"
+      },
+      "auto_parse_attach_images": {
+        "type": "bool",
+        "description": "自动解析时附带通过过滤的图片",
+        "default": false,
+        "hint": "需要当前模型支持图片输入。图片只用于这一轮识图，回复结束后不会写入后续聊天上下文。"
+      },
+      "data_source": {
+        "type": "string",
+        "description": "X / Twitter 数据来源",
+        "options": [
+          "自动（优先 Nitter，失败回退 FxTwitter）",
+          "仅 Nitter",
+          "仅 FxTwitter"
+        ],
+        "default": "自动（优先 Nitter，失败回退 FxTwitter）",
+        "hint": "自动模式仅在下面填写 Nitter 服务地址后才会优先使用 Nitter。Nitter 无法读取、搜索未启用或实例异常时，会自动改用 FxTwitter。"
+      },
+      "nitter_base_url": {
+        "type": "string",
+        "description": "自建 Nitter 服务地址",
+        "default": "",
+        "hint": "填写 AstrBot 运行环境实际能访问的完整地址。若 AstrBot 与 Nitter 在同一台宿主机，可填写 http://127.0.0.1:8585；若它们在不同 Docker 容器，通常填写 http://nitter:8080。留空时自动模式直接使用 FxTwitter。"
+      },
+      "nitter_timeout_seconds": {
+        "type": "int",
+        "description": "Nitter 单次请求超时（秒）",
+        "default": 8,
+        "min": 2,
+        "max": 120,
+        "hint": "自动模式中 Nitter 超时后会改用 FxTwitter。保持较短超时可避免故障实例拖慢整次查询。"
+      },
+      "fxtwitter_api_base": {
+        "type": "string",
+        "description": "FxTwitter 备用 API 地址",
+        "default": "https://api.fxtwitter.com",
+        "hint": "通常不需要修改。只在你使用兼容的自建 FxTwitter API 时填写其它地址。"
+      },
+      "proxy": {
+        "type": "string",
+        "description": "可选 HTTP 代理地址",
+        "default": "",
+        "hint": "例如 http://127.0.0.1:7890。会用于 Nitter、FxTwitter 和媒体下载；本机 Nitter 不需要代理时请留空。"
+      },
+      "request_timeout_seconds": {
+        "type": "int",
+        "description": "FxTwitter 和图片请求超时（秒）",
+        "default": 20,
+        "min": 5,
+        "max": 120
+      },
+      "request_retry_count": {
+        "type": "int",
+        "description": "临时网络失败重试次数",
+        "default": 1,
+        "min": 0,
+        "max": 3,
+        "hint": "资料接口会重试连接和超时错误；图片下载还会重试临时 HTTP 错误、传输截断和图片完整性校验失败。"
+      },
+      "search_result_limit": {
+        "type": "int",
+        "description": "推文搜索默认返回条数",
+        "default": 8,
+        "min": 1,
+        "max": 30
+      },
+      "recent_post_limit": {
+        "type": "int",
+        "description": "账号最近动态默认返回条数",
+        "default": 8,
+        "min": 1,
+        "max": 30
+      },
+      "include_reposts_by_default": {
+        "type": "bool",
+        "description": "账号动态和搜索默认包含转推",
+        "default": false,
+        "hint": "推荐关闭。关闭后，查询画师或 VTuber 的近期内容时只保留账号本人发布的帖子，避免把转推图片误认为该账号作品。LLM 工具仍可在用户明确要求时临时包含转推。"
+      },
+      "filtered_result_max_pages": {
+        "type": "int",
+        "description": "过滤后最多读取页数",
+        "default": 6,
+        "min": 1,
+        "max": 20,
+        "hint": "包含第一页。排除转推或 R18 内容后数量不足时，插件会继续读取更早结果，凑满返回条数或达到这里的上限。数值越大，查询可能越慢，也会增加数据源请求次数。"
+      },
+      "filtered_result_max_candidates": {
+        "type": "int",
+        "description": "过滤后最多扫描候选动态数",
+        "default": 120,
+        "min": 10,
+        "max": 500,
+        "hint": "防止账号连续大量转推时无限向前查找。达到此数量后即使还没凑满也会停止；最终返回条数仍由上面的默认返回条数或本次工具参数决定。"
+      },
+      "max_post_chars": {
+        "type": "int",
+        "description": "单条推文最大文本长度",
+        "default": 4000,
+        "min": 300,
+        "max": 20000,
+        "hint": "超出时自动截断，避免长串引用或正文占满当前模型上下文。"
+      },
+      "max_images_per_request": {
+        "type": "int",
+        "description": "一次最多处理几张安全图片",
+        "default": 4,
+        "min": 0,
+        "max": 12,
+        "hint": "设为 0 可完全关闭 X/Twitter 图片下载、发送和视觉输入。"
+      },
+      "max_image_size_mb": {
+        "type": "int",
+        "description": "单张图片下载大小上限（MB）",
+        "default": 8,
+        "min": 1,
+        "max": 32
+      },
+      "image_quality": {
+        "type": "string",
+        "description": "Twitter 图片清晰度",
+        "options": [
+          "原图",
+          "大图"
+        ],
+        "default": "原图",
+        "hint": "“原图”更清晰也可能更大，仍会受到图片大小上限保护。"
+      },
+      "download_media_before_send": {
+        "type": "bool",
+        "description": "发图前先下载到本地",
+        "default": true,
+        "hint": "推荐保持开启，发送更稳定。插件会逐块下载到文件结尾并校验图片完整性，截断或损坏的图片不会发送。Nitter 代理图片无论此项如何都会先下载，因为 QQ 客户端无法访问服务器的 127.0.0.1 或 Docker 内网地址。"
+      },
+      "include_video_previews": {
+        "type": "bool",
+        "description": "允许处理推文视频封面",
+        "default": true,
+        "hint": "不会下载或分析 X 视频本体，只会把数据源公开提供的封面当作一张图片处理。"
+      },
+      "media_cache_max_files": {
+        "type": "int",
+        "description": "本地 X 图片缓存最多保留文件数",
+        "default": 48,
+        "min": 4,
+        "max": 500,
+        "hint": "仅影响为了发送而下载的图片缓存；超出后删除最旧文件。"
+      },
+      "rate_window_seconds": {
+        "type": "int",
+        "description": "本地查询限速窗口（秒）",
+        "default": 300,
+        "min": 10,
+        "max": 3600
+      },
+      "rate_max_requests": {
+        "type": "int",
+        "description": "限速窗口内最多请求次数",
+        "default": 60,
+        "min": 1,
+        "max": 1000,
+        "hint": "Nitter 和 FxTwitter 请求都会计入，自动回退时可能使用两次请求。"
+      },
+      "r18_filter": {
+        "type": "object",
+        "description": "R18 内容过滤",
+        "items": {
+          "mode": {
+            "type": "string",
+            "description": "文字与敏感标记过滤方式",
+            "options": [
+              "严格过滤（推荐）",
+              "仅平台敏感标记",
+              "关闭"
+            ],
+            "default": "严格过滤（推荐）",
+            "hint": "严格过滤会拦截数据源标记为敏感的内容，也会按下面的关键词过滤推文、引用和账号简介。"
+          },
+          "keywords": {
+            "type": "list",
+            "description": "严格过滤使用的 R18 关键词",
+            "default": [
+              "r18",
+              "r-18",
+              "nsfw",
+              "18+",
+              "adult only",
+              "nudity",
+              "nude",
+              "porn",
+              "色情",
+              "成人向",
+              "成人视频",
+              "裸露",
+              "エロ",
+              "成人向け"
+            ],
+            "hint": "可自由添加、删除或清空。清空后严格模式仍会过滤平台明确标记为敏感的内容，但不再按关键词屏蔽。"
+          }
+        }
+      },
+      "ai_review": {
+        "type": "object",
+        "description": "可选：AI 图片 R18 审核",
+        "items": {
+          "enabled": {
+            "type": "bool",
+            "description": "对每张待发送图片做视觉审核",
+            "default": false,
+            "hint": "默认关闭。开启后，图片只有通过 OpenAI 兼容视觉模型审核才会发送或交给模型；审核接口不可用时会保守地不发送图片。"
+          },
+          "api_base": {
+            "type": "string",
+            "description": "审核模型 OpenAI 兼容 API 地址",
+            "default": "",
+            "hint": "填写 API 根地址或完整的 /v1/chat/completions 地址。只会把待审核图片发送给这里配置的服务。"
+          },
+          "api_key": {
+            "type": "string",
+            "description": "审核模型 API Key",
+            "default": "",
+            "hint": "请勿把 Key 发到聊天中。AstrBot 插件配置会保存该值，请按你的部署环境做好配置文件权限保护。"
+          },
+          "model": {
+            "type": "string",
+            "description": "审核使用的视觉模型名",
+            "default": ""
+          },
+          "timeout_seconds": {
+            "type": "int",
+            "description": "单张图片审核超时（秒）",
+            "default": 25,
+            "min": 5,
+            "max": 120
+          }
+        }
+      }
+    }
+  },
+  "web_browser": {
+    "type": "object",
+    "description": "【网页浏览（Playwright）】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用网页浏览模块",
+        "default": false,
+        "hint": "默认关闭。开启后模型才能读取公开网页；还需要在 AstrBot 使用的 Python 环境执行 python -m playwright install chromium。"
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 browse_webpage LLM 工具",
+        "default": true,
+        "hint": "关闭后即使模块已启用，模型也不能调用网页浏览。"
+      },
+      "navigation_timeout_seconds": {
+        "type": "int",
+        "description": "网页加载超时（秒）",
+        "default": 25,
+        "min": 5,
+        "max": 120,
+        "hint": "页面在这个时间内没有完成指定的加载阶段，就会停止并返回失败。"
+      },
+      "wait_until": {
+        "type": "string",
+        "description": "读取页面前等待到的加载阶段",
+        "options": [
+          "DOM 就绪（推荐）",
+          "页面 load 完成",
+          "网络空闲"
+        ],
+        "default": "DOM 就绪（推荐）",
+        "hint": "多数网站推荐保持 DOM 就绪；“网络空闲”对持续轮询的网站可能更容易超时。"
+      },
+      "extra_wait_ms": {
+        "type": "int",
+        "description": "加载后额外等待（毫秒）",
+        "default": 400,
+        "min": 0,
+        "max": 10000,
+        "hint": "给前端页面一点渲染时间。页面内容缺失时可适当调高，不宜设得过大。"
+      },
+      "max_page_text_chars": {
+        "type": "int",
+        "description": "交给模型的网页正文最大字符数",
+        "default": 12000,
+        "min": 1000,
+        "max": 50000,
+        "hint": "超长正文会保留开头和结尾，中间省略，避免单个网页占满上下文。"
+      },
+      "screenshot_enabled": {
+        "type": "bool",
+        "description": "允许网页工具附带页面截图",
+        "default": true,
+        "hint": "截图仅供当前轮支持视觉的模型阅读，工具完成后不会写入后续会话历史。"
+      },
+      "screenshot_quality": {
+        "type": "int",
+        "description": "截图 JPEG 清晰度",
+        "default": 60,
+        "min": 30,
+        "max": 90,
+        "hint": "数值越高越清晰、占用的视觉上下文也越大。"
+      },
+      "max_screenshot_size_mb": {
+        "type": "int",
+        "description": "单张截图大小上限（MB）",
+        "default": 2,
+        "min": 1,
+        "max": 8,
+        "hint": "超过上限时会放弃截图，只返回文字资料。"
+      },
+      "viewport_width": {
+        "type": "int",
+        "description": "浏览器视口宽度",
+        "default": 1280,
+        "min": 640,
+        "max": 1920
+      },
+      "viewport_height": {
+        "type": "int",
+        "description": "浏览器视口高度",
+        "default": 720,
+        "min": 480,
+        "max": 1440
+      },
+      "max_concurrent_pages": {
+        "type": "int",
+        "description": "同时读取网页数量",
+        "default": 1,
+        "min": 1,
+        "max": 3,
+        "hint": "浏览器较占内存，通常保持 1 即可。修改后建议重载插件。"
+      },
+      "allow_private_network": {
+        "type": "bool",
+        "description": "允许访问本机和内网地址",
+        "default": false,
+        "hint": "强烈建议保持关闭。关闭时会拒绝 localhost、内网/保留 IP，以及解析到这些地址的域名。"
+      },
+      "allowed_domains": {
+        "type": "list",
+        "description": "允许访问的域名白名单",
+        "default": [],
+        "hint": "留空表示允许所有公网域名。填写 example.com 会同时匹配其子域名；填写 *.example.com 只匹配子域名。白名单会同时限制页面资源请求。"
+      },
+      "blocked_domains": {
+        "type": "list",
+        "description": "禁止访问的域名黑名单",
+        "default": [],
+        "hint": "黑名单优先于白名单，填写 example.com 会同时阻止其子域名。"
+      },
+      "chromium_executable_path": {
+        "type": "string",
+        "description": "自定义 Chromium 可执行文件路径",
+        "default": "",
+        "hint": "通常留空，使用 playwright install chromium 下载的浏览器。只有部署环境已有兼容 Chromium 时才填写。"
+      },
+      "disable_chromium_sandbox": {
+        "type": "bool",
+        "description": "关闭 Chromium 沙箱",
+        "default": false,
+        "hint": "仅当容器以 root 运行且 Chromium 明确报 sandbox 错误时开启。关闭沙箱会降低隔离性。"
       }
     }
   },
@@ -2042,6 +1988,469 @@
             "hint": "开启后不使用固定点赞文案。插件会把本次成功或失败结果作为临时事实交给当前会话的默认模型和人格，结果不会写入后续上下文。"
           }
         }
+      }
+    }
+  },
+  "bot_profile": {
+    "type": "object",
+    "description": "【Bot QQ 资料管理】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 Bot QQ 资料管理模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 set_bot_qq_profile LLM 工具",
+        "default": false,
+        "hint": "该工具会修改 bot 的 QQ 资料，默认关闭；开启后也仅允许管理员会话调用。"
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用设置头像/昵称/签名/状态、切换人格等管理员命令",
+        "default": true
+      },
+      "sync_name_with_persona": {
+        "type": "bool",
+        "description": "切换人格时同步 bot 昵称与已缓存的人格头像",
+        "default": false
+      }
+    }
+  },
+  "wallpaper": {
+    "type": "object",
+    "description": "【本地随机壁纸】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用本地随机壁纸模块",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用壁纸库随机发送指令",
+        "default": true
+      },
+      "add_enabled": {
+        "type": "bool",
+        "description": "启用存图功能",
+        "default": true
+      },
+      "delete_enabled": {
+        "type": "bool",
+        "description": "启用删图功能",
+        "default": true
+      },
+      "mutate_admin_only": {
+        "type": "bool",
+        "description": "只有管理员可以存图/删图",
+        "default": true
+      },
+      "add_commands": {
+        "type": "list",
+        "description": "存图指令",
+        "default": [
+          "存图"
+        ],
+        "hint": "可直接用「存图 图库名」，也可使用「当前 AstrBot 唤醒词缀 + 存图 图库名」。旧配置里带 / 的写法也会兼容。"
+      },
+      "delete_commands": {
+        "type": "list",
+        "description": "删图指令",
+        "default": [
+          "删图"
+        ],
+        "hint": "可直接用「删图」，也可使用「当前 AstrBot 唤醒词缀 + 删图」。旧配置里带 / 的写法也会兼容。"
+      },
+      "allowed_extensions": {
+        "type": "list",
+        "description": "允许的图片扩展名",
+        "default": [
+          ".jpg",
+          ".jpeg",
+          ".png",
+          ".webp",
+          ".gif"
+        ]
+      },
+      "max_add_bytes": {
+        "type": "int",
+        "description": "单张图片最大保存字节数",
+        "default": 20971520,
+        "min": 65536,
+        "max": 209715200
+      },
+      "deduplicate_on_add": {
+        "type": "bool",
+        "description": "存图时按 SHA256 去重",
+        "default": true
+      },
+      "stop_event_after_response": {
+        "type": "bool",
+        "description": "壁纸命令响应后阻止后续处理",
+        "default": true
+      },
+      "libraries": {
+        "type": "template_list",
+        "description": "壁纸库列表",
+        "templates": {
+          "library": {
+            "name": "壁纸库",
+            "items": {
+              "name": {
+                "type": "string",
+                "description": "壁纸库名称",
+                "default": "卡比壁纸"
+              },
+              "path": {
+                "type": "string",
+                "description": "本地图片目录",
+                "default": "",
+                "hint": "留空时使用插件数据目录下的 wallpapers/<库名>。相对路径也会按插件数据目录解析。"
+              },
+              "commands": {
+                "type": "list",
+                "description": "随机抽图指令",
+                "default": [
+                  "卡比壁纸"
+                ],
+                "hint": "填写命令名即可，例如「卡比壁纸」。发送时使用当前 AstrBot 唤醒词缀触发，例如全局唤醒词缀是 / 时发送 /卡比壁纸，是 ! 时发送 !卡比壁纸。旧配置里带 / 的写法也会兼容。"
+              },
+              "caption": {
+                "type": "string",
+                "description": "发送图片时附带的文案",
+                "default": "随机给你摸一张 {library}。",
+                "hint": "可用占位符：{library}、{filename}、{path}"
+              },
+              "send_mode": {
+                "type": "string",
+                "description": "文案发送方式",
+                "options": [
+                  "同一条消息",
+                  "先发文案再发图",
+                  "只发图片"
+                ],
+                "default": "同一条消息"
+              },
+              "recursive": {
+                "type": "bool",
+                "description": "递归扫描子目录",
+                "default": false
+              }
+            }
+          }
+        },
+        "default": [
+          {
+            "__template_key": "library",
+            "name": "卡比壁纸",
+            "path": "",
+            "commands": [
+              "卡比壁纸"
+            ],
+            "caption": "随机给你摸一张 {library}。",
+            "send_mode": "同一条消息",
+            "recursive": false
+          }
+        ]
+      },
+      "auto_create_library_on_add": {
+        "type": "bool",
+        "description": "存图到不存在的图库时自动新建",
+        "default": true,
+        "hint": "开启后，带图发送「存图 新图库名」会自动创建图库目录，并把图库条目写入配置。没带图时不会创建。"
+      }
+    }
+  },
+  "voice": {
+    "type": "object",
+    "description": "【随机语音】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用随机语音模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 send_random_voice LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用可配置指令名",
+        "default": true
+      },
+      "api_url": {
+        "type": "string",
+        "description": "随机语音 API URL",
+        "default": "http://api.ocoa.cn/api/hjm.php?type=audio"
+      },
+      "command_prefixes": {
+        "type": "list",
+        "description": "随机语音指令名",
+        "default": [
+          "voice_meme",
+          "随机语音"
+        ],
+        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /voice_meme 或 !voice_meme。旧配置里带 / 的写法也会兼容。"
+      },
+      "auto_trigger_enabled": {
+        "type": "bool",
+        "description": "启用关键词自动触发",
+        "default": true
+      },
+      "trigger_keywords": {
+        "type": "list",
+        "description": "自动触发关键词",
+        "default": [
+          "哈基米"
+        ]
+      },
+      "stop_event_after_response": {
+        "type": "bool",
+        "description": "发送语音后阻止后续处理",
+        "default": true
+      },
+      "timeout_seconds": {
+        "type": "int",
+        "description": "语音下载超时秒数",
+        "default": 15,
+        "min": 3,
+        "max": 120
+      },
+      "max_download_bytes": {
+        "type": "int",
+        "description": "语音最大下载字节数",
+        "default": 8388608,
+        "min": 65536,
+        "max": 52428800
+      },
+      "cache_max_files": {
+        "type": "int",
+        "description": "本地语音缓存最多保留文件数",
+        "default": 30,
+        "min": 1,
+        "max": 500
+      }
+    }
+  },
+  "payqr": {
+    "type": "object",
+    "description": "【收款码】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用收款码模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 send_payment_qr LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用 payqr、收款码、打钱 命令",
+        "default": true,
+        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
+      },
+      "payment_qr": {
+        "type": "file",
+        "description": "收款码图片",
+        "default": [],
+        "file_types": [
+          ".png",
+          ".jpg",
+          ".jpeg",
+          ".webp",
+          ".gif"
+        ]
+      },
+      "caption": {
+        "type": "string",
+        "description": "发送收款码时附带的文字",
+        "default": "给我打钱！"
+      }
+    }
+  },
+  "anime1": {
+    "type": "object",
+    "description": "【Anime1 番剧更新】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 Anime1 模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 get_anime1_updates / get_anime1_watch_url LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用 anime1、anime1_update、anime1_url 命令",
+        "default": true,
+        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
+      },
+      "update_on_start": {
+        "type": "bool",
+        "description": "插件启动时立即刷新缓存",
+        "default": false
+      },
+      "update_times": {
+        "type": "list",
+        "description": "每日自动更新时间点（小时 0-23）",
+        "default": [
+          "1"
+        ],
+        "hint": "例如 [\"1\", \"13\", \"22\"] 表示每天 1:00、13:00、22:00 更新。"
+      },
+      "timeout_seconds": {
+        "type": "int",
+        "description": "请求超时秒数",
+        "default": 20,
+        "min": 3,
+        "max": 120
+      },
+      "default_limit": {
+        "type": "int",
+        "description": "默认返回条数",
+        "default": 20,
+        "min": 1,
+        "max": 200
+      }
+    }
+  },
+  "steam": {
+    "type": "object",
+    "description": "【Steam 游戏查询】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 Steam 模块",
+        "default": true
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 search_steam_game LLM 工具",
+        "default": true
+      },
+      "commands_enabled": {
+        "type": "bool",
+        "description": "启用可配置查询指令名",
+        "default": true
+      },
+      "command_prefixes": {
+        "type": "list",
+        "description": "Steam 查询指令名",
+        "default": [
+          "steam",
+          "查找"
+        ],
+        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /steam 或 !steam。旧配置里带 / 的写法也会兼容。"
+      },
+      "auto_parse_links": {
+        "type": "bool",
+        "description": "自动解析 Steam 商店链接",
+        "default": true,
+        "hint": "只解析 store.steampowered.com/app/... 这类链接；纯数字 AppID 的自动触发由下面的选项控制。"
+      },
+      "appid_auto_parse_mode": {
+        "type": "string",
+        "description": "纯数字 AppID 自动触发方式",
+        "options": [
+          "关闭",
+          "需要唤醒词缀",
+          "直接触发"
+        ],
+        "default": "需要唤醒词缀",
+        "hint": "推荐保持“需要唤醒词缀”：例如全局唤醒词缀是 / 时，发送 /778666 才会查 Steam；单独发送 778666 不会触发。"
+      },
+      "country_code": {
+        "type": "string",
+        "description": "Steam 区域代码",
+        "default": "CN"
+      },
+      "show_header_image": {
+        "type": "bool",
+        "description": "发送/返回封面图",
+        "default": true
+      },
+      "show_type": {
+        "type": "bool",
+        "description": "显示类型",
+        "default": true
+      },
+      "show_release_date": {
+        "type": "bool",
+        "description": "显示发售日期",
+        "default": true
+      },
+      "show_developers_publishers": {
+        "type": "bool",
+        "description": "显示开发商和发行商",
+        "default": true
+      },
+      "show_genres": {
+        "type": "bool",
+        "description": "显示分类",
+        "default": true
+      },
+      "show_short_description": {
+        "type": "bool",
+        "description": "显示简介",
+        "default": true
+      },
+      "show_content_descriptors": {
+        "type": "bool",
+        "description": "显示内容提示",
+        "default": true
+      },
+      "max_description_chars": {
+        "type": "int",
+        "description": "简介最大字符数",
+        "default": 500,
+        "min": 80,
+        "max": 3000
+      },
+      "max_search_results": {
+        "type": "int",
+        "description": "关键词搜索候选数量",
+        "default": 5,
+        "min": 1,
+        "max": 20
+      },
+      "http_timeout_seconds": {
+        "type": "float",
+        "description": "Steam 请求超时秒数",
+        "default": 8.0,
+        "min": 2,
+        "max": 60
+      },
+      "rate_window_seconds": {
+        "type": "int",
+        "description": "限速窗口秒数",
+        "default": 600,
+        "min": 1
+      },
+      "rate_max_requests": {
+        "type": "int",
+        "description": "限速窗口内最大请求数",
+        "default": 300,
+        "min": 1
+      },
+      "rate_limited_text": {
+        "type": "string",
+        "description": "触发限速时的提示",
+        "default": "Steam 查询太频繁了，请 {seconds}s 后再试。"
+      },
+      "stop_event_after_response": {
+        "type": "bool",
+        "description": "自动解析 Steam 链接后阻止后续处理",
+        "default": false
       }
     }
   },
@@ -2501,324 +2910,6 @@
             "hint": "只有一个 AIOCQHTTP/NapCat 实例时留空；多实例时填写 AstrBot 平台配置 ID。"
           }
         }
-      }
-    }
-  },
-  "payqr": {
-    "type": "object",
-    "description": "【收款码】",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "启用收款码模块",
-        "default": true
-      },
-      "llm_tool_enabled": {
-        "type": "bool",
-        "description": "注册 send_payment_qr LLM 工具",
-        "default": true
-      },
-      "commands_enabled": {
-        "type": "bool",
-        "description": "启用 payqr、收款码、打钱 命令",
-        "default": true,
-        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
-      },
-      "payment_qr": {
-        "type": "file",
-        "description": "收款码图片",
-        "default": [],
-        "file_types": [
-          ".png",
-          ".jpg",
-          ".jpeg",
-          ".webp",
-          ".gif"
-        ]
-      },
-      "caption": {
-        "type": "string",
-        "description": "发送收款码时附带的文字",
-        "default": "给我打钱！"
-      }
-    }
-  },
-  "anime1": {
-    "type": "object",
-    "description": "【Anime1 番剧更新】",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "启用 Anime1 模块",
-        "default": true
-      },
-      "llm_tool_enabled": {
-        "type": "bool",
-        "description": "注册 get_anime1_updates / get_anime1_watch_url LLM 工具",
-        "default": true
-      },
-      "commands_enabled": {
-        "type": "bool",
-        "description": "启用 anime1、anime1_update、anime1_url 命令",
-        "default": true,
-        "hint": "实际触发方式由 AstrBot 全局唤醒词缀决定。"
-      },
-      "update_on_start": {
-        "type": "bool",
-        "description": "插件启动时立即刷新缓存",
-        "default": false
-      },
-      "update_times": {
-        "type": "list",
-        "description": "每日自动更新时间点（小时 0-23）",
-        "default": [
-          "1"
-        ],
-        "hint": "例如 [\"1\", \"13\", \"22\"] 表示每天 1:00、13:00、22:00 更新。"
-      },
-      "timeout_seconds": {
-        "type": "int",
-        "description": "请求超时秒数",
-        "default": 20,
-        "min": 3,
-        "max": 120
-      },
-      "default_limit": {
-        "type": "int",
-        "description": "默认返回条数",
-        "default": 20,
-        "min": 1,
-        "max": 200
-      }
-    }
-  },
-  "voice": {
-    "type": "object",
-    "description": "【随机语音】",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "启用随机语音模块",
-        "default": true
-      },
-      "llm_tool_enabled": {
-        "type": "bool",
-        "description": "注册 send_random_voice LLM 工具",
-        "default": true
-      },
-      "commands_enabled": {
-        "type": "bool",
-        "description": "启用可配置指令名",
-        "default": true
-      },
-      "api_url": {
-        "type": "string",
-        "description": "随机语音 API URL",
-        "default": "http://api.ocoa.cn/api/hjm.php?type=audio"
-      },
-      "command_prefixes": {
-        "type": "list",
-        "description": "随机语音指令名",
-        "default": [
-          "voice_meme",
-          "随机语音"
-        ],
-        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /voice_meme 或 !voice_meme。旧配置里带 / 的写法也会兼容。"
-      },
-      "auto_trigger_enabled": {
-        "type": "bool",
-        "description": "启用关键词自动触发",
-        "default": true
-      },
-      "trigger_keywords": {
-        "type": "list",
-        "description": "自动触发关键词",
-        "default": [
-          "哈基米"
-        ]
-      },
-      "stop_event_after_response": {
-        "type": "bool",
-        "description": "发送语音后阻止后续处理",
-        "default": true
-      },
-      "timeout_seconds": {
-        "type": "int",
-        "description": "语音下载超时秒数",
-        "default": 15,
-        "min": 3,
-        "max": 120
-      },
-      "max_download_bytes": {
-        "type": "int",
-        "description": "语音最大下载字节数",
-        "default": 8388608,
-        "min": 65536,
-        "max": 52428800
-      },
-      "cache_max_files": {
-        "type": "int",
-        "description": "本地语音缓存最多保留文件数",
-        "default": 30,
-        "min": 1,
-        "max": 500
-      }
-    }
-  },
-  "steam": {
-    "type": "object",
-    "description": "【Steam 游戏查询】",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "启用 Steam 模块",
-        "default": true
-      },
-      "llm_tool_enabled": {
-        "type": "bool",
-        "description": "注册 search_steam_game LLM 工具",
-        "default": true
-      },
-      "commands_enabled": {
-        "type": "bool",
-        "description": "启用可配置查询指令名",
-        "default": true
-      },
-      "command_prefixes": {
-        "type": "list",
-        "description": "Steam 查询指令名",
-        "default": [
-          "steam",
-          "查找"
-        ],
-        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /steam 或 !steam。旧配置里带 / 的写法也会兼容。"
-      },
-      "auto_parse_links": {
-        "type": "bool",
-        "description": "自动解析 Steam 商店链接",
-        "default": true,
-        "hint": "只解析 store.steampowered.com/app/... 这类链接；纯数字 AppID 的自动触发由下面的选项控制。"
-      },
-      "appid_auto_parse_mode": {
-        "type": "string",
-        "description": "纯数字 AppID 自动触发方式",
-        "options": [
-          "关闭",
-          "需要唤醒词缀",
-          "直接触发"
-        ],
-        "default": "需要唤醒词缀",
-        "hint": "推荐保持“需要唤醒词缀”：例如全局唤醒词缀是 / 时，发送 /778666 才会查 Steam；单独发送 778666 不会触发。"
-      },
-      "country_code": {
-        "type": "string",
-        "description": "Steam 区域代码",
-        "default": "CN"
-      },
-      "show_header_image": {
-        "type": "bool",
-        "description": "发送/返回封面图",
-        "default": true
-      },
-      "show_type": {
-        "type": "bool",
-        "description": "显示类型",
-        "default": true
-      },
-      "show_release_date": {
-        "type": "bool",
-        "description": "显示发售日期",
-        "default": true
-      },
-      "show_developers_publishers": {
-        "type": "bool",
-        "description": "显示开发商和发行商",
-        "default": true
-      },
-      "show_genres": {
-        "type": "bool",
-        "description": "显示分类",
-        "default": true
-      },
-      "show_short_description": {
-        "type": "bool",
-        "description": "显示简介",
-        "default": true
-      },
-      "show_content_descriptors": {
-        "type": "bool",
-        "description": "显示内容提示",
-        "default": true
-      },
-      "max_description_chars": {
-        "type": "int",
-        "description": "简介最大字符数",
-        "default": 500,
-        "min": 80,
-        "max": 3000
-      },
-      "max_search_results": {
-        "type": "int",
-        "description": "关键词搜索候选数量",
-        "default": 5,
-        "min": 1,
-        "max": 20
-      },
-      "http_timeout_seconds": {
-        "type": "float",
-        "description": "Steam 请求超时秒数",
-        "default": 8.0,
-        "min": 2,
-        "max": 60
-      },
-      "rate_window_seconds": {
-        "type": "int",
-        "description": "限速窗口秒数",
-        "default": 600,
-        "min": 1
-      },
-      "rate_max_requests": {
-        "type": "int",
-        "description": "限速窗口内最大请求数",
-        "default": 300,
-        "min": 1
-      },
-      "rate_limited_text": {
-        "type": "string",
-        "description": "触发限速时的提示",
-        "default": "Steam 查询太频繁了，请 {seconds}s 后再试。"
-      },
-      "stop_event_after_response": {
-        "type": "bool",
-        "description": "自动解析 Steam 链接后阻止后续处理",
-        "default": false
-      }
-    }
-  },
-  "bot_profile": {
-    "type": "object",
-    "description": "【Bot QQ 资料管理】",
-    "items": {
-      "enabled": {
-        "type": "bool",
-        "description": "启用 Bot QQ 资料管理模块",
-        "default": true
-      },
-      "llm_tool_enabled": {
-        "type": "bool",
-        "description": "注册 set_bot_qq_profile LLM 工具",
-        "default": false,
-        "hint": "该工具会修改 bot 的 QQ 资料，默认关闭；开启后也仅允许管理员会话调用。"
-      },
-      "commands_enabled": {
-        "type": "bool",
-        "description": "启用设置头像/昵称/签名/状态、切换人格等管理员命令",
-        "default": true
-      },
-      "sync_name_with_persona": {
-        "type": "bool",
-        "description": "切换人格时同步 bot 昵称与已缓存的人格头像",
-        "default": false
       }
     }
   }

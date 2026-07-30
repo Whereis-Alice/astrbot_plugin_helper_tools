@@ -1,6 +1,6 @@
 # AstrBot 辅助工具合集
 
-为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频与专栏理解、X/Twitter 资料检索、网页浏览、环境感知、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
+为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频与专栏理解、X/Twitter 资料检索、网页浏览、环境感知、QQ 防撤回、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
 - 当前版本：`v0.9.3`
 - AstrBot：`>=4.16,<5`
@@ -15,6 +15,7 @@
 | X / Twitter 资料检索 | 查找公开账号、最近动态、推文和图片；区分本人发布与转推，可优先使用自建 Nitter，失败自动回退 FxTwitter，并提供 R18 过滤与可选 AI 图片审核 |
 | 网页浏览 | 可选的 Playwright 只读网页读取；返回正文、标题和可选截图，默认关闭 |
 | 环境感知 | 将当前时间、节假日、农历、节气、平台与可选的真实 QQ 身份作为本轮可信信息交给模型，默认关闭 |
+| QQ 防撤回 | 缓存 QQ 群 OneBot 消息，撤回后转发原消息到配置目标；支持按群目标、忽略名单和管理员管理命令，默认关闭 |
 | 群聊历史检索 | 让模型只检索当前 QQ 群的本地/OneBot 历史；支持关键词、时间、发送者和可选 T2I 摘要卡片，默认关闭 |
 | QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
 | QQ 名片点赞 | 自动响应“赞我”或“赞@用户”；可选由当前人设自然回复 |
@@ -37,7 +38,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.9.1` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.9.4` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -109,6 +110,28 @@ python -m playwright install chromium
 | `include_lunar` / `include_solar_term` / `include_almanac` | 控制农历、节气和可选的民俗黄历信息 |
 | `include_platform` / `include_group_name` / `include_media_types` | 控制平台、群名和媒体类型说明 |
 | `include_sender_qq` | 可选提供当前消息真实 QQ 号，用于身份校验 |
+
+## QQ 防撤回
+
+`anti_revoke.enabled` 默认关闭，且只处理 `aiocqhttp`/OneBot 群聊。开启后，插件会在内存和插件数据目录中短暂保存群消息的 OneBot 原始消息段；撤回发生时，先发送撤回说明，再把原消息段转发到配置的私聊或群聊目标。支持文本、图片、语音、视频、文件、卡片和合并转发等消息段；适配器拒绝原消息时会自动发送文字占位说明，不会让异常打断 AstrBot。
+
+### 配置方式
+
+1. 在 `【QQ 防撤回】` 中开启模块。
+2. 在 `默认私聊通知 QQ 号` 或 `默认群聊通知群号` 填写接收撤回消息的目标。
+3. 可用 `监控群聊列表`、`忽略发送者 QQ 号` 和 `忽略撤回操作者 QQ 号` 限制范围。
+4. 根据群活跃度调整 `消息缓存保留时长（秒）` 和 `内存最多缓存消息数`。
+
+管理员也可以在已启用模块时使用：
+
+```text
+撤回转发 <群号> @<QQ号>       # 添加私聊目标
+撤回转发 <群号> #<群号>        # 添加群聊目标
+取消撤回转发 <群号> [目标]     # 删除目标，不填目标则清空该群单独配置
+查看撤回转发                  # 查看按群单独配置
+```
+
+按群设置的目标会优先于默认目标。防撤回模块不读取或修改聊天历史模块的数据；消息缓存只保留到配置的时限，重载后也会自动清理过期文件。
 
 ## 群聊历史检索
 
@@ -472,6 +495,8 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 
 随机命令不会先向 QQ 发送一条可见文字，而是作为内部事件交给 AstrBot 的插件命令系统。因此目标插件生成的表情包或其它结果会正常发出，同时不会额外触发默认 LLM。配置里可以写 `怒撕`、`/怒撕` 或当前 AstrBot 的其它唤醒词缀写法，插件会规范化后再分发。
 
+后台日志会记录这条动作的完整调度状态：先记录选中的命令，再记录是否成功加入 AstrBot 事件队列；如果目标插件处理函数抛出异常，还会记录目标插件名、处理函数名和异常原因。日志中的 `command_reply success` 表示命令事件已经成功交给 AstrBot 处理，不代表目标插件一定生成了图片；目标插件异常时会另有 `command_reply failed` 日志，便于区分入队失败和插件自身报错。
+
 为解决原插件把 `怒撕` 一类内部命令记成用户发言的问题，本模块会把合成事件标记为当前 Bot 账号发起，并在其它插件处理前恢复作者身份；本地群聊历史直接跳过该事件。如果目标插件显式调用 Agent，模型会收到“这是戳一戳模块自动发起的内部命令，不是群成员发送”的本轮归属说明，相关用户/助手消息也会在保存前标为临时，不进入下一轮上下文。AstrBot 开启“忽略机器人自身消息”时，会在唤醒检查期间使用兼容传输身份，进入处理器后仍立即恢复正确作者。
 
 主动能力：
@@ -622,6 +647,7 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 - X/Twitter 账号、推文和媒体检索的产品场景参考 [Ars1027/astrbot_plugin_twitter](https://github.com/Ars1027/astrbot_plugin_twitter)。该上游仓库采用 AGPL-3.0；本插件没有复制或并入其代码，实现为独立的 Nitter/FxTwitter 数据源模块。
 - 环境感知的产品场景参考 [miaoxutao123/astrbot_plugin_LLMPerception](https://github.com/miaoxutao123/astrbot_plugin_LLMPerception)。该上游仓库采用 AGPL-3.0；本模块独立实现，使用可验证的节假日、农历和节气数据，不复制或并入其代码。
 - 当前群聊历史工具的产品场景参考 [kawayiYokami/astrbot_plugin_angel_eye](https://github.com/kawayiYokami/astrbot_plugin_angel_eye)。该上游仓库采用 AGPL-3.0；本模块独立实现为有范围和保留上限的本地 SQLite + OneBot 回填方案，不复制或并入其代码。
+- QQ 防撤回的产品场景参考 [Foolllll-J/astrbot_plugin_anti_revoke](https://github.com/Foolllll-J/astrbot_plugin_anti_revoke)。该上游仓库采用 AGPL-3.0；本模块独立实现了新版 AstrBot/OneBot 事件兼容、原始消息缓存和失败降级，不复制或并入上游源码。
 - B 站识别、字幕优先、yt-dlp 下载和必剪转写流程参考 [storyAura/astrbot_plugin_biliVideo](https://github.com/storyAura/astrbot_plugin_biliVideo)，Copyright (c) 2025 storyAura。
 - B 站短链的无 Cookie 展开请求策略参考 [drdon1234/astrbot_plugin_media_parser](https://github.com/drdon1234/astrbot_plugin_media_parser)。
 - B 站二维码获取、扫码轮询和凭据保存流程参考 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili)，并按本插件的视频理解场景重新实现。

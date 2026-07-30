@@ -16,6 +16,7 @@ from pydantic import Field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from .anime1_service import Anime1Service
+from .anti_revoke_service import AntiRevokeService
 from .avatar_rotation_service import AvatarRotationService
 from .bilibili_article_service import (
     ARTICLE_RESOLVED_ATTR,
@@ -98,8 +99,8 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.9.3"
-PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
+PLUGIN_VERSION = "0.9.4"
+PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、防撤回、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
@@ -1067,6 +1068,7 @@ class HelperToolsPlugin(Star):
             self.bilibili.credentials,
         )
         self.perception = EnvironmentPerceptionService(self.config)
+        self.anti_revoke = AntiRevokeService(self.config, self.data_dir)
         self.chat_history = ChatHistoryService(self.config, self.data_dir)
         self.chat_history_card = ChatHistoryCardRenderer()
         self.reply_media_guard = ReplyMediaGuard(self.config)
@@ -1090,6 +1092,7 @@ class HelperToolsPlugin(Star):
         if self.enabled():
             await self.avatar_rotation.start()
             await self.poke.start()
+            await self.anti_revoke.start()
             if _module_enabled(self.config, "bilibili_video"):
                 await self.bilibili.start()
         logger.info("[%s] initialized", PLUGIN_ID)
@@ -1103,12 +1106,28 @@ class HelperToolsPlugin(Star):
         await self.bilibili.close()
         await self.avatar_rotation.stop()
         await self.poke.stop()
+        await self.anti_revoke.stop()
         await self.anime1.stop()
         await self.wake.stop()
         logger.info("[%s] terminated", PLUGIN_ID)
 
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "general", "enabled", True), True)
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=100001)
+    async def anti_revoke_event_handler(self, event: AstrMessageEvent) -> None:
+        """Cache OneBot group messages and handle group recall notices."""
+
+        if (
+            not self.enabled()
+            or not self.anti_revoke.enabled()
+            or is_poke_synthetic_command(event)
+        ):
+            return
+        try:
+            await self.anti_revoke.handle_event(event)
+        except Exception as exc:  # noqa: BLE001 - raw adapter payloads vary
+            logger.warning("[%s] anti-revoke event handling failed: %r", PLUGIN_ID, exc)
 
     def _message_has_wake_prefix(self, event: AstrMessageEvent) -> bool:
         message_obj = getattr(event, "message_obj", None)
@@ -1955,6 +1974,68 @@ class HelperToolsPlugin(Star):
         event.should_call_llm(True)
         event.stop_event()
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("撤回转发", alias={"设置撤回转发"})
+    async def anti_revoke_add_target(
+        self,
+        event: AstrMessageEvent,
+        group_id: str | None = None,
+        target: str | None = None,
+    ):
+        if (
+            not self.enabled()
+            or not self.anti_revoke.enabled()
+            or not self.anti_revoke.commands_enabled()
+        ):
+            return
+        if not clean_text(group_id):
+            getter = getattr(event, "get_group_id", None)
+            group_id = clean_text(getter() if callable(getter) else "")
+        if not clean_text(group_id):
+            yield event.plain_result("请提供群号，格式：撤回转发 群号 @QQ号 或 #群号。")
+        else:
+            yield event.plain_result(
+                self.anti_revoke.add_forward_target(group_id, clean_text(target))
+            )
+        event.stop_event()
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("取消撤回转发")
+    async def anti_revoke_remove_target(
+        self,
+        event: AstrMessageEvent,
+        group_id: str | None = None,
+        target: str | None = None,
+    ):
+        if (
+            not self.enabled()
+            or not self.anti_revoke.enabled()
+            or not self.anti_revoke.commands_enabled()
+        ):
+            return
+        if not clean_text(group_id):
+            getter = getattr(event, "get_group_id", None)
+            group_id = clean_text(getter() if callable(getter) else "")
+        if not clean_text(group_id):
+            yield event.plain_result("请提供群号，格式：取消撤回转发 群号 [@QQ号 或 #群号]。")
+        else:
+            yield event.plain_result(
+                self.anti_revoke.remove_forward_target(group_id, clean_text(target))
+            )
+        event.stop_event()
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("查看撤回转发")
+    async def anti_revoke_list_targets(self, event: AstrMessageEvent):
+        if (
+            not self.enabled()
+            or not self.anti_revoke.enabled()
+            or not self.anti_revoke.commands_enabled()
+        ):
+            return
+        yield event.plain_result(self.anti_revoke.list_forward_targets())
+        event.stop_event()
+
     @filter.command("qq_member", alias={"群成员信息", "qq成员"})
     async def qq_member_command(
         self,
@@ -2257,6 +2338,38 @@ class HelperToolsPlugin(Star):
             yield event.chain_result(chain)
             if self.voice.stop_after_response():
                 event.stop_event()
+
+    @filter.on_plugin_error(priority=99999)
+    async def poke_synthetic_command_plugin_error_logger(
+        self,
+        event: AstrMessageEvent,
+        plugin_name: str,
+        handler_name: str,
+        error: Exception,
+        _traceback_text: str,
+    ) -> None:
+        """Log exceptions raised while a poke-selected command is dispatched."""
+
+        if not is_poke_synthetic_command(event):
+            return
+        extra = getattr(event, "get_extra", lambda *_args, **_kwargs: {})(
+            POKE_SYNTHETIC_COMMAND_EXTRA,
+            {},
+        )
+        command = clean_text(extra.get("command") if isinstance(extra, dict) else "")
+        target_plugin = clean_text(plugin_name, "unknown_plugin")
+        target_handler = clean_text(handler_name, "unknown_handler")
+        session = clean_text(getattr(event, "unified_msg_origin", ""))
+        logger.error(
+            "[%s] poke command_reply failed command=%r plugin=%s handler=%s "
+            "reason=plugin_exception error=%r session=%s",
+            PLUGIN_ID,
+            command,
+            target_plugin,
+            target_handler,
+            error,
+            session,
+        )
 
     def _parse_anime_args(self, *args: str | None) -> tuple[str, str, int | None]:
         query_parts: list[str] = []

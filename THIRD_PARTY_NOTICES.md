@@ -1,5 +1,13 @@
 # Third-Party Notices
 
+## astrbot_plugin_anti_revoke
+
+The QQ anti-revoke feature was developed independently after reviewing the
+product behavior and compatibility concerns of
+[`Foolllll-J/astrbot_plugin_anti_revoke`](https://github.com/Foolllll-J/astrbot_plugin_anti_revoke).
+That upstream repository is licensed under AGPL-3.0. No upstream source code
+is copied or bundled in this MIT-licensed repository.
+
 ## astrbot_plugin_rollpig
 
 The bundled `rollpig_assets/` catalog, images, and fonts are derived from

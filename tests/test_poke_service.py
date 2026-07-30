@@ -4,6 +4,7 @@ import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import astrbot.api.message_components as Comp
 from astrbot.core.agent.message import Message, TextPart, dump_messages_with_checkpoints
@@ -302,6 +303,33 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(synthetic.get_sender_id(), "10001")
         self.assertEqual(synthetic.message_obj.raw_message["user_id"], 10001)
         self.assertTrue(synthetic.call_llm)
+
+    async def test_synthetic_command_plugin_error_logs_command_target_and_reason(self) -> None:
+        event = FakeEvent.poke_notice()
+        event.set_extra(
+            POKE_SYNTHETIC_COMMAND_EXTRA,
+            {"command": "怒撕", "source_user_id": "20001"},
+        )
+
+        with patch("astrbot_plugin_helper_tools.main.logger.error") as log_error:
+            await HelperToolsPlugin.poke_synthetic_command_plugin_error_logger(
+                SimpleNamespace(),
+                event,
+                "astrbot_plugin_memelite",
+                "怒撕",
+                RuntimeError("render failed"),
+                "traceback",
+            )
+
+        log_error.assert_called_once()
+        message = str(log_error.call_args.args[0])
+        self.assertIn("poke command_reply failed", message)
+        self.assertIn("plugin=%s", message)
+        self.assertIn("handler=%s", message)
+        self.assertIn("reason=plugin_exception", message)
+        self.assertIn("astrbot_plugin_memelite", log_error.call_args.args)
+        self.assertIn("怒撕", log_error.call_args.args)
+        self.assertTrue(any("render failed" in str(arg) for arg in log_error.call_args.args))
 
     async def test_chat_history_capture_skips_synthetic_commands(self) -> None:
         context = FakeContext()

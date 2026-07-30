@@ -626,23 +626,68 @@ class PokeService:
     ) -> bool:
         normalized = self._normalize_command(command)
         if not normalized:
+            logger.warning(
+                "[HelperTools/Poke] command_reply failed command=%r target=%s reason=empty_command",
+                command,
+                notice.user_id,
+            )
             return False
-        synthetic = self._build_synthetic_command_event(event, notice, normalized)
+        session = clean_text(getattr(event, "unified_msg_origin", ""))
+        logger.info(
+            "[HelperTools/Poke] command_reply selected command=%r target=%s session=%s",
+            normalized,
+            notice.user_id,
+            session,
+        )
+        try:
+            synthetic = self._build_synthetic_command_event(event, notice, normalized)
+        except Exception as exc:  # noqa: BLE001 - event implementations vary by adapter
+            logger.warning(
+                "[HelperTools/Poke] command_reply failed command=%r target=%s "
+                "reason=build_synthetic_event error=%r",
+                normalized,
+                notice.user_id,
+                exc,
+            )
+            return False
         if synthetic is None:
+            logger.warning(
+                "[HelperTools/Poke] command_reply failed command=%r target=%s "
+                "reason=build_synthetic_event returned_none",
+                normalized,
+                notice.user_id,
+            )
             return False
         queue_getter = getattr(self.context, "get_event_queue", None)
         queue = queue_getter() if callable(queue_getter) else None
         put_nowait = getattr(queue, "put_nowait", None)
         if not callable(put_nowait):
-            logger.warning("[HelperTools/Poke] event queue unavailable; command was not dispatched")
+            logger.warning(
+                "[HelperTools/Poke] command_reply failed command=%r target=%s "
+                "reason=event_queue_unavailable session=%s",
+                normalized,
+                notice.user_id,
+                session,
+            )
             return False
-        put_nowait(synthetic)
+        try:
+            put_nowait(synthetic)
+        except Exception as exc:  # noqa: BLE001 - queue implementations vary
+            logger.warning(
+                "[HelperTools/Poke] command_reply failed command=%r target=%s "
+                "reason=event_queue_rejected error=%r session=%s",
+                normalized,
+                notice.user_id,
+                exc,
+                session,
+            )
+            return False
         event.stop_event()
         logger.info(
-            "[HelperTools/Poke] dispatched bot-authored command=%r target=%s session=%s",
+            "[HelperTools/Poke] command_reply success command=%r target=%s session=%s",
             normalized,
             notice.user_id,
-            clean_text(getattr(event, "unified_msg_origin", "")),
+            session,
         )
         return True
 
