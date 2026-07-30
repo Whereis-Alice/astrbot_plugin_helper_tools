@@ -66,6 +66,10 @@ _FROM_QUERY_RE = re.compile(
     r"(?<![-\w])from\s*:\s*@?(?P<username>[A-Za-z0-9_]{1,15})(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
+_FLATTENED_REPOST_RE = re.compile(
+    r"^\s*RT\s+@(?P<username>[A-Za-z0-9_]{1,15})\s*[:：]\s*",
+    re.IGNORECASE,
+)
 _IMAGE_CONTENT_TYPES = {
     "image/jpeg",
     "image/png",
@@ -183,20 +187,16 @@ class TwitterPost:
         return self.reposted_by is not None and bool(self.reposted_by.username)
 
     def render(self, *, max_chars: int = 4000) -> str:
-        author = self.author.label
-        handle = f"@{self.author.username}" if self.author.username else ""
+        author = _account_attribution(self.author)
         if self.is_repost:
             assert self.reposted_by is not None
-            reposter = self.reposted_by.label
-            reposter_handle = (
-                f"@{self.reposted_by.username}" if self.reposted_by.username else ""
-            )
+            reposter = _account_attribution(self.reposted_by)
             lines = [
-                f"来源类型：转推（由 {reposter} {reposter_handle} 转推）".rstrip(),
-                f"原作者：{author} {handle}".rstrip(),
+                f"来源类型：转推（由 {reposter} 转推）",
+                f"原作者：{author}",
             ]
         else:
-            lines = ["来源类型：作者本人发布", f"作者：{author} {handle}".rstrip()]
+            lines = ["来源类型：作者本人发布", f"作者：{author}"]
         if self.created_at:
             lines.append(f"发布时间：{self.created_at}")
         if self.text:
@@ -1747,14 +1747,25 @@ class TwitterService:
         author = TwitterService._parse_account(raw.get("author"))
         if not author.username:
             return None
+        text = clean_text(raw.get("text"))
         url = clean_text(raw.get("url")) or f"https://x.com/{author.username}/status/{post_id}"
         media, media_sensitive = TwitterService._parse_media(raw.get("media"), settings)
         quote_author, quote_text = TwitterService._parse_quote(raw.get("quote"))
         reposted_by = TwitterService._parse_reposted_by(raw.get("reposted_by"))
+        if reposted_by is None:
+            flattened_repost = _FLATTENED_REPOST_RE.match(text)
+            if flattened_repost:
+                original_username = clean_text(flattened_repost.group("username"))
+                reposted_by = author
+                author = TwitterAccount(
+                    username=original_username,
+                    url=f"https://x.com/{original_username}",
+                )
+                text = text[flattened_repost.end() :].strip()
         return TwitterPost(
             post_id=post_id,
             author=author,
-            text=clean_text(raw.get("text")),
+            text=text,
             url=url,
             created_at=clean_text(raw.get("created_at")),
             likes=_as_int(raw.get("likes")),
@@ -2062,19 +2073,25 @@ def _resolve_nitter_page_request(
 
 
 def _twitter_image_caption(post: TwitterPost, alt_text: str) -> str:
-    author = post.author.label
-    if post.author.username:
-        author = f"{author} (@{post.author.username})"
+    author = _account_attribution(post.author)
     if post.is_repost:
         assert post.reposted_by is not None
-        reposter = post.reposted_by.label
-        if post.reposted_by.username:
-            reposter = f"{reposter} (@{post.reposted_by.username})"
+        reposter = _account_attribution(post.reposted_by)
         source = f"{reposter} 转推；原作者 {author}"
     else:
         source = f"作者 {author}（本人发布）"
     alt = truncate(clean_text(alt_text), 180)
     return f"{source}；图片说明：{alt}" if alt else source
+
+
+def _account_attribution(account: TwitterAccount) -> str:
+    username = clean_text(account.username).lstrip("@")
+    name = clean_text(account.name)
+    if username:
+        if name and name != username:
+            return f"{name} @{username}"
+        return f"@{username}"
+    return name or "未识别账号"
 
 
 def request_has_twitter_context(request: Any) -> bool:

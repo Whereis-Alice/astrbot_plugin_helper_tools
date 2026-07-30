@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频理解、X/Twitter 资料检索、网页浏览、环境感知、群聊历史检索、QQ 信息、QQ 名片点赞、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.8.3`
+- 当前版本：`v0.8.4`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -35,7 +35,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.8.3` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.8.4` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -182,6 +182,8 @@ http://nitter:8080
 ### 本人发布与转推
 
 `include_reposts_by_default` 默认关闭。查询账号最近动态或使用 `from:用户名` 搜索时，插件会读取 `reposted_by`、Nitter 转推标记，并校验帖子作者是否与目标账号一致；转推会被排除，避免把其他作者的图片当成目标画师作品。每条保留结果都会明确标注“作者本人发布”；允许转推时则会同时标注转推账号和原作者。
+
+部分数据源会把原生转推退化成“目标账号作为作者，正文以 `RT @原作者:` 开头”的结果。插件会在缺少结构化转推标记时识别这种格式，还原转推账号和原作者并去掉正文中的 RT 前缀；只有正文开头的完整格式会触发，普通正文中间讨论 `RT @...` 不会被误判。
 
 LLM 工具 `get_x_recent_posts` 和 `search_x_posts` 另有 `include_reposts` 参数。模型在查找画师本人作品时必须保持关闭；只有用户明确要求查看转推、推荐或分享内容时才会临时开启。后台开启 `include_reposts_by_default` 后，命令和未指定该参数的工具调用都会默认包含转推。
 

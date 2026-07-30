@@ -97,6 +97,18 @@ class _TimelineService(TwitterService):
                     "author": {"screen_name": "another", "name": "Another"},
                     "media": {"photos": []},
                 },
+                {
+                    "id": "1004",
+                    "text": "RT @source_artist : original illustration",
+                    "author": {"screen_name": "artist", "name": "Artist"},
+                    "media": {"photos": []},
+                },
+                {
+                    "id": "1005",
+                    "text": "discussion about RT @source_artist: this is not a repost",
+                    "author": {"screen_name": "artist", "name": "Artist"},
+                    "media": {"photos": []},
+                },
             ]
         }
 
@@ -333,13 +345,19 @@ class TwitterServiceTests(unittest.IsolatedAsyncioTestCase):
                 include_reposts=True,
             )
 
-        self.assertEqual([post.post_id for post in originals.posts], ["1001"])
-        self.assertEqual(originals.excluded_repost_count, 2)
-        self.assertEqual(len(with_reposts.posts), 3)
+        self.assertEqual([post.post_id for post in originals.posts], ["1001", "1005"])
+        self.assertEqual(originals.excluded_repost_count, 3)
+        self.assertEqual(len(with_reposts.posts), 5)
         self.assertTrue(with_reposts.posts[1].is_repost)
         self.assertTrue(with_reposts.posts[2].is_repost)
         self.assertEqual(with_reposts.posts[2].reposted_by.username, "artist")
+        self.assertTrue(with_reposts.posts[3].is_repost)
+        self.assertEqual(with_reposts.posts[3].reposted_by.username, "artist")
+        self.assertEqual(with_reposts.posts[3].author.username, "source_artist")
+        self.assertEqual(with_reposts.posts[3].text, "original illustration")
+        self.assertFalse(with_reposts.posts[4].is_repost)
         self.assertIn("原作者：Other @other", with_reposts.posts[1].render())
+        self.assertIn("原作者：@source_artist", with_reposts.posts[3].render())
 
     async def test_from_search_also_excludes_reposts_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -349,8 +367,8 @@ class TwitterServiceTests(unittest.IsolatedAsyncioTestCase):
             )
             result = await service.search_posts("from:artist", limit=8)
 
-        self.assertEqual([post.post_id for post in result.posts], ["1001"])
-        self.assertEqual(result.excluded_repost_count, 2)
+        self.assertEqual([post.post_id for post in result.posts], ["1001", "1005"])
+        self.assertEqual(result.excluded_repost_count, 3)
 
     async def test_nitter_timeline_backfills_after_repost_and_r18_filters(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
