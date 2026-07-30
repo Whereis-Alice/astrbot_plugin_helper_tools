@@ -12,6 +12,7 @@ from astrbot_plugin_helper_tools.twitter_service import (
     TwitterError,
     TwitterPost,
     TwitterService,
+    _resolve_nitter_page_request,
 )
 
 POST_HTML = """
@@ -97,6 +98,104 @@ class _TimelineService(TwitterService):
                     "media": {"photos": []},
                 },
             ]
+        }
+
+
+def _nitter_timeline_item(
+    post_id: str,
+    author: str,
+    *,
+    reposted_by: str = "",
+    sensitive: bool = False,
+) -> str:
+    repost_header = (
+        f'<div class="retweet-header" data-username="{reposted_by}">'
+        f'<a class="username" href="/{reposted_by}">@{reposted_by}</a></div>'
+        if reposted_by
+        else ""
+    )
+    sensitive_marker = '<div class="sensitive-content"></div>' if sensitive else ""
+    return f"""
+    <div class="timeline-item">
+      {repost_header}
+      <div class="tweet-body" data-username="{author}">
+        <a class="fullname">{author}</a>
+        <a class="username" href="/{author}">@{author}</a>
+        <div class="tweet-content">post {post_id}</div>
+        {sensitive_marker}
+        <div class="tweet-date"><a href="/{author}/status/{post_id}">date</a></div>
+      </div>
+    </div>
+    """
+
+
+class _PaginatedNitterTimelineService(TwitterService):
+    def __init__(self, config, data_dir: Path) -> None:
+        super().__init__(config, data_dir)
+        self.calls: list[tuple[str, dict[str, str]]] = []
+
+    async def _request_nitter_html(self, path: str, *, params=None, **_kwargs) -> str:
+        page_params = dict(params or {})
+        self.calls.append((path, page_params))
+        if not page_params.get("cursor"):
+            return "".join(
+                (
+                    _nitter_timeline_item("2001", "other1", reposted_by="artist"),
+                    _nitter_timeline_item("2002", "other2", reposted_by="artist"),
+                    _nitter_timeline_item("2003", "artist", sensitive=True),
+                    '<div class="show-more"><a href="?cursor=older">Load more</a></div>',
+                )
+            )
+        return "".join(
+            (
+                _nitter_timeline_item("1002", "artist"),
+                _nitter_timeline_item("1001", "artist"),
+            )
+        )
+
+
+class _PaginatedFxSearchService(TwitterService):
+    def __init__(self, config, data_dir: Path) -> None:
+        super().__init__(config, data_dir)
+        self.calls: list[dict[str, str]] = []
+
+    async def _request_json(self, _path: str, *, params=None, **_kwargs) -> dict:
+        page_params = dict(params or {})
+        self.calls.append(page_params)
+        if not page_params.get("cursor"):
+            return {
+                "results": [
+                    {
+                        "id": "3001",
+                        "text": "repost one",
+                        "author": {"screen_name": "other1", "name": "Other 1"},
+                        "media": {"photos": []},
+                    },
+                    {
+                        "id": "3002",
+                        "text": "repost two",
+                        "author": {"screen_name": "other2", "name": "Other 2"},
+                        "media": {"photos": []},
+                    },
+                ],
+                "cursor": {"bottom": "older-search"},
+            }
+        return {
+            "results": [
+                {
+                    "id": "2002",
+                    "text": "original two",
+                    "author": {"screen_name": "artist", "name": "Artist"},
+                    "media": {"photos": []},
+                },
+                {
+                    "id": "2001",
+                    "text": "original one",
+                    "author": {"screen_name": "artist", "name": "Artist"},
+                    "media": {"photos": []},
+                },
+            ],
+            "cursor": {"bottom": None},
         }
 
 
@@ -188,6 +287,38 @@ class TwitterServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.nitter_base_url, "")
         self.assertEqual(settings.nitter_timeout_seconds, 8)
         self.assertFalse(settings.include_reposts)
+        self.assertEqual(settings.filtered_result_max_pages, 6)
+        self.assertEqual(settings.filtered_result_max_candidates, 120)
+
+    def test_nitter_pagination_rejects_external_or_changed_search_links(self) -> None:
+        base = "http://127.0.0.1:8585"
+        current = {"f": "tweets", "q": "from:artist"}
+
+        self.assertEqual(
+            _resolve_nitter_page_request(
+                base,
+                "search",
+                current,
+                "?f=tweets&q=from%3Aartist&cursor=older",
+            ),
+            ("search", {"f": "tweets", "q": "from:artist", "cursor": "older"}),
+        )
+        self.assertIsNone(
+            _resolve_nitter_page_request(
+                base,
+                "search",
+                current,
+                "https://example.com/search?f=tweets&q=from%3Aartist&cursor=older",
+            )
+        )
+        self.assertIsNone(
+            _resolve_nitter_page_request(
+                base,
+                "search",
+                current,
+                "?f=tweets&q=from%3Aother&cursor=older",
+            )
+        )
 
     async def test_account_timeline_excludes_reposts_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -220,6 +351,46 @@ class TwitterServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([post.post_id for post in result.posts], ["1001"])
         self.assertEqual(result.excluded_repost_count, 2)
+
+    async def test_nitter_timeline_backfills_after_repost_and_r18_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            service = _PaginatedNitterTimelineService(
+                self._config(
+                    data_source="仅 Nitter",
+                    nitter_base_url="http://127.0.0.1:8585",
+                    filtered_result_max_pages=4,
+                    filtered_result_max_candidates=20,
+                ),
+                Path(temporary),
+            )
+            result = await service.get_recent_posts("artist", limit=2)
+
+        self.assertEqual([post.post_id for post in result.posts], ["1002", "1001"])
+        self.assertEqual(result.excluded_repost_count, 2)
+        self.assertEqual(result.filtered_count, 1)
+        self.assertEqual(result.total_count, 5)
+        self.assertEqual(
+            service.calls,
+            [("artist", {}), ("artist", {"cursor": "older"})],
+        )
+
+    async def test_fxtwitter_search_uses_bottom_cursor_until_originals_are_full(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            service = _PaginatedFxSearchService(
+                self._config(
+                    data_source="仅 FxTwitter",
+                    filtered_result_max_pages=4,
+                    filtered_result_max_candidates=20,
+                ),
+                Path(temporary),
+            )
+            result = await service.search_posts("from:artist", limit=2)
+
+        self.assertEqual([post.post_id for post in result.posts], ["2002", "2001"])
+        self.assertEqual(result.excluded_repost_count, 2)
+        self.assertEqual(len(service.calls), 2)
+        self.assertNotIn("cursor", service.calls[0])
+        self.assertEqual(service.calls[1]["cursor"], "older-search")
 
     async def test_image_download_reads_all_chunks_and_validates_the_file(self) -> None:
         buffer = BytesIO()

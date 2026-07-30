@@ -31,6 +31,15 @@ class NitterParser:
 
     @classmethod
     def parse_timeline(cls, document: str, base_url: str) -> list[dict[str, Any]]:
+        posts, _ = cls.parse_timeline_page(document, base_url)
+        return posts
+
+    @classmethod
+    def parse_timeline_page(
+        cls,
+        document: str,
+        base_url: str,
+    ) -> tuple[list[dict[str, Any]], str]:
         soup = cls._soup(document)
         posts: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -46,7 +55,11 @@ class NitterParser:
                 continue
             seen.add(post_id)
             posts.append(post)
-        return posts
+        next_href = ""
+        load_more_links = soup.select(".show-more:not(.timeline-item) a[href]")
+        if load_more_links:
+            next_href = str(load_more_links[-1].get("href") or "").strip()
+        return posts, next_href
 
     @classmethod
     def parse_profile(

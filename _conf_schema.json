@@ -896,6 +896,22 @@
         "default": false,
         "hint": "推荐关闭。关闭后，查询画师或 VTuber 的近期内容时只保留账号本人发布的帖子，避免把转推图片误认为该账号作品。LLM 工具仍可在用户明确要求时临时包含转推。"
       },
+      "filtered_result_max_pages": {
+        "type": "int",
+        "description": "过滤后最多读取页数",
+        "default": 6,
+        "min": 1,
+        "max": 20,
+        "hint": "包含第一页。排除转推或 R18 内容后数量不足时，插件会继续读取更早结果，凑满返回条数或达到这里的上限。数值越大，查询可能越慢，也会增加数据源请求次数。"
+      },
+      "filtered_result_max_candidates": {
+        "type": "int",
+        "description": "过滤后最多扫描候选动态数",
+        "default": 120,
+        "min": 10,
+        "max": 500,
+        "hint": "防止账号连续大量转推时无限向前查找。达到此数量后即使还没凑满也会停止；最终返回条数仍由上面的默认返回条数或本次工具参数决定。"
+      },
       "max_post_chars": {
         "type": "int",
         "description": "单条推文最大文本长度",

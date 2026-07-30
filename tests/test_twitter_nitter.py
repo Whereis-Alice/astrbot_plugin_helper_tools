@@ -59,6 +59,12 @@ RETWEET_HTML = """
 </div>
 """
 
+PAGINATED_HTML = f"""
+{POST_HTML.replace("main-tweet", "timeline-item")}
+<div class="timeline-item show-more"><a href="/artist">Load newest</a></div>
+<div class="show-more"><a href="?cursor=next-page">Load more</a></div>
+"""
+
 
 class NitterParserTests(unittest.TestCase):
     def test_parses_a_post_and_nitter_media_proxy_url(self) -> None:
@@ -111,6 +117,15 @@ class NitterParserTests(unittest.TestCase):
         self.assertEqual(posts[0]["author"]["screen_name"], "other_artist")
         self.assertEqual(posts[0]["reposted_by"]["screen_name"], "artist")
         self.assertIn("other.jpg", posts[0]["media"]["photos"][0]["url"])
+
+    def test_parses_only_the_older_timeline_pagination_link(self) -> None:
+        posts, next_href = NitterParser.parse_timeline_page(
+            PAGINATED_HTML,
+            "http://127.0.0.1:8585",
+        )
+
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(next_href, "?cursor=next-page")
 
 
 if __name__ == "__main__":
