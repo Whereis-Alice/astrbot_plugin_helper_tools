@@ -21,36 +21,36 @@ body {
   font-family: "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
 }
 .card {
-  margin: 30px;
+  margin: 0;
   overflow: hidden;
   border: 1px solid {{ skin.border }};
-  border-radius: 8px;
+  border-radius: 12px;
   background: {{ skin.surface }};
-  box-shadow: 0 18px 40px {{ skin.shadow }};
+  box-shadow: 0 12px 28px {{ skin.shadow }};
 }
 .header {
-  padding: 30px 34px 24px;
+  padding: 24px 28px 20px;
   color: {{ skin.header_text }};
   background: {{ skin.header }};
 }
-.eyebrow { font-size: 15px; opacity: .78; }
-.title { margin: 10px 0 8px; font-size: 31px; font-weight: 700; }
-.subtitle { font-size: 16px; line-height: 1.55; opacity: .86; }
-.messages { padding: 18px 22px 24px; }
+.eyebrow { font-size: 14px; font-weight: 600; opacity: .8; }
+.title { margin: 8px 0 6px; font-size: 29px; font-weight: 700; }
+.subtitle { font-size: 15px; line-height: 1.5; opacity: .88; }
+.messages { padding: 14px 20px 18px; }
 .message {
-  margin: 12px 0;
-  padding: 15px 18px;
-  border-left: 4px solid {{ skin.accent }};
-  border-radius: 8px;
+  margin: 10px 0;
+  padding: 13px 16px;
+  border-left: 3px solid {{ skin.accent }};
+  border-radius: 7px;
   background: {{ skin.message }};
 }
-.meta { margin-bottom: 8px; color: {{ skin.muted }}; font-size: 14px; }
-.content { font-size: 17px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
-.footer { padding: 0 34px 26px; color: {{ skin.muted }}; font-size: 13px; }
+.meta { margin-bottom: 7px; color: {{ skin.muted }}; font-size: 13px; line-height: 1.4; }
+.content { font-size: 17px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.footer { padding: 0 28px 18px; color: {{ skin.muted }}; font-size: 12px; }
 </style>
 </head>
 <body>
-<main class="card">
+<main class="card" id="chat-history-card">
   <section class="header">
     <div class="eyebrow">当前群聊历史摘要</div>
     <div class="title">{{ title | e }}</div>
@@ -181,7 +181,12 @@ class ChatHistoryCardRenderer:
                     _CARD_TEMPLATE,
                     payload,
                     return_url=True,
-                    options={"full_page": True, "type": "jpeg", "quality": 75},
+                    options={
+                        "selector": "#chat-history-card",
+                        "full_page": False,
+                        "type": "jpeg",
+                        "quality": 85,
+                    },
                 )
             )
         except Exception as exc:  # noqa: BLE001 - T2I providers have no shared exception type

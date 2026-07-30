@@ -88,6 +88,8 @@ class ChatHistoryCardTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse("QQ 20001" in plugin.payload["messages"][0]["meta"])  # type: ignore[index]
         self.assertEqual(plugin.options["type"], "jpeg")
+        self.assertEqual(plugin.options["selector"], "#chat-history-card")
+        self.assertFalse(plugin.options["full_page"])
         self.assertEqual(
             renderer.normalize_skin("不存在的皮肤", default="纸笺"),
             "纸笺",
