@@ -27,6 +27,7 @@ class QuotedCardSummary:
     description: str = ""
     url: str = ""
     identifier: str = ""
+    image_url: str = ""
 
     def render(self, *, include_urls: bool) -> str:
         fields = [
@@ -124,6 +125,22 @@ class ReplyCardReader:
         return messages if isinstance(messages, list) else []
 
     @classmethod
+    def cards_from_event(cls, event: Any) -> list[QuotedCardSummary]:
+        """Return structured cards from quoted messages without changing the event."""
+
+        cards: list[QuotedCardSummary] = []
+        seen_cards: set[QuotedCardSummary] = set()
+        for component in cls._event_messages(event):
+            if not isinstance(component, Comp.Reply):
+                continue
+            for card in cls._collect_reply_cards(component):
+                if card in seen_cards:
+                    continue
+                seen_cards.add(card)
+                cards.append(card)
+        return cards
+
+    @classmethod
     def _collect_reply_cards(cls, reply: Any) -> list[QuotedCardSummary]:
         chain = getattr(reply, "chain", None)
         if not isinstance(chain, list):
@@ -198,6 +215,7 @@ class ReplyCardReader:
                 title=_normalize_value(getattr(component, "title", "")),
                 description=_normalize_value(getattr(component, "content", "")),
                 url=_normalize_value(getattr(component, "url", "")),
+                image_url=_normalize_value(getattr(component, "image", "")),
             )
         if isinstance(component, Comp.Location):
             lat = _normalize_value(getattr(component, "lat", ""))
@@ -277,6 +295,23 @@ class ReplyCardReader:
                 "source_url",
             ),
         )
+        image_url = cls._pick_value(
+            mappings,
+            (
+                "preview",
+                "previewUrl",
+                "preview_url",
+                "image",
+                "imageUrl",
+                "image_url",
+                "cover",
+                "coverUrl",
+                "cover_url",
+                "pic",
+                "thumb",
+                "thumbnail",
+            ),
+        )
         technical_app = (
             "" if app in {"com.tencent.structmsg", "com.tencent.miniapp_01"} else app
         )
@@ -290,6 +325,7 @@ class ReplyCardReader:
             author=author,
             description=description,
             url=url,
+            image_url=image_url,
         )
 
     @staticmethod
@@ -309,6 +345,7 @@ class ReplyCardReader:
             author=_normalize_value(getattr(component, "content", "")),
             url=url,
             identifier=_normalize_value(getattr(component, "id", "")),
+            image_url=_normalize_value(getattr(component, "image", "")),
         )
 
     @staticmethod

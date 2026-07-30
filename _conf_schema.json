@@ -658,6 +658,74 @@
       }
     }
   },
+  "bilibili_article": {
+    "type": "object",
+    "description": "【B站专栏全文理解】",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "启用 B站专栏理解模块",
+        "default": true,
+        "hint": "引用 B站专栏卡片或发送专栏链接时，读取正文作为当前问题的资料。"
+      },
+      "auto_parse_enabled": {
+        "type": "bool",
+        "description": "自动读取专栏正文",
+        "default": true,
+        "hint": "关闭后不自动读取专栏，但不会影响引用卡片的基础信息识别。"
+      },
+      "cover_image_enabled": {
+        "type": "bool",
+        "description": "分析专栏封面图片",
+        "default": true,
+        "hint": "封面只作为当前轮视觉资料附加，不会保存到后续会话上下文。"
+      },
+      "max_article_chars": {
+        "type": "int",
+        "description": "专栏正文最大字符数",
+        "default": 20000,
+        "min": 1000,
+        "max": 100000,
+        "hint": "正文超过此长度时保留开头和结尾，中间内容省略；只限制本轮交给模型的正文长度。"
+      },
+      "max_response_bytes": {
+        "type": "int",
+        "description": "专栏接口或网页最大读取字节数",
+        "default": 8388608,
+        "min": 65536,
+        "max": 33554432,
+        "hint": "限制网络响应大小，避免异常页面占用过多内存。"
+      },
+      "max_cover_bytes": {
+        "type": "int",
+        "description": "专栏封面最大读取字节数",
+        "default": 8388608,
+        "min": 65536,
+        "max": 16777216
+      },
+      "request_timeout_seconds": {
+        "type": "int",
+        "description": "专栏网络请求超时（秒）",
+        "default": 25,
+        "min": 5,
+        "max": 120
+      },
+      "cache_ttl_minutes": {
+        "type": "int",
+        "description": "专栏正文缓存时间（分钟）",
+        "default": 180,
+        "min": 1,
+        "max": 10080
+      },
+      "cache_entries": {
+        "type": "int",
+        "description": "最多缓存的专栏数量",
+        "default": 32,
+        "min": 1,
+        "max": 256
+      }
+    }
+  },
   "web_browser": {
     "type": "object",
     "description": "【网页浏览（Playwright）】",

@@ -17,6 +17,13 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from .anime1_service import Anime1Service
 from .avatar_rotation_service import AvatarRotationService
+from .bilibili_article_service import (
+    BILIBILI_ARTICLE_CONTEXT_PREFIX,
+    BILIBILI_ARTICLE_FAILURE_PREFIX,
+    BilibiliArticleContext,
+    BilibiliArticleService,
+    request_has_bilibili_article_context,
+)
 from .bilibili_qr_login import BilibiliQrLoginError, BilibiliQrLoginService
 from .bilibili_service import (
     BILIBILI_TOOL_NAME,
@@ -90,8 +97,8 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.9.0"
-PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、戳一戳互动、B站视频理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
+PLUGIN_VERSION = "0.9.1"
+PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
@@ -101,6 +108,8 @@ _TEMPORARY_TOOL_RESULT_MARKERS = (
     _BILIBILI_TOOL_IMAGE_MARKER,
     WEB_BROWSER_RESULT_MARKER,
     TWITTER_CONTEXT_PREFIX,
+    BILIBILI_ARTICLE_CONTEXT_PREFIX,
+    BILIBILI_ARTICLE_FAILURE_PREFIX,
     CHAT_HISTORY_TOOL_RESULT_MARKER,
     *TWITTER_TOOL_IMAGE_MARKERS,
 )
@@ -1061,6 +1070,11 @@ class HelperToolsPlugin(Star):
         self.chat_history_card = ChatHistoryCardRenderer()
         self.reply_media_guard = ReplyMediaGuard(self.config)
         self.reply_card_reader = ReplyCardReader(self.config)
+        self.bilibili_article = BilibiliArticleService(
+            self.config,
+            self.bilibili,
+            self.reply_card_reader,
+        )
         self.wake = WakeService(self.config, self.context)
         self.wallpaper = WallpaperService(self.config, self.data_dir, self.context)
         self.rollpig = RollPigService(self.config, self.data_dir, self.context)
@@ -1084,6 +1098,7 @@ class HelperToolsPlugin(Star):
         await self.twitter.close()
         await self.web_browser.close()
         await self.bilibili_qr_login.close()
+        await self.bilibili_article.close()
         await self.bilibili.close()
         await self.avatar_rotation.stop()
         await self.poke.stop()
@@ -1405,6 +1420,63 @@ class HelperToolsPlugin(Star):
             context_chars,
         )
 
+    @filter.on_llm_request(priority=21)
+    async def bilibili_article_context_handler(
+        self,
+        event: AstrMessageEvent,
+        request: Any,
+    ) -> None:
+        """Attach a referenced Bilibili column as temporary text and cover evidence."""
+        if (
+            not self.enabled()
+            or not _module_enabled(self.config, "bilibili_article")
+            or request_has_bilibili_article_context(request)
+        ):
+            return
+        is_stopped = getattr(event, "is_stopped", None)
+        if callable(is_stopped) and is_stopped():
+            return
+
+        context_result = getattr(event, "_helper_tools_bilibili_article_context", None)
+        if not isinstance(context_result, BilibiliArticleContext):
+            context_result = await self.bilibili_article.context_for_event_result(event)
+            if not context_result.text:
+                return
+            event._helper_tools_bilibili_article_context = context_result
+
+        parts = getattr(request, "extra_user_content_parts", None)
+        if isinstance(parts, list):
+            parts.append(
+                _mark_content_part_temporary(TextPart(text=context_result.text))
+            )
+            if context_result.cover_data_url:
+                parts.append(
+                    _mark_content_part_temporary(
+                        ImageURLPart(
+                            image_url=ImageURLPart.ImageURL(
+                                url=context_result.cover_data_url,
+                                id="bilibili-article-cover",
+                            )
+                        )
+                    )
+                )
+        else:
+            original_prompt = clean_text(getattr(request, "prompt", ""))
+            fallback_text = context_result.text
+            if context_result.cover_data_url:
+                fallback_text += (
+                    "\n\n专栏封面已读取，但当前 AstrBot 请求不支持附加图片，"
+                    "本轮不会使用封面视觉内容。"
+                )
+            request.prompt = f"{original_prompt}\n\n{fallback_text}".strip()
+        logger.info(
+            "[%s] attached Bilibili article context (session=%s, cover=%s, chars=%d)",
+            PLUGIN_ID,
+            clean_text(getattr(event, "unified_msg_origin", "")),
+            bool(context_result.cover_data_url),
+            len(context_result.text),
+        )
+
     @filter.on_llm_request(priority=20)
     async def bilibili_video_context_handler(
         self,
@@ -1598,6 +1670,7 @@ class HelperToolsPlugin(Star):
             )
 
         reference = self.bilibili.prepare_event(event)
+        self.bilibili_article.prepare_event(event)
         twitter_reference = self.twitter.prepare_event(event)
         is_stopped = getattr(event, "is_stopped", None)
         stopped = callable(is_stopped) and is_stopped()
