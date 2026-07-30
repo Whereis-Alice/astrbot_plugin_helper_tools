@@ -100,7 +100,7 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.9.6"
+PLUGIN_VERSION = "0.9.7"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、防撤回、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -1994,6 +1994,23 @@ class HelperToolsPlugin(Star):
         result = await self.poke.handle_command(event)
         yield event.plain_result(result)
         event.should_call_llm(True)
+        event.stop_event()
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("戳命令列表", alias={"导出戳命令", "随机命令列表"})
+    async def poke_command_list_command(self, event: AstrMessageEvent):
+        """Export the normalized command pool, one command per line."""
+
+        if (
+            not self.enabled()
+            or not self.poke.enabled()
+            or not self.poke.commands_enabled()
+        ):
+            return
+        commands = self.poke.command_pool()
+        yield event.plain_result(
+            "\n".join(commands) if commands else "当前没有配置可随机调用的命令。"
+        )
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)

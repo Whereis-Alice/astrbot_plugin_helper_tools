@@ -187,6 +187,9 @@ class FakeEvent:
     def stop_event(self) -> None:
         self.stopped = True
 
+    def plain_result(self, text: str) -> str:
+        return text
+
     def clear_result(self) -> None:
         self._result = None
 
@@ -478,6 +481,25 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(results, [])
         self.assertFalse(event.stopped)
+
+    async def test_command_list_export_outputs_normalized_pool_one_per_line(self) -> None:
+        plugin = SimpleNamespace(
+            enabled=lambda: True,
+            poke=SimpleNamespace(
+                enabled=lambda: True,
+                commands_enabled=lambda: True,
+                command_pool=lambda: ("怒撕", "盒", "随机命令"),
+            ),
+        )
+        event = FakeEvent.poke_notice()
+
+        results = [
+            item
+            async for item in HelperToolsPlugin.poke_command_list_command(plugin, event)
+        ]
+
+        self.assertEqual(results, ["怒撕\n盒\n随机命令"])
+        self.assertTrue(event.stopped)
 
     async def test_mute_checks_bot_permission_before_calling_ban(self) -> None:
         bot = FakeBot()
