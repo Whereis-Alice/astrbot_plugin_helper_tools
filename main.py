@@ -81,7 +81,7 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.8.1"
+PLUGIN_VERSION = "0.8.2"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、B站视频理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -171,9 +171,16 @@ def _twitter_tool_result(context: TwitterContext) -> ToolResult:
     if not context.images:
         return context.text
     content: list[Any] = [TextContent(type="text", text=context.text)]
-    for image in context.images:
+    for index, image in enumerate(context.images, start=1):
         if image.data is None:
             continue
+        if image.caption:
+            content.append(
+                TextContent(
+                    type="text",
+                    text=f"[X/Twitter 图片 {index} 来源] {image.caption}",
+                )
+            )
         content.append(
             ImageContent(
                 type="image",
@@ -705,6 +712,7 @@ class GetXRecentPostsTool(FunctionTool[AstrAgentContext]):
     name: str = X_RECENT_POSTS_TOOL_NAME
     description: str = (
         "读取指定 X/Twitter 账号的最近公开推文。适合在已经确认账号后查询近况、动态或近期作品。"
+        "默认只返回账号本人发布的内容，避免把转推图片误认为该账号作品；只有用户明确要看转推时才开启 include_reposts。"
     )
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
@@ -718,6 +726,10 @@ class GetXRecentPostsTool(FunctionTool[AstrAgentContext]):
                     "type": "integer",
                     "description": "读取数量，1 到 30。",
                     "default": 8,
+                },
+                "include_reposts": {
+                    "type": "boolean",
+                    "description": "是否包含该账号转推的他人帖子。查画师本人作品时必须为 false；留空使用插件配置。",
                 },
                 "return_images": {
                     "type": "boolean",
@@ -745,6 +757,11 @@ class GetXRecentPostsTool(FunctionTool[AstrAgentContext]):
             result = await self.plugin.twitter.get_recent_posts(
                 clean_text(kwargs.get("account")),
                 limit=_int_arg(kwargs.get("limit"), 8),
+                include_reposts=(
+                    _bool_arg(kwargs.get("include_reposts"), False)
+                    if kwargs.get("include_reposts") is not None
+                    else None
+                ),
             )
             return await _twitter_result_for_tool(
                 self.plugin,
@@ -767,7 +784,8 @@ class SearchXPostsTool(FunctionTool[AstrAgentContext]):
     name: str = X_SEARCH_TOOL_NAME
     description: str = (
         "在公开 X/Twitter 推文中按关键词检索资料。可使用自然语言关键词，也支持常见 X 搜索写法，"
-        "例如 from:用户名。只有用户明确要求看图或发图时才处理图片。"
+        "例如 from:用户名。默认排除转推；只有用户明确要求看转推时才开启 include_reposts。"
+        "只有用户明确要求看图或发图时才处理图片。"
     )
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
@@ -781,6 +799,10 @@ class SearchXPostsTool(FunctionTool[AstrAgentContext]):
                     "type": "integer",
                     "description": "返回推文数量，1 到 30。",
                     "default": 8,
+                },
+                "include_reposts": {
+                    "type": "boolean",
+                    "description": "是否包含转推结果。检索画师本人作品时必须为 false；留空使用插件配置。",
                 },
                 "return_images": {
                     "type": "boolean",
@@ -808,6 +830,11 @@ class SearchXPostsTool(FunctionTool[AstrAgentContext]):
             result = await self.plugin.twitter.search_posts(
                 clean_text(kwargs.get("query")),
                 limit=_int_arg(kwargs.get("limit"), 8),
+                include_reposts=(
+                    _bool_arg(kwargs.get("include_reposts"), False)
+                    if kwargs.get("include_reposts") is not None
+                    else None
+                ),
             )
             return await _twitter_result_for_tool(
                 self.plugin,

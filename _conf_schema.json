@@ -874,7 +874,7 @@
         "default": 1,
         "min": 0,
         "max": 3,
-        "hint": "只重试连接和超时错误；限流、数据不存在和内容格式异常不会重复请求。"
+        "hint": "资料接口会重试连接和超时错误；图片下载还会重试临时 HTTP 错误、传输截断和图片完整性校验失败。"
       },
       "search_result_limit": {
         "type": "int",
@@ -889,6 +889,12 @@
         "default": 8,
         "min": 1,
         "max": 30
+      },
+      "include_reposts_by_default": {
+        "type": "bool",
+        "description": "账号动态和搜索默认包含转推",
+        "default": false,
+        "hint": "推荐关闭。关闭后，查询画师或 VTuber 的近期内容时只保留账号本人发布的帖子，避免把转推图片误认为该账号作品。LLM 工具仍可在用户明确要求时临时包含转推。"
       },
       "max_post_chars": {
         "type": "int",
@@ -927,7 +933,7 @@
         "type": "bool",
         "description": "发图前先下载到本地",
         "default": true,
-        "hint": "推荐保持开启，发送更稳定。Nitter 代理的图片无论此项如何都会先下载，因为 QQ 客户端无法访问服务器的 127.0.0.1 或 Docker 内网地址。"
+        "hint": "推荐保持开启，发送更稳定。插件会逐块下载到文件结尾并校验图片完整性，截断或损坏的图片不会发送。Nitter 代理图片无论此项如何都会先下载，因为 QQ 客户端无法访问服务器的 127.0.0.1 或 Docker 内网地址。"
       },
       "include_video_previews": {
         "type": "bool",

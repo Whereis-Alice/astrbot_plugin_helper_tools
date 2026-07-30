@@ -46,6 +46,19 @@ USER_SEARCH_HTML = """
 </div>
 """
 
+RETWEET_HTML = """
+<div class="timeline-item">
+  <div class="retweet-header"><a href="/artist">Example Artist retweeted</a></div>
+  <div class="tweet-body" data-username="other_artist">
+    <a class="fullname">Other Artist</a>
+    <a class="username" href="/other_artist">@other_artist</a>
+    <div class="tweet-content">Someone else's illustration</div>
+    <div class="tweet-date"><a href="/other_artist/status/9876543210">date</a></div>
+    <a class="still-image" href="/pic/media%2Fother.jpg"><img alt="other work" /></a>
+  </div>
+</div>
+"""
+
 
 class NitterParserTests(unittest.TestCase):
     def test_parses_a_post_and_nitter_media_proxy_url(self) -> None:
@@ -88,6 +101,16 @@ class NitterParserTests(unittest.TestCase):
 
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0]["author"]["screen_name"], "artist")
+
+    def test_marks_nitter_retweets_and_keeps_the_original_author(self) -> None:
+        posts = NitterParser.parse_timeline(
+            RETWEET_HTML,
+            "http://127.0.0.1:8585",
+        )
+
+        self.assertEqual(posts[0]["author"]["screen_name"], "other_artist")
+        self.assertEqual(posts[0]["reposted_by"]["screen_name"], "artist")
+        self.assertIn("other.jpg", posts[0]["media"]["photos"][0]["url"])
 
 
 if __name__ == "__main__":

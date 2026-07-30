@@ -110,6 +110,7 @@ class NitterParser:
             if quote_account.get("screen_name") or quote_text:
                 quote_record = {"author": quote_account, "text": quote_text}
         photos, videos = cls._extract_media(body, base_url, quote)
+        reposted_by = cls._parse_reposted_by(node, base_url)
         return {
             "type": "status",
             "id": post_id,
@@ -120,6 +121,7 @@ class NitterParser:
             "possibly_sensitive": cls._contains_sensitive_marker(body),
             "media": {"photos": photos, "videos": videos},
             "quote": quote_record,
+            "reposted_by": reposted_by,
         }
 
     @classmethod
@@ -155,6 +157,18 @@ class NitterParser:
             "verification": {"verified": bool(node.select_one(".icon-ok, .verified"))},
             "protected": bool(node.select_one(".protected")),
         }
+
+    @classmethod
+    def _parse_reposted_by(
+        cls,
+        node: Tag,
+        base_url: str,
+    ) -> dict[str, Any] | None:
+        header = node.select_one(".retweet-header")
+        if not isinstance(header, Tag):
+            return None
+        account = cls._parse_account(header, base_url)
+        return account if account.get("screen_name") else None
 
     @classmethod
     def _extract_media(

@@ -12,8 +12,9 @@ from astrbot.core.agent.message import (
     TextPart,
     dump_messages_with_checkpoints,
 )
+from mcp.types import ImageContent, TextContent
 
-from astrbot_plugin_helper_tools.main import HelperToolsPlugin
+from astrbot_plugin_helper_tools.main import HelperToolsPlugin, _twitter_tool_result
 from astrbot_plugin_helper_tools.twitter_service import (
     TWITTER_CONTEXT_PREFIX,
     TwitterContext,
@@ -111,6 +112,25 @@ class TwitterContextHookTests(unittest.IsolatedAsyncioTestCase):
             image.data_url,
             "data:image/jpeg;base64," + base64.b64encode(b"test").decode("ascii"),
         )
+
+    def test_tool_image_is_preceded_by_its_author_source(self) -> None:
+        result = _twitter_tool_result(
+            TwitterContext(
+                f"{TWITTER_CONTEXT_PREFIX}\n推文资料",
+                images=(
+                    TwitterImage(
+                        source_url="https://example.test/image.jpg",
+                        data=b"test",
+                        caption="Artist (@artist) 转推；原作者 Other (@other)",
+                    ),
+                ),
+            )
+        )
+
+        self.assertIsInstance(result.content[0], TextContent)
+        self.assertIsInstance(result.content[1], TextContent)
+        self.assertIn("原作者 Other", result.content[1].text)
+        self.assertIsInstance(result.content[2], ImageContent)
 
 
 class TwitterCommandNamespaceTests(unittest.TestCase):

@@ -7,15 +7,17 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass, replace
+from io import BytesIO
 from pathlib import Path
-from typing import Any, Iterable, TypeVar
+from typing import Any, TypeVar
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import aiohttp
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
+from PIL import Image, UnidentifiedImageError
 
 from .helper_utils import (
     DEFAULT_USER_AGENT,
@@ -60,11 +62,21 @@ _NITTER_STATUS_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 _HANDLE_RE = re.compile(r"^[A-Za-z0-9_]{1,15}$")
+_FROM_QUERY_RE = re.compile(
+    r"(?<![-\w])from\s*:\s*@?(?P<username>[A-Za-z0-9_]{1,15})(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 _IMAGE_CONTENT_TYPES = {
     "image/jpeg",
     "image/png",
     "image/webp",
     "image/gif",
+}
+_IMAGE_FORMAT_MIME_TYPES = {
+    "GIF": "image/gif",
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "WEBP": "image/webp",
 }
 _MAX_NITTER_HTML_BYTES = 4 * 1024 * 1024
 _DEFAULT_R18_KEYWORDS = (
@@ -92,6 +104,10 @@ class TwitterError(RuntimeError):
     def __init__(self, message: str, *, user_message: str | None = None) -> None:
         super().__init__(message)
         self.user_message = user_message or "X/Twitter 资料暂时无法读取，请稍后再试。"
+
+
+class _RetryableTwitterMediaError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -160,11 +176,27 @@ class TwitterPost:
     quote_author: str = ""
     quote_text: str = ""
     language: str = ""
+    reposted_by: TwitterAccount | None = None
+
+    @property
+    def is_repost(self) -> bool:
+        return self.reposted_by is not None and bool(self.reposted_by.username)
 
     def render(self, *, max_chars: int = 4000) -> str:
         author = self.author.label
         handle = f"@{self.author.username}" if self.author.username else ""
-        lines = [f"作者：{author} {handle}".rstrip()]
+        if self.is_repost:
+            assert self.reposted_by is not None
+            reposter = self.reposted_by.label
+            reposter_handle = (
+                f"@{self.reposted_by.username}" if self.reposted_by.username else ""
+            )
+            lines = [
+                f"来源类型：转推（由 {reposter} {reposter_handle} 转推）".rstrip(),
+                f"原作者：{author} {handle}".rstrip(),
+            ]
+        else:
+            lines = ["来源类型：作者本人发布", f"作者：{author} {handle}".rstrip()]
         if self.created_at:
             lines.append(f"发布时间：{self.created_at}")
         if self.text:
@@ -228,6 +260,7 @@ class TwitterResult:
     posts: tuple[TwitterPost, ...] = ()
     accounts: tuple[TwitterAccount, ...] = ()
     filtered_count: int = 0
+    excluded_repost_count: int = 0
     total_count: int = 0
 
     def render_for_model(self, *, max_post_chars: int = 4000) -> str:
@@ -254,6 +287,13 @@ class TwitterResult:
             lines.append(
                 f"内容安全：已隐藏 {self.filtered_count} 条带有敏感标记或命中 R18 过滤规则的结果。"
             )
+        if self.excluded_repost_count:
+            lines.append(
+                f"来源筛选：已排除 {self.excluded_repost_count} 条转推，只保留账号本人发布的内容。"
+            )
+        lines.append(
+            "作者归属：每条结果都标注了作者本人发布或转推；不要把转推内容说成转推账号创作。"
+        )
         lines.append(
             "回答边界：仅依据以上资料和当前对话回答；资料未覆盖的事实要明确说明无法确认。"
         )
@@ -273,6 +313,8 @@ class TwitterResult:
             lines.append("没有读取到可公开展示的结果。")
         if self.filtered_count:
             lines.append(f"\n已按内容安全设置隐藏 {self.filtered_count} 条结果。")
+        if self.excluded_repost_count:
+            lines.append(f"\n已排除 {self.excluded_repost_count} 条转推。")
         return "\n".join(lines).strip()
 
 
@@ -287,6 +329,7 @@ class TwitterSettings:
     retry_count: int
     search_limit: int
     recent_limit: int
+    include_reposts: bool
     max_post_chars: int
     max_images: int
     max_image_bytes: int
@@ -440,6 +483,10 @@ class TwitterService:
                 minimum=1,
                 maximum=30,
             ),
+            include_reposts=read_bool(
+                cfg(self.config, "twitter", "include_reposts_by_default", False),
+                False,
+            ),
             max_post_chars=read_int(
                 cfg(self.config, "twitter", "max_post_chars", 4000),
                 4000,
@@ -591,7 +638,13 @@ class TwitterService:
             total_count=1,
         )
 
-    async def get_recent_posts(self, account: str, *, limit: int | None = None) -> TwitterResult:
+    async def get_recent_posts(
+        self,
+        account: str,
+        *,
+        limit: int | None = None,
+        include_reposts: bool | None = None,
+    ) -> TwitterResult:
         handle = self._normalize_handle_from_value(account)
         if not handle:
             raise TwitterError(
@@ -600,48 +653,80 @@ class TwitterService:
             )
         settings = self.settings()
         requested_limit = _clamp_limit(limit, settings.recent_limit)
+        include_reposts = (
+            settings.include_reposts if include_reposts is None else bool(include_reposts)
+        )
+        fetch_limit = _expanded_post_limit(requested_limit, include_reposts)
         posts = await self._from_sources(
             "读取最近推文",
             settings,
             lambda source: self._get_recent_posts_from_source(
                 source,
                 handle,
-                requested_limit,
+                fetch_limit,
                 settings,
             ),
         )
+        posts = _mark_account_timeline_reposts(posts, handle)
+        source_total = len(posts)
+        posts, excluded_reposts = _filter_reposts(posts, include_reposts)
         safe_posts, filtered = self._filter_posts(posts)
         return TwitterResult(
-            title=f"@{handle} 的最近推文",
+            title=(
+                f"@{handle} 的最近推文"
+                if include_reposts
+                else f"@{handle} 最近由本人发布的推文"
+            ),
             query=f"@{handle}",
             posts=safe_posts[:requested_limit],
             filtered_count=filtered,
-            total_count=len(posts),
+            excluded_repost_count=excluded_reposts,
+            total_count=source_total,
         )
 
-    async def search_posts(self, query: str, *, limit: int | None = None) -> TwitterResult:
+    async def search_posts(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        include_reposts: bool | None = None,
+    ) -> TwitterResult:
         keyword = clean_text(query)
         if not keyword:
             raise TwitterError("empty X search query", user_message="请提供要检索的 X/Twitter 关键词。")
         settings = self.settings()
         requested_limit = _clamp_limit(limit, settings.search_limit)
+        include_reposts = (
+            settings.include_reposts if include_reposts is None else bool(include_reposts)
+        )
+        fetch_limit = _expanded_post_limit(requested_limit, include_reposts)
         posts = await self._from_sources(
             "检索推文",
             settings,
             lambda source: self._search_posts_from_source(
                 source,
                 keyword,
-                requested_limit,
+                fetch_limit,
                 settings,
             ),
         )
+        from_handle = _from_query_handle(keyword)
+        if from_handle:
+            posts = _mark_account_timeline_reposts(posts, from_handle)
+        source_total = len(posts)
+        posts, excluded_reposts = _filter_reposts(posts, include_reposts)
         safe_posts, filtered = self._filter_posts(posts)
         return TwitterResult(
-            title="X/Twitter 推文检索",
+            title=(
+                "X/Twitter 推文检索"
+                if include_reposts
+                else "X/Twitter 本人发布内容检索"
+            ),
             query=keyword,
             posts=safe_posts[:requested_limit],
             filtered_count=filtered,
-            total_count=len(posts),
+            excluded_repost_count=excluded_reposts,
+            total_count=source_total,
         )
 
     async def find_accounts(self, query: str, *, limit: int | None = None) -> TwitterResult:
@@ -817,7 +902,7 @@ class TwitterService:
             params={"count": str(limit)},
             settings=settings,
         )
-        return self._parse_posts(payload.get("results"), settings)
+        return self._parse_posts(payload.get("results"), settings)[:limit]
 
     async def _search_posts_from_source(
         self,
@@ -845,7 +930,7 @@ class TwitterService:
             params={"q": keyword, "count": str(limit)},
             settings=settings,
         )
-        return self._parse_posts(payload.get("results"), settings)
+        return self._parse_posts(payload.get("results"), settings)[:limit]
 
     async def _get_account_from_source(
         self,
@@ -952,6 +1037,9 @@ class TwitterService:
         if include_images:
             if images:
                 text += f"\n媒体：已附带 {len(images)} 张通过过滤的图片，仅供本轮视觉识别。"
+                for index, image in enumerate(images, start=1):
+                    if image.caption:
+                        text += f"\n图片 {index} 来源：{image.caption}"
             elif hidden_media_count:
                 text += "\n媒体：图片未附带，因为内容安全审核未通过或图片无法安全读取。"
         return TwitterContext(text=text, images=images)
@@ -997,17 +1085,21 @@ class TwitterService:
             require_bytes=self.settings().download_media_before_send,
         )
         chain: list[Any] = []
-        for image in images:
+        sent_count = 0
+        for index, image in enumerate(images, start=1):
             component = await self._image_component(image)
             if component is not None:
+                if image.caption:
+                    chain.append(Comp.Plain(f"图片 {index}：{image.caption}"))
                 chain.append(component)
+                sent_count += 1
         if not chain:
             if hidden_count:
                 return "没有发送图片：媒体未通过内容安全审核或无法安全读取。"
             return "没有找到可发送的 X/Twitter 图片。"
         await event.send(event.chain_result(chain))
-        suffix = "；另有部分媒体被内容安全过滤" if hidden_count else ""
-        return f"已发送 {len(chain)} 张 X/Twitter 安全图片{suffix}。"
+        suffix = "；另有部分媒体被过滤或无法完整读取" if hidden_count else ""
+        return f"已发送 {sent_count} 张 X/Twitter 安全图片{suffix}。"
 
     async def collect_safe_images(
         self,
@@ -1067,7 +1159,7 @@ class TwitterService:
                         source_url=source_url,
                         data=data,
                         mime_type=mime_type,
-                        caption=media.alt_text,
+                        caption=_twitter_image_caption(post, media.alt_text),
                     )
                 )
         return tuple(images), hidden_count
@@ -1255,35 +1347,64 @@ class TwitterService:
         if not self._is_allowed_media_url(url):
             raise TwitterError("disallowed Twitter media URL")
         session = await self._get_session(settings)
-        try:
-            timeout = aiohttp.ClientTimeout(total=settings.timeout_seconds)
-            async with session.get(
-                url,
-                proxy=settings.proxy or None,
-                timeout=timeout,
-                allow_redirects=True,
-            ) as response:
-                if response.status < 200 or response.status >= 300:
-                    raise TwitterError(f"Twitter media HTTP {response.status}")
-                final_url = str(response.url)
-                if not self._is_allowed_media_url(final_url):
-                    raise TwitterError("Twitter media redirected to an untrusted host")
-                content_type = clean_text(response.headers.get("Content-Type")).split(";", 1)[0].lower()
-                if content_type not in _IMAGE_CONTENT_TYPES:
-                    raise TwitterError(f"Twitter media has unsupported type {content_type!r}")
-                content_length = _as_int(response.headers.get("Content-Length"))
-                if content_length is not None and content_length > settings.max_image_bytes:
-                    raise TwitterError("Twitter media exceeds configured size limit")
-                data = await response.content.read(settings.max_image_bytes + 1)
-                if len(data) > settings.max_image_bytes:
-                    raise TwitterError("Twitter media exceeds configured size limit")
-                if not data:
-                    raise TwitterError("Twitter media was empty")
-                return data, content_type
-        except TwitterError:
-            raise
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            raise TwitterError(f"Twitter media request failed: {exc!r}") from exc
+        attempts = settings.retry_count + 1
+        last_error: BaseException | None = None
+        for attempt in range(attempts):
+            try:
+                timeout = aiohttp.ClientTimeout(total=settings.timeout_seconds)
+                async with session.get(
+                    url,
+                    proxy=settings.proxy or None,
+                    timeout=timeout,
+                    allow_redirects=True,
+                ) as response:
+                    if response.status == 429 or response.status >= 500:
+                        raise _RetryableTwitterMediaError(
+                            f"Twitter media HTTP {response.status}"
+                        )
+                    if response.status < 200 or response.status >= 300:
+                        raise TwitterError(f"Twitter media HTTP {response.status}")
+                    final_url = str(response.url)
+                    if not self._is_allowed_media_url(final_url):
+                        raise TwitterError(
+                            "Twitter media redirected to an untrusted host"
+                        )
+                    content_type = clean_text(
+                        response.headers.get("Content-Type")
+                    ).split(";", 1)[0].lower()
+                    if content_type not in _IMAGE_CONTENT_TYPES:
+                        raise TwitterError(
+                            f"Twitter media has unsupported type {content_type!r}"
+                        )
+                    content_length = _as_int(response.headers.get("Content-Length"))
+                    if (
+                        content_length is not None
+                        and content_length > settings.max_image_bytes
+                    ):
+                        raise TwitterError(
+                            "Twitter media exceeds configured size limit"
+                        )
+                    data = await _read_twitter_media(
+                        response.content,
+                        settings.max_image_bytes,
+                    )
+                    detected_type = _validated_image_mime(data)
+                    return data, detected_type
+            except TwitterError:
+                raise
+            except (
+                _RetryableTwitterMediaError,
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+            ) as exc:
+                last_error = exc
+                if attempt + 1 >= attempts:
+                    break
+                await asyncio.sleep(0.35 * (attempt + 1))
+        raise TwitterError(
+            f"Twitter media remained incomplete after {attempts} attempt(s): "
+            f"{last_error!r}"
+        ) from last_error
 
     async def _review_image_with_ai(self, data: bytes, mime_type: str) -> tuple[bool, str]:
         settings = self.settings()
@@ -1447,6 +1568,7 @@ class TwitterService:
         url = clean_text(raw.get("url")) or f"https://x.com/{author.username}/status/{post_id}"
         media, media_sensitive = TwitterService._parse_media(raw.get("media"), settings)
         quote_author, quote_text = TwitterService._parse_quote(raw.get("quote"))
+        reposted_by = TwitterService._parse_reposted_by(raw.get("reposted_by"))
         return TwitterPost(
             post_id=post_id,
             author=author,
@@ -1462,6 +1584,7 @@ class TwitterService:
             quote_author=quote_author,
             quote_text=quote_text,
             language=clean_text(raw.get("lang")),
+            reposted_by=reposted_by,
         )
 
     @staticmethod
@@ -1546,6 +1669,14 @@ class TwitterService:
         return author.label, clean_text(raw.get("text"))
 
     @staticmethod
+    def _parse_reposted_by(raw: Any) -> TwitterAccount | None:
+        if isinstance(raw, str):
+            username = clean_text(raw).lstrip("@")
+            return TwitterAccount(username=username, name=username) if username else None
+        account = TwitterService._parse_account(raw)
+        return account if account.username else None
+
+    @staticmethod
     def _normalize_image_url(url: str, quality: str) -> str:
         text = clean_text(url)
         if not text:
@@ -1582,6 +1713,109 @@ class TwitterService:
         ):
             return True
         return _is_nitter_media_url(url, self.settings().nitter_base_url)
+
+
+async def _read_twitter_media(content: Any, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in content.iter_chunked(64 * 1024):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > max_bytes:
+            raise TwitterError("Twitter media exceeds configured size limit")
+        chunks.append(bytes(chunk))
+    if not chunks:
+        raise _RetryableTwitterMediaError("Twitter media was empty")
+    return b"".join(chunks)
+
+
+def _validated_image_mime(data: bytes) -> str:
+    try:
+        with Image.open(BytesIO(data)) as image:
+            detected_type = _IMAGE_FORMAT_MIME_TYPES.get(
+                clean_text(image.format).upper()
+            )
+            if not detected_type:
+                raise UnidentifiedImageError(
+                    f"unsupported decoded image format {image.format!r}"
+                )
+            image.verify()
+        with Image.open(BytesIO(data)) as image:
+            image.load()
+    except (
+        Image.DecompressionBombError,
+        OSError,
+        SyntaxError,
+        ValueError,
+    ) as exc:
+        raise _RetryableTwitterMediaError(
+            f"Twitter media was incomplete or invalid: {exc}"
+        ) from exc
+    return detected_type
+
+
+def _mark_account_timeline_reposts(
+    posts: Iterable[TwitterPost],
+    account_handle: str,
+) -> tuple[TwitterPost, ...]:
+    expected = clean_text(account_handle).lstrip("@").casefold()
+    if not expected:
+        return tuple(posts)
+    fallback_reposter = TwitterAccount(
+        username=clean_text(account_handle).lstrip("@"),
+        name=clean_text(account_handle).lstrip("@"),
+    )
+    normalized: list[TwitterPost] = []
+    for post in posts:
+        if post.is_repost or post.author.username.casefold() == expected:
+            normalized.append(post)
+            continue
+        normalized.append(replace(post, reposted_by=fallback_reposter))
+    return tuple(normalized)
+
+
+def _filter_reposts(
+    posts: Iterable[TwitterPost],
+    include_reposts: bool,
+) -> tuple[tuple[TwitterPost, ...], int]:
+    if include_reposts:
+        return tuple(posts), 0
+    kept: list[TwitterPost] = []
+    excluded = 0
+    for post in posts:
+        if post.is_repost:
+            excluded += 1
+            continue
+        kept.append(post)
+    return tuple(kept), excluded
+
+
+def _from_query_handle(query: str) -> str:
+    match = _FROM_QUERY_RE.search(clean_text(query))
+    return clean_text(match.group("username")) if match else ""
+
+
+def _expanded_post_limit(requested_limit: int, include_reposts: bool) -> int:
+    if include_reposts:
+        return requested_limit
+    return min(30, max(requested_limit * 3, requested_limit + 6))
+
+
+def _twitter_image_caption(post: TwitterPost, alt_text: str) -> str:
+    author = post.author.label
+    if post.author.username:
+        author = f"{author} (@{post.author.username})"
+    if post.is_repost:
+        assert post.reposted_by is not None
+        reposter = post.reposted_by.label
+        if post.reposted_by.username:
+            reposter = f"{reposter} (@{post.reposted_by.username})"
+        source = f"{reposter} 转推；原作者 {author}"
+    else:
+        source = f"作者 {author}（本人发布）"
+    alt = truncate(clean_text(alt_text), 180)
+    return f"{source}；图片说明：{alt}" if alt else source
 
 
 def request_has_twitter_context(request: Any) -> bool:
