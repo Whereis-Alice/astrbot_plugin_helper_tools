@@ -269,7 +269,7 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
             cooldown.allow("30001", "20001", user_seconds=10, group_seconds=2)
         )
 
-    async def test_random_command_is_bot_authored_and_keeps_original_event_unchanged(
+    async def test_random_command_keeps_original_poker_as_downstream_sender(
         self,
     ) -> None:
         context = FakeContext()
@@ -286,17 +286,19 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
 
         synthetic = context.queue.items[0]
         self.assertTrue(is_poke_synthetic_command(synthetic))
-        self.assertEqual(synthetic.get_sender_id(), "10001")
+        self.assertEqual(synthetic.get_sender_id(), "20001")
+        self.assertEqual(synthetic.get_sender_name(), "Alice")
         self.assertEqual(synthetic.message_str, "怒撕")
         self.assertTrue(synthetic.call_llm)
         self.assertEqual(synthetic.message_obj.raw_message["post_type"], "message")
-        self.assertEqual(synthetic.message_obj.raw_message["user_id"], 10001)
+        self.assertEqual(synthetic.message_obj.raw_message["user_id"], 20001)
+        self.assertEqual(synthetic.message_obj.raw_message["sender"]["nickname"], "Alice")
         self.assertIsInstance(synthetic.get_messages()[0], Comp.Plain)
         self.assertEqual(synthetic.get_messages()[0].text, "怒撕")
         self.assertIsInstance(synthetic.get_messages()[1], Comp.At)
         self.assertEqual(str(synthetic.get_messages()[1].qq), "20001")
 
-    async def test_self_message_ignore_mode_restores_author_before_other_handlers(
+    async def test_self_message_ignore_mode_keeps_poker_identity_before_other_handlers(
         self,
     ) -> None:
         context = FakeContext(ignore_self_messages=True)
@@ -311,8 +313,8 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
             synthetic,
         )
 
-        self.assertEqual(synthetic.get_sender_id(), "10001")
-        self.assertEqual(synthetic.message_obj.raw_message["user_id"], 10001)
+        self.assertEqual(synthetic.get_sender_id(), "20001")
+        self.assertEqual(synthetic.message_obj.raw_message["user_id"], 20001)
         self.assertTrue(synthetic.call_llm)
 
     async def test_synthetic_command_plugin_error_logs_command_target_and_reason(self) -> None:

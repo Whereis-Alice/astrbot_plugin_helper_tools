@@ -715,8 +715,7 @@ class PokeService:
         message_obj = copy.copy(getattr(event, "message_obj", None))
         if message_obj is None:
             return None
-        defer_bot_author = self._core_ignores_self_messages(event)
-        transport_sender_id = notice.user_id if defer_bot_author else notice.self_id
+        transport_sender_id = notice.user_id
         sender = copy.copy(getattr(message_obj, "sender", None))
         if sender is None:
             sender = SimpleNamespace(
@@ -725,8 +724,10 @@ class PokeService:
             )
         else:
             sender.user_id = transport_sender_id
-            if not defer_bot_author:
-                sender.nickname = notice.self_id
+            sender.nickname = clean_text(
+                getattr(sender, "nickname", ""),
+                transport_sender_id,
+            )
         message_obj.sender = sender
         chain: list[Any] = [Comp.Plain(command)]
         if notice.group_id:
@@ -780,38 +781,17 @@ class PokeService:
             {
                 "command": command,
                 "source_user_id": notice.user_id,
+                "source_user_name": clean_text(
+                    getattr(sender, "nickname", ""),
+                    notice.user_id,
+                ),
                 "source_group_id": notice.group_id,
                 "self_id": notice.self_id,
                 "created_at": int(time.time()),
-                "deferred_bot_author": defer_bot_author,
             },
         )
-        if not defer_bot_author:
-            materialize_poke_synthetic_command_author(synthetic)
-        else:
-            logger.info(
-                "[HelperTools/Poke] core ignores self-authored events; command author will be "
-                "restored before plugin handlers run"
-            )
+        materialize_poke_synthetic_command_sender(synthetic)
         return synthetic
-
-    def _core_ignores_self_messages(self, event: Any) -> bool:
-        getter = getattr(self.context, "get_config", None)
-        if not callable(getter):
-            return False
-        try:
-            core_config = getter(clean_text(getattr(event, "unified_msg_origin", "")))
-        except TypeError:
-            core_config = getter()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("[HelperTools/Poke] core config lookup failed: %r", exc)
-            return False
-        if not hasattr(core_config, "get"):
-            return False
-        platform_settings = core_config.get("platform_settings", {})
-        if not isinstance(platform_settings, dict):
-            return False
-        return read_bool(platform_settings.get("ignore_bot_self_message"), False)
 
     async def _mute_poker(
         self,
@@ -1215,6 +1195,46 @@ def poke_persona_context_for_event(event: Any) -> str:
         "不能把其他成员说过的话归到本次触发者名下。\n"
         "请以本次提示中明确的身份信息识别触发者，同时结合历史内容继续当前话题。"
     )
+
+
+def materialize_poke_synthetic_command_sender(event: Any) -> bool:
+    """Keep the original poker as the sender seen by downstream command handlers."""
+
+    getter = getattr(event, "get_extra", None)
+    metadata = (
+        getter(POKE_SYNTHETIC_COMMAND_EXTRA, None)
+        if callable(getter)
+        else getattr(event, "_extras", {}).get(POKE_SYNTHETIC_COMMAND_EXTRA)
+    )
+    if not isinstance(metadata, dict):
+        return False
+    source_user_id = _numeric_id(metadata.get("source_user_id"))
+    if not source_user_id:
+        return False
+    source_user_name = clean_text(metadata.get("source_user_name"), source_user_id)
+    message_obj = getattr(event, "message_obj", None)
+    if message_obj is None:
+        return False
+    sender = getattr(message_obj, "sender", None)
+    if sender is None:
+        sender = SimpleNamespace(user_id=source_user_id, nickname=source_user_name)
+        message_obj.sender = sender
+    else:
+        sender.user_id = source_user_id
+        sender.nickname = source_user_name
+    raw = getattr(message_obj, "raw_message", None)
+    if isinstance(raw, dict):
+        raw["user_id"] = _onebot_id(source_user_id)
+        raw_sender = raw.get("sender")
+        if not isinstance(raw_sender, dict):
+            raw_sender = {}
+            raw["sender"] = raw_sender
+        raw_sender["user_id"] = _onebot_id(source_user_id)
+        raw_sender["nickname"] = source_user_name
+    should_call_llm = getattr(event, "should_call_llm", None)
+    if callable(should_call_llm):
+        should_call_llm(True)
+    return True
 
 
 def materialize_poke_synthetic_command_author(event: Any) -> bool:

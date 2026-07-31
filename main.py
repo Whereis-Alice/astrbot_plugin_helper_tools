@@ -57,7 +57,7 @@ from .poke_service import (
     is_poke_synthetic_command,
     mark_poke_agent_messages_temporary,
     mark_poke_persona_reply,
-    materialize_poke_synthetic_command_author,
+    materialize_poke_synthetic_command_sender,
     poke_persona_context_for_event,
 )
 from .qq_features import (
@@ -100,7 +100,7 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.9.8"
+PLUGIN_VERSION = "0.9.9"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、防撤回、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -1261,11 +1261,11 @@ class HelperToolsPlugin(Star):
         self,
         event: AstrMessageEvent,
     ) -> None:
-        """Restore bot authorship before any plugin consumes a queued poke command."""
+        """Keep the original poker identity for downstream command parameters."""
 
         if not is_poke_synthetic_command(event):
             return
-        materialize_poke_synthetic_command_author(event)
+        materialize_poke_synthetic_command_sender(event)
         event.should_call_llm(True)
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=99999)
