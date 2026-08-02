@@ -206,6 +206,34 @@ def _text_segment(text: str) -> dict[str, Any]:
     return {"type": "text", "data": {"text": text}}
 
 
+_STATIC_REPLY_LABEL = "\u3010\u5f15\u7528\u6d88\u606f\u3011"
+
+
+def _static_reply_text(segment: Mapping[str, Any]) -> str:
+    data = segment.get("data")
+    data_map = data if isinstance(data, Mapping) else {}
+    preview = clean_text(data_map.get("text"))
+    return f"{_STATIC_REPLY_LABEL} {preview}" if preview else _STATIC_REPLY_LABEL
+
+
+def sanitize_recall_message(message: Any) -> Any:
+    """Replace active reply segments so a recalled message cannot point to an expired ID."""
+
+    if isinstance(message, str):
+        return re.sub(r"\[CQ:reply(?:,[^\]]*)?\]", _STATIC_REPLY_LABEL, message)
+    if isinstance(message, list):
+        sanitized: list[Any] = []
+        for segment in message:
+            if isinstance(segment, Mapping) and clean_text(segment.get("type")).casefold() == "reply":
+                sanitized.append(_text_segment(_static_reply_text(segment)))
+            else:
+                sanitized.append(segment)
+        return sanitized
+    if isinstance(message, Mapping) and clean_text(message.get("type")).casefold() == "reply":
+        return _text_segment(_static_reply_text(message))
+    return message
+
+
 def _message_with_header(header: str, message: Any) -> Any:
     """Prepend recall metadata while keeping the result as one QQ message."""
 
@@ -710,12 +738,13 @@ class AntiRevokeService:
         try:
             include_header = self.include_recall_header()
             include_original = self.send_original_message()
+            original_message = sanitize_recall_message(record.message)
             if include_header and include_original:
-                message = _message_with_header(header, record.message)
+                message = _message_with_header(header, original_message)
             elif include_header:
                 message = header
             elif include_original:
-                message = record.message
+                message = original_message
             else:
                 message = ""
             if message:
@@ -728,7 +757,7 @@ class AntiRevokeService:
                 target_id,
             )
         except Exception as exc:  # noqa: BLE001 - OneBot adapters vary by message type
-            fallback = _message_to_text(record.message) or "[原消息没有可转换的文字内容]"
+            fallback = _message_to_text(sanitize_recall_message(record.message)) or "[原消息没有可转换的文字内容]"
             try:
                 await self._call_send(
                     bot,

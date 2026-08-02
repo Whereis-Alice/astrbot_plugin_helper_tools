@@ -9,6 +9,7 @@ from astrbot_plugin_helper_tools.anti_revoke_service import (
     AntiRevokeService,
     extract_event_payload,
     is_group_recall,
+    sanitize_recall_message,
 )
 
 
@@ -42,6 +43,26 @@ class FakeEvent:
 
 
 class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
+    def test_sanitize_recall_message_replaces_active_reply_segments(self) -> None:
+        message = [
+            {"type": "reply", "data": {"id": "12345"}},
+            {"type": "text", "data": {"text": "hello"}},
+        ]
+
+        sanitized = sanitize_recall_message(message)
+
+        self.assertEqual(
+            sanitized,
+            [
+                {"type": "text", "data": {"text": "\u3010\u5f15\u7528\u6d88\u606f\u3011"}},
+                {"type": "text", "data": {"text": "hello"}},
+            ],
+        )
+        self.assertEqual(
+            sanitize_recall_message("[CQ:reply,id=12345]hello"),
+            "\u3010\u5f15\u7528\u6d88\u606f\u3011hello",
+        )
+
     def test_extracts_wrapped_payload_and_detects_recall(self) -> None:
         event = SimpleNamespace(
             message_obj=SimpleNamespace(
@@ -106,6 +127,54 @@ class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
             assert isinstance(sent_message, list)
             self.assertIn("撤回消息", str(sent_message[0]))
             self.assertEqual(sent_message[1:], original["message"])
+
+    async def test_recalled_reply_does_not_send_expired_quote_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = FakeBot()
+            service = AntiRevokeService(
+                {
+                    "anti_revoke": {
+                        "enabled": True,
+                        "target_groups": ["999"],
+                    }
+                },
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "sender": {"user_id": 789, "card": "Alice"},
+                "message": [
+                    {"type": "reply", "data": {"id": "111"}},
+                    {"type": "face", "data": {"id": "128"}},
+                ],
+            }
+            await service.handle_event(FakeEvent(original, bot))
+            await service.handle_event(
+                FakeEvent(
+                    {
+                        "post_type": "notice",
+                        "notice_type": "group_recall",
+                        "group_id": 123,
+                        "message_id": 456,
+                        "user_id": 789,
+                        "operator_id": 789,
+                    },
+                    bot,
+                )
+            )
+
+            sent_message = bot.sent[0][1]["message"]
+            self.assertIsInstance(sent_message, list)
+            assert isinstance(sent_message, list)
+            self.assertEqual(
+                sent_message[1],
+                {"type": "text", "data": {"text": "\u3010\u5f15\u7528\u6d88\u606f\u3011"}},
+            )
+            self.assertEqual(sent_message[2], {"type": "face", "data": {"id": "128"}})
 
     async def test_custom_target_commands_are_persisted_and_override_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
