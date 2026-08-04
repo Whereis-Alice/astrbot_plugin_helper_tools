@@ -61,6 +61,23 @@ _NITTER_STATUS_PATH_RE = re.compile(
     r"^/(?:(?P<username>[A-Za-z0-9_]{1,15})/)?status/(?P<post_id>\d+)(?:/)?$",
     re.IGNORECASE,
 )
+_NITTER_NON_ACCOUNT_PATHS = frozenset(
+    {
+        "about",
+        "assets",
+        "favicon.ico",
+        "i",
+        "login",
+        "logout",
+        "pic",
+        "proxy",
+        "robots.txt",
+        "search",
+        "settings",
+        "static",
+        "video",
+    }
+)
 _HANDLE_RE = re.compile(r"^[A-Za-z0-9_]{1,15}$")
 _FROM_QUERY_RE = re.compile(
     r"(?<![-\w])from\s*:\s*@?(?P<username>[A-Za-z0-9_]{1,15})(?![A-Za-z0-9_])",
@@ -854,7 +871,7 @@ class TwitterService:
         if not _same_origin(value, nitter_base_url):
             return ""
         first_path_part = next((part for part in parsed.path.split("/") if part), "")
-        if first_path_part.casefold() in {"i", "search", "settings"}:
+        if first_path_part.casefold() in _NITTER_NON_ACCOUNT_PATHS:
             return ""
         return first_path_part if _HANDLE_RE.fullmatch(first_path_part) else ""
 

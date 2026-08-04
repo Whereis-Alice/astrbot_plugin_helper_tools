@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频与专栏理解、X/Twitter 资料检索、网页浏览、环境感知、QQ 防撤回、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.9.10`
+- 当前版本：`v0.9.11`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -38,7 +38,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.9.10` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.9.11` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -639,6 +639,7 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 - 查看插件日志中是否出现 `via nitter failed; trying fallback`。这表示自动模式已经尝试 Nitter，并正常切到 FxTwitter；可检查 Nitter 容器、上游访问和实例搜索功能。
 - 只想检查 Nitter 时选择“仅 Nitter”。若还是失败，先在 AstrBot 同一环境执行 `curl http://127.0.0.1:8585` 或访问你实际配置的 URL，确认网络路径。
 - Nitter 的图片会先由插件下载。若日志提示媒体下载失败，检查 Nitter 的 `/pic/` 代理路径和服务器到上游媒体的网络。
+- 如果日志出现 `Nitter HTTP 404 for http://127.0.0.1:8585/pic`，通常不是 Nitter 没启动，而是把 Nitter 的图片代理地址误当成了账号地址；新版会拒绝这类参数，不再请求 `/pic`。
 
 ## 参考与致谢
 

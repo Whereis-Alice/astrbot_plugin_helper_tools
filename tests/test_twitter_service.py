@@ -302,6 +302,24 @@ class TwitterServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.filtered_result_max_pages, 6)
         self.assertEqual(settings.filtered_result_max_candidates, 120)
 
+    def test_nitter_media_routes_are_not_treated_as_account_handles(self) -> None:
+        service = TwitterService(
+            self._config(nitter_base_url="http://127.0.0.1:8585"),
+            Path(tempfile.gettempdir()),
+        )
+
+        self.assertEqual(
+            service._normalize_handle_from_value("http://127.0.0.1:8585/pic"),
+            "",
+        )
+        self.assertEqual(
+            service._normalize_handle_from_value(
+                "http://127.0.0.1:8585/pic/media%2Fexample.jpg"
+            ),
+            "",
+        )
+        self.assertEqual(service._normalize_handle_from_value("pic"), "pic")
+
     def test_nitter_pagination_rejects_external_or_changed_search_links(self) -> None:
         base = "http://127.0.0.1:8585"
         current = {"f": "tweets", "q": "from:artist"}
