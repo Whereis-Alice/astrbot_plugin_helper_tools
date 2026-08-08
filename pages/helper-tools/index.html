@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>辅助工具控制台</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body data-theme="dark">
+    <main class="dashboard-shell">
+      <aside class="sidebar" aria-label="辅助工具控制台导航">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true"><span>HT</span><i></i></div>
+          <div class="brand-copy">
+            <strong>辅助工具</strong>
+            <small>HELPER / TOOLS</small>
+          </div>
+        </div>
+        <div class="sidebar-rule" aria-hidden="true"></div>
+        <nav class="nav-list" aria-label="页面导航">
+          <button class="nav-item active" type="button" data-tab="overview">概览</button>
+          <button class="nav-item" type="button" data-tab="config">模块配置</button>
+          <button class="nav-item" type="button" data-tab="activity">运行记录</button>
+          <button class="nav-item" type="button" data-tab="storage">存储诊断</button>
+          <button class="nav-item" type="button" data-tab="about">说明</button>
+        </nav>
+        <div class="sidebar-footer">
+          <div class="theme-label"><span>INTERFACE THEME</span><i><b></b>已连接</i></div>
+          <div class="theme-switcher" role="group" aria-label="控制台主题">
+            <button class="theme-option" type="button" data-theme="dark" aria-pressed="true">
+              <span class="theme-swatch night" aria-hidden="true"></span>夜间
+            </button>
+            <button class="theme-option" type="button" data-theme="light" aria-pressed="false">
+              <span class="theme-swatch daylight" aria-hidden="true"></span>普通
+            </button>
+          </div>
+          <div class="sidebar-actions">
+            <button id="reload-button" class="icon-action" type="button" title="重新读取配置与状态" aria-label="重新读取配置与状态">↻</button>
+            <button id="save-button" class="primary-action" type="button">
+              <span>保存配置</span><small>APPLY CHANGES</small>
+            </button>
+          </div>
+          <p id="sidebar-status" class="sidebar-status">正在连接控制台...</p>
+        </div>
+      </aside>
+
+      <section class="workspace">
+        <header class="page-header">
+          <div>
+            <p id="page-kicker" class="page-kicker">HELPER / CONTROL</p>
+            <h1 id="page-title">概览</h1>
+            <p id="page-subtitle">查看模块、工具和本地运行状态。</p>
+          </div>
+          <div id="header-state" class="header-state" role="status"></div>
+        </header>
+
+        <section id="tab-overview" class="tab-pane active" aria-labelledby="page-title">
+          <div id="overview-metrics" class="metric-grid" aria-live="polite"></div>
+          <div class="section-split">
+            <section class="data-section" aria-labelledby="runtime-heading">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">RUNTIME STATUS</p>
+                  <h2 id="runtime-heading">当前状态</h2>
+                </div>
+                <button class="quiet-action" type="button" data-open-tab="storage">查看诊断</button>
+              </div>
+              <div id="runtime-list" class="runtime-list"></div>
+            </section>
+            <section class="data-section" aria-labelledby="tool-heading">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">LLM TOOL SET</p>
+                  <h2 id="tool-heading">可用工具</h2>
+                </div>
+                <button class="quiet-action" type="button" data-open-tab="config">配置模块</button>
+              </div>
+              <div id="tool-list" class="tool-list"></div>
+            </section>
+          </div>
+          <section class="data-section" aria-labelledby="module-heading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">MODULE MATRIX</p>
+                <h2 id="module-heading">模块矩阵</h2>
+              </div>
+              <button class="quiet-action" type="button" data-open-tab="config">打开全部配置</button>
+            </div>
+            <div id="module-matrix" class="module-matrix"></div>
+          </section>
+          <section class="data-section" aria-labelledby="recent-heading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">RECENT ACTIVITY</p>
+                <h2 id="recent-heading">最近记录</h2>
+              </div>
+              <button class="quiet-action" type="button" data-open-tab="activity">查看全部</button>
+            </div>
+            <div id="recent-activity" class="activity-list"></div>
+          </section>
+        </section>
+
+        <section id="tab-config" class="tab-pane" aria-label="模块配置">
+          <div class="config-toolbar">
+            <label class="search-field">
+              <span class="visually-hidden">搜索配置模块</span>
+              <input id="config-search" type="search" placeholder="搜索模块、字段或说明" autocomplete="off" />
+            </label>
+            <label class="filter-toggle"><input id="enabled-only" type="checkbox" /><span>只看已启用模块</span></label>
+            <div class="config-toolbar-actions" role="group" aria-label="配置模块展开操作">
+              <button id="expand-all-config" class="quiet-action" type="button">展开全部</button>
+              <button id="collapse-all-config" class="quiet-action" type="button">收起全部</button>
+            </div>
+            <span id="config-count" class="toolbar-summary"></span>
+          </div>
+          <p class="config-note">密钥、Cookie 和上传文件只显示配置状态；留空保存不会覆盖已保存的敏感内容。保存后，大多数设置立即生效；调度、浏览器和部分缓存模块建议在 AstrBot 插件页重载一次。</p>
+          <div id="config-modules" class="config-modules"></div>
+        </section>
+
+        <section id="tab-activity" class="tab-pane" aria-label="运行记录">
+          <section class="data-section">
+            <div class="section-heading activity-heading">
+              <div>
+                <p class="eyebrow">LOCAL AUDIT TRAIL</p>
+                <h2>运行记录</h2>
+                <p>只保留模块、动作、结果和时间；会话默认只显示群聊/私聊类型，不保存聊天正文和凭据。</p>
+              </div>
+              <button id="clear-activities" class="danger-action" type="button">清空记录</button>
+            </div>
+            <div class="activity-filters">
+              <label class="compact-field"><span>模块</span><select id="activity-module-filter"><option value="">全部模块</option></select></label>
+              <label class="compact-field"><span>结果</span><select id="activity-status-filter"><option value="">全部结果</option><option value="success">成功</option><option value="failed">失败</option><option value="error">错误</option><option value="warning">警告</option></select></label>
+              <button id="activity-refresh" class="quiet-action" type="button">刷新</button>
+            </div>
+            <div id="activity-summary" class="activity-summary"></div>
+            <div class="table-scroll"><table class="activity-table"><thead><tr><th>时间</th><th>会话</th><th>模块</th><th>动作</th><th>结果</th><th>说明</th></tr></thead><tbody id="activity-table-body"></tbody></table></div>
+          </section>
+        </section>
+
+        <section id="tab-storage" class="tab-pane" aria-label="存储诊断">
+          <div id="storage-metrics" class="metric-grid"></div>
+          <div class="section-split">
+            <section class="data-section" aria-labelledby="storage-runtime-heading">
+              <div class="section-heading"><div><p class="eyebrow">SERVICE CHECK</p><h2 id="storage-runtime-heading">服务状态</h2></div><button id="storage-refresh" class="quiet-action" type="button">刷新</button></div>
+              <div id="storage-runtime-list" class="runtime-list"></div>
+            </section>
+            <section class="data-section" aria-labelledby="storage-bucket-heading">
+              <div class="section-heading"><div><p class="eyebrow">LOCAL DATA</p><h2 id="storage-bucket-heading">本地数据占用</h2></div></div>
+              <div id="storage-buckets" class="storage-buckets"></div>
+            </section>
+          </div>
+          <p id="storage-note" class="config-note"></p>
+        </section>
+
+        <section id="tab-about" class="tab-pane" aria-label="说明">
+          <section class="data-section about-section">
+            <p class="eyebrow">HELPER TOOLS / DASHBOARD</p>
+            <h2>辅助工具控制台</h2>
+            <div id="about-content" class="about-content"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

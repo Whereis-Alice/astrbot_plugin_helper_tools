@@ -10,6 +10,50 @@
       }
     }
   },
+  "webui": {
+    "type": "object",
+    "description": "【控制台与运行记录】",
+    "items": {
+      "dashboard_theme": {
+        "type": "string",
+        "description": "控制台主题",
+        "options": [
+          "dark",
+          "light"
+        ],
+        "default": "dark",
+        "hint": "dark 是夜间霓虹主题，light 是普通浅色霓虹主题；只影响本插件的管理页。"
+      },
+      "activity_log_enabled": {
+        "type": "bool",
+        "description": "记录重要运行事件",
+        "default": true,
+        "hint": "只记录模块、动作、结果和时间，不记录聊天正文、图片、Cookie、Token 或 API Key。"
+      },
+      "activity_log_retention_days": {
+        "type": "int",
+        "description": "运行记录保留天数",
+        "default": 14,
+        "min": 1,
+        "max": 365,
+        "hint": "超过保留时间的本地控制台记录会在下次读取或写入时自动清理。"
+      },
+      "activity_log_max_records": {
+        "type": "int",
+        "description": "运行记录最多保留条数",
+        "default": 500,
+        "min": 20,
+        "max": 5000,
+        "hint": "达到上限时会自动删除最早的记录。"
+      },
+      "activity_log_include_session_id": {
+        "type": "bool",
+        "description": "运行记录显示会话标识",
+        "default": false,
+        "hint": "默认关闭。开启后记录会额外保存 AstrBot 会话标识，其中可能包含群号或用户号。"
+      }
+    }
+  },
   "perception": {
     "type": "object",
     "description": "【环境感知】",

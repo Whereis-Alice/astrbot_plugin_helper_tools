@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "display_name": "辅助工具合集",
+    "desc": "为 AstrBot 提供 QQ、B站、X/Twitter、网页浏览、环境感知、群聊历史、唤醒增强和互动等辅助能力。"
+  },
+  "pages": {
+    "helper-tools": {
+      "title": "辅助工具控制台",
+      "desc": "统一管理辅助工具模块、运行记录与本地存储。"
+    }
+  }
+}

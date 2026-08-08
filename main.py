@@ -98,9 +98,10 @@ from .web_browser_service import (
     WebBrowserService,
     WebPageResult,
 )
+from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.9.12"
+PLUGIN_VERSION = "0.10.0"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、防撤回、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -144,6 +145,22 @@ def _module_commands_enabled(config: Any, module: str, default: bool = True) -> 
         cfg(config, module, "commands_enabled", default),
         default,
     )
+
+
+def _record_dashboard_activity(
+    plugin: Any,
+    module: str,
+    action: str,
+    *,
+    status: str = "success",
+    detail: str = "",
+    event: Any = None,
+) -> None:
+    """Write a non-sensitive Dashboard record when the optional page is available."""
+
+    recorder = getattr(getattr(plugin, "webui", None), "record_activity", None)
+    if callable(recorder):
+        recorder(module, action, status=status, detail=detail, event=event)
 
 
 def _mark_content_part_temporary(part: Any) -> Any:
@@ -1086,8 +1103,13 @@ class HelperToolsPlugin(Star):
         self.poke = PokeService(self.config, self.data_dir, self.context)
         self.web_browser = WebBrowserService(self.config)
         self.twitter = TwitterService(self.config, self.data_dir)
+        self.webui = HelperToolsDashboard(self, version=PLUGIN_VERSION)
+        self.webui.register()
 
-        self.context.add_llm_tools(*self._build_tools())
+        # Keep the concrete tool instances so WebUI settings can update their
+        # active state without replacing unrelated tools from other plugins.
+        self._registered_llm_tools = self._build_tools()
+        self.context.add_llm_tools(*self._registered_llm_tools)
 
     async def initialize(self) -> None:
         await self.anime1.start()
@@ -1097,6 +1119,12 @@ class HelperToolsPlugin(Star):
             await self.anti_revoke.start()
             if _module_enabled(self.config, "bilibili_video"):
                 await self.bilibili.start()
+        _record_dashboard_activity(
+            self,
+            "webui",
+            "插件初始化",
+            detail="辅助工具插件已完成初始化。",
+        )
         logger.info("[%s] initialized", PLUGIN_ID)
 
     async def terminate(self) -> None:
@@ -1111,6 +1139,12 @@ class HelperToolsPlugin(Star):
         await self.anti_revoke.stop()
         await self.anime1.stop()
         await self.wake.stop()
+        _record_dashboard_activity(
+            self,
+            "webui",
+            "插件停止",
+            detail="辅助工具插件正在停止。",
+        )
         logger.info("[%s] terminated", PLUGIN_ID)
 
     def enabled(self) -> bool:
@@ -1207,6 +1241,60 @@ class HelperToolsPlugin(Star):
             ),
         ]
 
+    def refresh_llm_tool_states(
+        self,
+        changed_modules: list[str] | tuple[str, ...] | set[str] | None = None,
+    ) -> list[str]:
+        """Apply saved module tool switches to this plugin's registered tools.
+
+        AstrBot keeps the same ``FunctionTool`` instances after registration.
+        Updating those instances is enough for the next Agent request, while
+        leaving any tools registered by other plugins untouched.
+        """
+
+        module_by_tool = {
+            QQ_AVATAR_TOOL_NAME: ("qq_avatar", True),
+            QQ_GROUP_MEMBER_TOOL_NAME: ("qq_member", True),
+            QQ_PROFILE_TOOL_NAME: ("qq_profile", True),
+            POKE_TOOL_NAME: ("poke", False),
+            PAYQR_TOOL_NAME: ("payqr", True),
+            "get_anime1_updates": ("anime1", True),
+            "get_anime1_watch_url": ("anime1", True),
+            VOICE_TOOL_NAME: ("voice", True),
+            STEAM_TOOL_NAME: ("steam", True),
+            BILIBILI_TOOL_NAME: ("bilibili_video", True),
+            WEB_BROWSER_TOOL_NAME: ("web_browser", False),
+            X_ACCOUNT_TOOL_NAME: ("twitter", False),
+            X_POST_TOOL_NAME: ("twitter", False),
+            X_RECENT_POSTS_TOOL_NAME: ("twitter", False),
+            X_SEARCH_TOOL_NAME: ("twitter", False),
+            BOT_PROFILE_TOOL_NAME: ("bot_profile", False),
+            CHAT_HISTORY_TOOL_NAME: ("chat_history", False),
+        }
+        affected_modules = (
+            {clean_text(module) for module in changed_modules}
+            if changed_modules is not None
+            else None
+        )
+        updated: list[str] = []
+        for tool in getattr(self, "_registered_llm_tools", []):
+            name = clean_text(getattr(tool, "name", ""))
+            mapping = module_by_tool.get(name)
+            if mapping is None:
+                continue
+            module, default = mapping
+            if affected_modules is not None and module not in affected_modules:
+                continue
+            active = (
+                self._web_browser_tool_active()
+                if module == "web_browser"
+                else self._tool_active(module, default)
+            )
+            if bool(getattr(tool, "active", True)) != active:
+                tool.active = active
+                updated.append(name)
+        return updated
+
     async def send_chat_history_card(
         self,
         event: AstrMessageEvent,
@@ -1295,6 +1383,13 @@ class HelperToolsPlugin(Star):
                 PLUGIN_ID,
                 clean_text(getattr(event, "unified_msg_origin", "")),
             )
+            _record_dashboard_activity(
+                self,
+                "wake",
+                "拦截唤醒词缀普通消息",
+                detail="已阻止该消息继续进入默认 LLM，避免普通消息被误回复。",
+                event=event,
+            )
             return
 
         is_stopped = getattr(event, "is_stopped", None)
@@ -1304,6 +1399,13 @@ class HelperToolsPlugin(Star):
                 PLUGIN_ID,
                 result,
                 clean_text(getattr(event, "unified_msg_origin", "")),
+            )
+            _record_dashboard_activity(
+                self,
+                "wake",
+                "唤醒增强已拦截消息",
+                detail=f"拦截规则：{clean_text(result, 'unknown')}。",
+                event=event,
             )
 
     @filter.on_llm_request(priority=99999)
@@ -1371,6 +1473,16 @@ class HelperToolsPlugin(Star):
             PLUGIN_ID,
             image_result.marked_reply_count,
             image_result.marked_image_count,
+        )
+        _record_dashboard_activity(
+            self,
+            "reply_media_guard",
+            "标注引用图片来源",
+            detail=(
+                f"已标注 {image_result.marked_reply_count} 条引用消息中的 "
+                f"{image_result.marked_image_count} 张图片来源。"
+            ),
+            event=event,
         )
 
     @filter.on_llm_request(priority=99998)
@@ -1519,6 +1631,22 @@ class HelperToolsPlugin(Star):
             bool(context_result.cover_data_url),
             len(context_result.text),
         )
+        article_failed = context_result.text.startswith(BILIBILI_ARTICLE_FAILURE_PREFIX)
+        _record_dashboard_activity(
+            self,
+            "bilibili_article",
+            "注入 B 站专栏上下文",
+            status="warning" if article_failed else "success",
+            detail=(
+                "专栏读取未完整成功，已向模型说明可用边界。"
+                if article_failed
+                else (
+                    f"已附带{'封面图和' if context_result.cover_data_url else ''}"
+                    f"专栏文本资料（约 {len(context_result.text)} 字）。"
+                )
+            ),
+            event=event,
+        )
 
     @filter.on_llm_request(priority=20)
     async def bilibili_video_context_handler(
@@ -1581,6 +1709,22 @@ class HelperToolsPlugin(Star):
             self.bilibili.analysis_mode(),
             len(context_result.frames),
         )
+        video_failed = context_result.text.startswith("[B站视频解析失败]")
+        _record_dashboard_activity(
+            self,
+            "bilibili_video",
+            "注入 B 站视频上下文",
+            status="warning" if video_failed else "success",
+            detail=(
+                "视频读取未完整成功，已向模型说明可用边界。"
+                if video_failed
+                else (
+                    f"分析方式：{self.bilibili.analysis_mode()}；"
+                    f"本轮附带 {len(context_result.frames)} 张抽帧。"
+                )
+            ),
+            event=event,
+        )
 
     @filter.on_llm_request(priority=18)
     async def twitter_context_handler(
@@ -1640,6 +1784,19 @@ class HelperToolsPlugin(Star):
             PLUGIN_ID,
             clean_text(getattr(event, "unified_msg_origin", "")),
             len(context_result.images),
+        )
+        twitter_failed = "[X/Twitter 解析失败]" in context_result.text
+        _record_dashboard_activity(
+            self,
+            "twitter",
+            "注入 X/Twitter 上下文",
+            status="warning" if twitter_failed else "success",
+            detail=(
+                "推文读取未完整成功，已向模型说明可用边界。"
+                if twitter_failed
+                else f"已附带公开资料和 {len(context_result.images)} 张通过安全过滤的图片。"
+            ),
+            event=event,
         )
 
     @filter.on_llm_request(priority=19)
@@ -1711,6 +1868,16 @@ class HelperToolsPlugin(Star):
                 PLUGIN_ID,
                 card_result.card_count,
                 card_result.enriched_reply_count,
+            )
+            _record_dashboard_activity(
+                self,
+                "reply_card_reader",
+                "读取引用卡片",
+                detail=(
+                    f"已提取 {card_result.enriched_reply_count} 条引用中的 "
+                    f"{card_result.card_count} 张卡片资料。"
+                ),
+                event=event,
             )
 
         reference = self.bilibili.prepare_event(event)
@@ -2300,6 +2467,15 @@ class HelperToolsPlugin(Star):
         if not response.handled:
             return
 
+        _record_dashboard_activity(
+            self,
+            "poke",
+            "处理戳一戳互动",
+            status="warning" if response.action in {"command_failed", "none", "cooldown"} else "success",
+            detail=f"已选择互动动作：{clean_text(response.action, 'unknown')}。",
+            event=event,
+        )
+
         event.should_call_llm(True)
         if response.llm_prompt:
             mark_poke_persona_reply(event)
@@ -2327,6 +2503,13 @@ class HelperToolsPlugin(Star):
             wake_prefix_text=self._message_without_wake_prefix(event),
         )
         if like_result.handled:
+            _record_dashboard_activity(
+                self,
+                "qq_like",
+                "处理 QQ 名片点赞请求",
+                detail="已处理一次 QQ 名片点赞互动。",
+                event=event,
+            )
             stopped = getattr(event, "is_stopped", None)
             can_use_persona_reply = (
                 bool(like_result.persona_context)
@@ -2353,6 +2536,13 @@ class HelperToolsPlugin(Star):
 
         wallpaper_result = await self.wallpaper.handle_message(event, text)
         if wallpaper_result.handled:
+            _record_dashboard_activity(
+                self,
+                "wallpaper",
+                "处理壁纸图库命令",
+                detail="已处理一次壁纸发送、存图或删图操作。",
+                event=event,
+            )
             if wallpaper_result.message:
                 yield event.plain_result(wallpaper_result.message)
             if self.wallpaper.stop_after_response():
@@ -2364,16 +2554,39 @@ class HelperToolsPlugin(Star):
             try:
                 chain, error = await self.steam.build_chain_for_message(steam_match.query)
             except Exception as exc:  # noqa: BLE001 - convert service errors to a reply
+                _record_dashboard_activity(
+                    self,
+                    "steam",
+                    "Steam 查询失败",
+                    status="error",
+                    detail=f"查询过程出现 {type(exc).__name__}。",
+                    event=event,
+                )
                 yield event.plain_result(f"Steam 查询失败: {exc}")
                 if steam_match.stop_event:
                     event.stop_event()
                 return
             if error:
+                _record_dashboard_activity(
+                    self,
+                    "steam",
+                    "Steam 查询未返回结果",
+                    status="warning",
+                    detail="查询已处理，但没有得到可发送的结果。",
+                    event=event,
+                )
                 yield event.plain_result(error)
                 if steam_match.stop_event:
                     event.stop_event()
                 return
             assert chain is not None
+            _record_dashboard_activity(
+                self,
+                "steam",
+                "完成 Steam 查询",
+                detail="已生成 Steam 游戏资料回复。",
+                event=event,
+            )
             yield event.chain_result(chain)
             if steam_match.stop_event:
                 event.stop_event()
@@ -2383,10 +2596,25 @@ class HelperToolsPlugin(Star):
             try:
                 chain = await self.voice.build_chain()
             except Exception as exc:  # noqa: BLE001 - convert service errors to a reply
+                _record_dashboard_activity(
+                    self,
+                    "voice",
+                    "随机语音发送失败",
+                    status="error",
+                    detail=f"生成语音消息时出现 {type(exc).__name__}。",
+                    event=event,
+                )
                 yield event.plain_result(f"随机语音发送失败: {exc}")
                 if self.voice.stop_after_response():
                     event.stop_event()
                 return
+            _record_dashboard_activity(
+                self,
+                "voice",
+                "发送随机语音",
+                detail="已生成一条随机语音消息。",
+                event=event,
+            )
             yield event.chain_result(chain)
             if self.voice.stop_after_response():
                 event.stop_event()
