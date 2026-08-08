@@ -65,6 +65,12 @@ LLM_REQUEST_BLOCK_EXTRA_KEY = "helper_tools_wake_block_llm_request"
 LLM_REQUEST_BLOCK_REASON_EXTRA_KEY = "helper_tools_wake_block_llm_reason"
 LLM_BLOCK_REASON_RECOGNIZED_COMMAND = "recognized_command"
 LLM_BLOCK_REASON_WAKE_PREFIX = "wake_prefix_ordinary_message"
+EMPTY_WAKE_PROMPT_EXTRA_KEY = "helper_tools_empty_wake_prompt"
+EMPTY_WAKE_PROMPT_MARKER = "[HelperTools Empty Wake]"
+DEFAULT_EMPTY_WAKE_PROMPT = (
+    "用户刚刚只通过提及或唤醒词呼唤了你，没有附带文字。"
+    "请优先结合最近对话自然回应；若没有可延续的话题，则按当前人设简短回应。"
+)
 
 
 @dataclass(slots=True)
@@ -97,6 +103,12 @@ class DebounceResult:
     merged: bool = False
     skip_reason: str = ""
     merged_count: int = 1
+
+
+@dataclass(slots=True)
+class EmptyWakeRequest:
+    prompt: str
+    expected_text: str
 
 
 def _event_sender_id(event: Any) -> str:
@@ -191,6 +203,18 @@ class WakeService:
 
     def strip_prefix_suffix_word(self) -> bool:
         return read_bool(cfg(self.config, "wake", "strip_prefix_suffix_wake_word", False), False)
+
+    def empty_wake_response_enabled(self) -> bool:
+        return read_bool(
+            cfg(self.config, "wake", "empty_wake_response_enabled", True),
+            True,
+        )
+
+    def empty_wake_prompt(self) -> str:
+        return clean_text(
+            cfg(self.config, "wake", "empty_wake_prompt", DEFAULT_EMPTY_WAKE_PROMPT),
+            DEFAULT_EMPTY_WAKE_PROMPT,
+        )
 
     def wake_words(self) -> list[str]:
         return read_list(cfg(self.config, "wake", "wake_words", []), [])
@@ -364,6 +388,13 @@ class WakeService:
         # AstrBot's native path avoids a group debounce/cooldown silently stopping
         # an otherwise normal direct message.
         if _is_private_chat(event) and not self.apply_to_private_messages():
+            if self.empty_wake_response_enabled():
+                self._prepare_empty_wake_request(
+                    event,
+                    has_at=self.has_at_bot(event),
+                    match=WakeMatch(),
+                    raw_text=clean_text(getattr(event, "message_str", "")),
+                )
             return "private_bypassed"
 
         # Evaluate prefix command/LLM blocking before debounce. Otherwise a message
@@ -396,10 +427,32 @@ class WakeService:
             return "reply_wake_disabled"
 
         if bool(getattr(event, "is_at_or_wake_command", False)):
+            empty_wake_result = self._prepare_empty_wake_request(
+                event,
+                has_at=has_at,
+                match=match,
+                raw_text=text,
+            )
+            if empty_wake_result:
+                return empty_wake_result
             self._mark_last_wake(event)
             await self._activate_debounce_window(event, 1)
             return "wake"
         return ""
+
+    def inject_empty_wake_prompt(self, event: Any) -> bool:
+        """Add the configured temporary prompt immediately before LLM processing."""
+
+        request = self._empty_wake_request(event)
+        if request is None:
+            return False
+        is_stopped = getattr(event, "is_stopped", None)
+        if callable(is_stopped) and is_stopped():
+            return False
+        if clean_text(getattr(event, "message_str", "")) != request.expected_text:
+            return False
+        self._set_event_message_text(event, request.prompt)
+        return True
 
     async def on_decorating_result(self, event: Any) -> None:
         sender_id = _event_sender_id(event)
@@ -502,6 +555,38 @@ class WakeService:
             self._suppress_default_llm(event)
             self._mark_llm_request_blocked(event, LLM_BLOCK_REASON_WAKE_PREFIX)
             return "prefix_llm"
+        return ""
+
+    def _prepare_empty_wake_request(
+        self,
+        event: Any,
+        *,
+        has_at: bool,
+        match: WakeMatch,
+        raw_text: str,
+    ) -> str:
+        only_bot_mention = has_at and self._is_only_bot_mention(event)
+        only_wake_word = (
+            match.matched
+            and clean_text(raw_text) == clean_text(match.word)
+            and not self._has_media_payload(event)
+        )
+        only_astrbot_wake_prefix = self._is_only_astrbot_wake_prefix(event)
+        if not only_bot_mention and not only_wake_word and not only_astrbot_wake_prefix:
+            return ""
+        if not self.empty_wake_response_enabled():
+            self._stop_event(event)
+            return "empty_wake_disabled"
+
+        prompt = f"{EMPTY_WAKE_PROMPT_MARKER}\n{self.empty_wake_prompt()}"
+        self._set_extra(
+            event,
+            EMPTY_WAKE_PROMPT_EXTRA_KEY,
+            EmptyWakeRequest(
+                prompt=prompt,
+                expected_text=clean_text(getattr(event, "message_str", "")),
+            ),
+        )
         return ""
 
     async def _try_debounce_follow_up(self, event: Any) -> DebounceResult:
@@ -715,6 +800,42 @@ class WakeService:
             return "reply"
         return "normal"
 
+    @staticmethod
+    def _has_media_payload(event: Any) -> bool:
+        media_types = (Comp.Image, Comp.File, Comp.Record, Comp.Video)
+        return any(isinstance(seg, media_types) for seg in _event_messages(event))
+
+    @staticmethod
+    def _is_only_bot_mention(event: Any) -> bool:
+        bot_id = _event_self_id(event)
+        if not bot_id:
+            return False
+        found_bot_mention = False
+        for segment in _event_messages(event):
+            if isinstance(segment, Comp.At):
+                if clean_text(getattr(segment, "qq", "")) == bot_id:
+                    found_bot_mention = True
+                    continue
+                return False
+            if isinstance(segment, Comp.Plain) and not clean_text(
+                getattr(segment, "text", ""),
+            ):
+                continue
+            return False
+        return found_bot_mention
+
+    def _is_only_astrbot_wake_prefix(self, event: Any) -> bool:
+        if self._has_media_payload(event):
+            return False
+        prefixes = {clean_text(prefix) for prefix in self.wake_prefixes()}
+        prefixes.discard("")
+        if not prefixes:
+            return False
+        return any(
+            candidate in prefixes
+            for candidate in self._message_text_candidates(event)
+        )
+
     def _should_continue_listening(self, merged_count: int) -> bool:
         max_count = self.debounce_max_merge_count()
         return max_count <= 0 or merged_count < max_count
@@ -810,6 +931,33 @@ class WakeService:
             setter(True)
         else:
             event.call_llm = True
+
+    @staticmethod
+    def _set_extra(event: Any, key: str, value: Any) -> None:
+        setter = getattr(event, "set_extra", None)
+        if callable(setter):
+            setter(key, value)
+        else:
+            setattr(event, key, value)
+
+    @staticmethod
+    def _empty_wake_request(event: Any) -> EmptyWakeRequest | None:
+        getter = getattr(event, "get_extra", None)
+        if callable(getter):
+            try:
+                value = getter(EMPTY_WAKE_PROMPT_EXTRA_KEY, None)
+            except TypeError:
+                value = None
+        else:
+            value = getattr(event, EMPTY_WAKE_PROMPT_EXTRA_KEY, None)
+        return value if isinstance(value, EmptyWakeRequest) else None
+
+    @staticmethod
+    def _set_event_message_text(event: Any, text: str) -> None:
+        event.message_str = text
+        message_obj = getattr(event, "message_obj", None)
+        if message_obj is not None:
+            message_obj.message_str = text
 
     @staticmethod
     def _mark_llm_request_blocked(event: Any, reason: str) -> None:

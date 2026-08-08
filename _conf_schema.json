@@ -618,6 +618,18 @@
         "description": "允许 @ bot 唤醒",
         "default": true
       },
+      "empty_wake_response_enabled": {
+        "type": "bool",
+        "description": "无文字唤醒也回复",
+        "default": true,
+        "hint": "开启后，只 @ bot、只发送一个已匹配的唤醒词，或只发送 AstrBot 全局唤醒词缀时，也会调用 LLM 回复。关闭后这类无附加内容的唤醒会被忽略。"
+      },
+      "empty_wake_prompt": {
+        "type": "string",
+        "description": "无文字唤醒提示词",
+        "default": "用户刚刚只通过提及或唤醒词呼唤了你，没有附带文字。请优先结合最近对话自然回应；若没有可延续的话题，则按当前人设简短回应。",
+        "hint": "只在“无文字唤醒也回复”开启时使用。单独发送本插件唤醒词时，会遵守自由触发、前缀触发、后缀触发的当前勾选；三种方式下，单独一个完整唤醒词都算无附加内容。AstrBot 全局唤醒词缀也兼容。留空会使用默认提示词。"
+      },
       "disable_reply_wake": {
         "type": "bool",
         "description": "禁用纯引用唤醒",

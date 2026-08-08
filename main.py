@@ -89,7 +89,7 @@ from .twitter_service import (
     request_has_twitter_context,
 )
 from .voice_service import VOICE_TOOL_NAME, VoiceService
-from .wake_service import WakeService
+from .wake_service import EMPTY_WAKE_PROMPT_MARKER, WakeService
 from .wallpaper_service import WallpaperService
 from .web_browser_service import (
     WEB_BROWSER_RESULT_MARKER,
@@ -100,7 +100,7 @@ from .web_browser_service import (
 )
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.9.11"
+PLUGIN_VERSION = "0.9.12"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、防撤回、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -109,6 +109,7 @@ _BILIBILI_TOOL_IMAGE_MARKER = f"[Image from tool '{BILIBILI_TOOL_NAME}'"
 _POKE_SYNTHETIC_CONTEXT_MARKER = "[戳一戳插件内部命令]"
 _TEMPORARY_TOOL_RESULT_MARKERS = (
     _BILIBILI_TOOL_IMAGE_MARKER,
+    EMPTY_WAKE_PROMPT_MARKER,
     WEB_BROWSER_RESULT_MARKER,
     TWITTER_CONTEXT_PREFIX,
     BILIBILI_ARTICLE_CONTEXT_PREFIX,
@@ -253,7 +254,7 @@ async def _twitter_result_for_tool(
 
 
 def _mark_temporary_tool_results(run_context: Any) -> int:
-    """Keep external visual and webpage tool evidence out of future history."""
+    """Keep transient tool evidence and internal prompts out of future history."""
 
     marked_messages = 0
     for message in getattr(run_context, "messages", []):
@@ -1687,7 +1688,7 @@ class HelperToolsPlugin(Star):
         marked_messages = _mark_temporary_tool_results(run_context)
         if marked_messages:
             logger.info(
-                "[%s] removed %d temporary external tool result message(s) from future history",
+                "[%s] excluded %d temporary context message(s) from future history",
                 PLUGIN_ID,
                 marked_messages,
             )
@@ -1733,6 +1734,18 @@ class HelperToolsPlugin(Star):
             and not self.wake.is_llm_request_blocked(event)
         ):
             event.should_call_llm(True)
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=-99999)
+    async def empty_wake_prompt_handler(self, event: AstrMessageEvent):
+        """Give explicit no-text wakes a temporary LLM-readable prompt."""
+
+        if not self.enabled() or not self.wake.inject_empty_wake_prompt(event):
+            return
+        logger.info(
+            "[%s] attached temporary prompt for an empty explicit wake (session=%s)",
+            PLUGIN_ID,
+            clean_text(getattr(event, "unified_msg_origin", "")),
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command(
