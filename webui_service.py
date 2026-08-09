@@ -16,16 +16,24 @@ from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
-from quart import jsonify, request
+from quart import jsonify, request, send_file
 
 from .helper_utils import cfg, clean_text, extract_file_config_value, read_bool
 from .webui_activity import WebUiActivityLog
+from .webui_wallpaper import (
+    WallpaperDashboardError,
+    WallpaperLibraryDashboard,
+    WallpaperUpload,
+)
+from .wallpaper_service import WallpaperService
 
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
 _SCHEMA_PATH = Path(__file__).with_name("_conf_schema.json")
 _UPLOAD_DIRECTORY_NAME = "webui_uploads"
 _MAX_UPLOAD_BYTES = 24 * 1024 * 1024
+_MAX_DASHBOARD_DATA_URL_BYTES = 64 * 1024 * 1024
+_MAX_WALLPAPER_UPLOAD_TOTAL_BYTES = 128 * 1024 * 1024
 _MAX_TEXT_LENGTH = 200_000
 _MAX_LIST_ITEMS = 2_000
 _MAX_TEMPLATE_ITEMS = 300
@@ -67,6 +75,10 @@ class HelperToolsDashboard:
         self.activity = WebUiActivityLog(plugin.config, self.data_dir)
         self._schema = self._load_schema()
         self._lock = asyncio.Lock()
+        wallpaper = getattr(plugin, "wallpaper", None)
+        if not isinstance(wallpaper, WallpaperService):
+            wallpaper = WallpaperService(plugin.config, self.data_dir, getattr(plugin, "context", None))
+        self.wallpaper_dashboard = WallpaperLibraryDashboard(wallpaper, self.data_dir)
 
     def register(self) -> None:
         routes = (
@@ -78,6 +90,16 @@ class HelperToolsDashboard:
             ("storage", self.get_storage, ["GET"], "Get Helper Tools storage summary"),
             ("upload_file", self.upload_file, ["POST"], "Upload one Helper Tools configuration file"),
             ("clear_file", self.clear_file, ["POST"], "Clear one Helper Tools configuration file"),
+            ("wallpaper_libraries", self.get_wallpaper_libraries, ["GET"], "Get wallpaper library summaries"),
+            ("wallpaper_images", self.get_wallpaper_images, ["GET"], "List wallpaper library images"),
+            ("wallpaper_thumbnail", self.get_wallpaper_thumbnail, ["GET"], "Get wallpaper image thumbnail"),
+            ("wallpaper_file", self.get_wallpaper_file, ["GET"], "View wallpaper image file"),
+            ("wallpaper_download", self.download_wallpaper_file, ["GET"], "Download wallpaper image file"),
+            ("wallpaper_upload", self.upload_wallpaper_images, ["POST"], "Upload wallpaper images"),
+            ("wallpaper_save_library", self.save_wallpaper_library, ["POST"], "Create or update wallpaper library"),
+            ("wallpaper_delete_library", self.delete_wallpaper_library, ["POST"], "Delete wallpaper library configuration"),
+            ("wallpaper_delete_image", self.delete_wallpaper_image, ["POST"], "Delete wallpaper image"),
+            ("wallpaper_rename_image", self.rename_wallpaper_image, ["POST"], "Rename wallpaper image"),
         )
         for endpoint, handler, methods, description in routes:
             self.plugin.context.register_web_api(
@@ -295,6 +317,216 @@ class HelperToolsDashboard:
         self.activity.record("webui", "清除配置文件", detail=f"已清除 {raw_path}。")
         return jsonify({"success": True, "message": "文件配置已清除。", "file_state": self._file_state()})
 
+    async def get_wallpaper_libraries(self):
+        try:
+            result = await asyncio.to_thread(self.wallpaper_dashboard.list_libraries)
+        except WallpaperDashboardError as exc:
+            return self._error(str(exc), 400)
+        except Exception as exc:  # noqa: BLE001 - dashboard should not expose tracebacks
+            logger.exception("[HelperTools/WebUI] wallpaper library scan failed")
+            return self._error(f"读取壁纸库失败：{type(exc).__name__}", 500)
+        return jsonify({"success": True, **result})
+
+    async def get_wallpaper_images(self):
+        library_id = clean_text(request.args.get("library_id", ""))
+        query = clean_text(request.args.get("query", ""))
+        sort = clean_text(request.args.get("sort", "newest")).lower()
+        page = self._int_query("page", 1, 1, 100_000)
+        page_size = self._int_query("page_size", 36, 12, 96)
+        try:
+            result = await asyncio.to_thread(
+                self.wallpaper_dashboard.list_images,
+                library_id,
+                page=page,
+                page_size=page_size,
+                query=query,
+                sort=sort,
+            )
+        except WallpaperDashboardError as exc:
+            return self._error(str(exc), 400)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[HelperTools/WebUI] wallpaper image listing failed")
+            return self._error(f"读取壁纸图片失败：{type(exc).__name__}", 500)
+        return jsonify({"success": True, **result})
+
+    async def get_wallpaper_thumbnail(self):
+        library_id = clean_text(request.args.get("library_id", ""))
+        relative_path = clean_text(request.args.get("path", ""))
+        try:
+            thumbnail = await asyncio.to_thread(
+                self.wallpaper_dashboard.make_thumbnail,
+                library_id,
+                relative_path,
+            )
+        except WallpaperDashboardError as exc:
+            return self._error(str(exc), 400)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[HelperTools/WebUI] wallpaper thumbnail failed: %r", exc)
+            return self._error("无法生成壁纸缩略图。", 500)
+        return await send_file(
+            thumbnail,
+            mimetype="image/jpeg",
+            cache_timeout=600,
+        )
+
+    async def get_wallpaper_file(self):
+        library_id = clean_text(request.args.get("library_id", ""))
+        relative_path = clean_text(request.args.get("path", ""))
+        try:
+            _record, path = await asyncio.to_thread(
+                self.wallpaper_dashboard.resolve_image,
+                library_id,
+                relative_path,
+                require_previewable=True,
+            )
+        except WallpaperDashboardError as exc:
+            return self._error(str(exc), 400)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[HelperTools/WebUI] wallpaper file lookup failed: %r", exc)
+            return self._error("无法读取壁纸文件。", 500)
+        return await send_file(
+            path,
+            mimetype=self.wallpaper_dashboard.image_content_type(path),
+            cache_timeout=300,
+            conditional=True,
+        )
+
+    async def download_wallpaper_file(self):
+        library_id = clean_text(request.args.get("library_id", ""))
+        relative_path = clean_text(request.args.get("path", ""))
+        try:
+            _record, path = await asyncio.to_thread(
+                self.wallpaper_dashboard.resolve_image,
+                library_id,
+                relative_path,
+            )
+        except WallpaperDashboardError as exc:
+            return self._error(str(exc), 400)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[HelperTools/WebUI] wallpaper download lookup failed: %r", exc)
+            return self._error("无法读取壁纸文件。", 500)
+        return await send_file(
+            path,
+            mimetype="application/octet-stream",
+            as_attachment=True,
+            attachment_filename=path.name,
+            cache_timeout=0,
+            conditional=True,
+        )
+
+    async def upload_wallpaper_images(self):
+        try:
+            library_id, uploads = await self._wallpaper_upload_request()
+        except WallpaperDashboardError as exc:
+            return self._error(str(exc), 400)
+
+        async with self._lock:
+            try:
+                result = await asyncio.to_thread(
+                    self.wallpaper_dashboard.upload_images,
+                    library_id,
+                    uploads,
+                )
+            except WallpaperDashboardError as exc:
+                return self._error(str(exc), 400)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("[HelperTools/WebUI] wallpaper upload failed")
+                return self._error(f"上传壁纸失败：{type(exc).__name__}", 500)
+        self.activity.record(
+            "wallpaper",
+            "控制台上传壁纸",
+            status="success" if result["saved"] else "warning",
+            detail=result["message"],
+        )
+        return jsonify({"success": True, **result})
+
+    async def save_wallpaper_library(self):
+        payload = await self._json_body()
+        raw_library_id = payload.get("library_id")
+        library_id = clean_text(raw_library_id) if raw_library_id is not None else None
+        if library_id == "":
+            library_id = None
+        raw_entry = payload.get("library")
+        create_directory = self._as_bool(payload.get("create_directory", True))
+        async with self._lock:
+            try:
+                entry = self._coerce_wallpaper_library_entry(raw_entry, library_id)
+                result = await asyncio.to_thread(
+                    self.wallpaper_dashboard.save_library,
+                    library_id,
+                    entry,
+                    create_directory=create_directory,
+                )
+                self._save_plugin_config()
+            except WallpaperDashboardError as exc:
+                return self._error(str(exc), 400)
+            except DashboardValidationError as exc:
+                return self._error(str(exc), 400)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("[HelperTools/WebUI] wallpaper library save failed")
+                return self._error(f"保存壁纸库失败：{type(exc).__name__}", 500)
+        self.activity.record("wallpaper", "控制台保存壁纸库", detail=f"已保存图库“{result['name']}”。")
+        return jsonify({"success": True, "library": result, "message": "壁纸库配置已保存。"})
+
+    async def delete_wallpaper_library(self):
+        payload = await self._json_body()
+        if not self._as_bool(payload.get("confirm", False)):
+            return self._error("删除壁纸库配置前需要确认；此操作不会删除磁盘中的图片。", 400)
+        library_id = clean_text(payload.get("library_id", ""))
+        async with self._lock:
+            try:
+                result = await asyncio.to_thread(self.wallpaper_dashboard.delete_library, library_id)
+                self._save_plugin_config()
+            except WallpaperDashboardError as exc:
+                return self._error(str(exc), 400)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("[HelperTools/WebUI] wallpaper library delete failed")
+                return self._error(f"删除壁纸库失败：{type(exc).__name__}", 500)
+        self.activity.record("wallpaper", "控制台删除壁纸库", detail="已删除一个壁纸库配置，图片文件未删除。")
+        return jsonify({"success": True, "message": result["message"], "deleted": result})
+
+    async def delete_wallpaper_image(self):
+        payload = await self._json_body()
+        if not self._as_bool(payload.get("confirm", False)):
+            return self._error("删除图片前需要确认。", 400)
+        library_id = clean_text(payload.get("library_id", ""))
+        relative_path = clean_text(payload.get("path", ""))
+        async with self._lock:
+            try:
+                result = await asyncio.to_thread(
+                    self.wallpaper_dashboard.delete_image,
+                    library_id,
+                    relative_path,
+                )
+            except WallpaperDashboardError as exc:
+                return self._error(str(exc), 400)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("[HelperTools/WebUI] wallpaper image delete failed")
+                return self._error(f"删除壁纸图片失败：{type(exc).__name__}", 500)
+        self.activity.record("wallpaper", "控制台删除壁纸图片", detail="已删除一张壁纸图片。")
+        return jsonify({"success": True, "deleted": result, "message": "壁纸图片已删除。"})
+
+    async def rename_wallpaper_image(self):
+        payload = await self._json_body()
+        library_id = clean_text(payload.get("library_id", ""))
+        relative_path = clean_text(payload.get("path", ""))
+        new_name = clean_text(payload.get("new_name", ""))
+        async with self._lock:
+            try:
+                result = await asyncio.to_thread(
+                    self.wallpaper_dashboard.rename_image,
+                    library_id,
+                    relative_path,
+                    new_name,
+                )
+            except WallpaperDashboardError as exc:
+                return self._error(str(exc), 400)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("[HelperTools/WebUI] wallpaper image rename failed")
+                return self._error(f"重命名壁纸图片失败：{type(exc).__name__}", 500)
+        self.activity.record("wallpaper", "控制台重命名壁纸图片", detail="已重命名一张壁纸图片。")
+        return jsonify({"success": True, "image": result, "message": "壁纸图片已重命名。"})
+
     def record_activity(
         self,
         module: str,
@@ -324,6 +556,93 @@ class HelperToolsDashboard:
     async def _json_body(self) -> dict[str, Any]:
         payload = await request.get_json(silent=True)
         return payload if isinstance(payload, dict) else {}
+
+    async def _wallpaper_upload_request(self) -> tuple[str, list[WallpaperUpload]]:
+        """Read either native multipart uploads or a small JSON fallback.
+
+        Plugin pages use multipart data so image bytes do not need a Base64
+        copy in the browser. JSON remains useful for API callers and tests.
+        """
+
+        maximum = self.wallpaper_dashboard.upload_max_bytes()
+        if request.mimetype == "multipart/form-data":
+            form = await request.form
+            files = await request.files
+            library_id = clean_text(form.get("library_id", ""))
+            incoming = files.getlist("files") or files.getlist("file")
+            if not incoming:
+                raise WallpaperDashboardError("请至少选择一张图片。")
+            if len(incoming) > 24:
+                raise WallpaperDashboardError("一次最多上传 24 张图片。")
+            uploads: list[WallpaperUpload] = []
+            total_limit = min(_MAX_WALLPAPER_UPLOAD_TOTAL_BYTES, maximum * 5)
+            total_bytes = 0
+            for item in incoming:
+                filename = clean_text(getattr(item, "filename", ""), "wallpaper")
+                stream = getattr(item, "stream", None)
+                if stream is None or not callable(getattr(stream, "read", None)):
+                    raise WallpaperDashboardError("上传图片内容无效。")
+                # Never buffer an unbounded multipart request before validation.
+                remaining = total_limit - total_bytes
+                data = stream.read(min(maximum + 1, remaining + 1))
+                total_bytes += len(data)
+                if len(data) > maximum:
+                    raise WallpaperDashboardError("单张图片超过当前壁纸库允许大小。")
+                if total_bytes > total_limit:
+                    raise WallpaperDashboardError("本次上传总大小超过安全限制。")
+                uploads.append(WallpaperUpload(filename, data))
+            return library_id, uploads
+
+        payload = await self._json_body()
+        library_id = clean_text(payload.get("library_id", ""))
+        raw_files = payload.get("files")
+        if not isinstance(raw_files, list):
+            raw_files = [payload] if payload.get("data_url") else []
+        if not raw_files:
+            raise WallpaperDashboardError("请至少选择一张图片。")
+        if len(raw_files) > 24:
+            raise WallpaperDashboardError("一次最多上传 24 张图片。")
+        uploads = []
+        for raw in raw_files:
+            if not isinstance(raw, dict):
+                raise WallpaperDashboardError("上传图片参数无效。")
+            uploads.append(
+                WallpaperUpload(
+                    clean_text(raw.get("filename", ""), "wallpaper"),
+                    self._decode_data_url(raw.get("data_url"), maximum),
+                )
+            )
+        return library_id, uploads
+
+    def _coerce_wallpaper_library_entry(
+        self,
+        incoming: Any,
+        library_id: str | None,
+    ) -> dict[str, Any]:
+        if not isinstance(incoming, dict):
+            raise DashboardValidationError("壁纸库配置必须是对象。")
+        wallpaper_schema = self._schema.get("wallpaper", {})
+        libraries_schema = self._schema_items(wallpaper_schema).get("libraries", {})
+        template = self._schema_templates(libraries_schema).get("library", {})
+        fields = self._schema_items(template)
+        if not fields:
+            raise DashboardValidationError("找不到壁纸库配置模板。")
+        current: dict[str, Any] = {}
+        if library_id is not None:
+            current = self.wallpaper_dashboard.get_library(library_id).row
+        entry: dict[str, Any] = {"__template_key": "library"}
+        path_prefix = ("wallpaper", "libraries", library_id or "new")
+        for key, schema_entry in fields.items():
+            value = incoming.get(key, current.get(key, self._default_value(schema_entry)))
+            entry[key] = self._coerce_value(
+                schema_entry,
+                value,
+                current.get(key),
+                (*path_prefix, key),
+            )
+        if not clean_text(entry.get("name")):
+            raise DashboardValidationError("壁纸库名称不能为空。")
+        return entry
 
     def _config_mapping(self) -> dict[str, Any]:
         config = self.plugin.config
@@ -910,20 +1229,23 @@ class HelperToolsDashboard:
         current[parts[-1]] = value
 
     @staticmethod
-    def _decode_data_url(value: Any) -> bytes:
+    def _decode_data_url(value: Any, maximum_bytes: int = _MAX_UPLOAD_BYTES) -> bytes:
         if not isinstance(value, str) or not value.startswith("data:"):
             raise DashboardValidationError("上传内容格式不正确。")
         header, separator, encoded = value.partition(",")
         if not separator or ";base64" not in header.lower():
             raise DashboardValidationError("上传内容必须是 Base64 文件。")
+        maximum_bytes = min(max(int(maximum_bytes), 1), _MAX_DASHBOARD_DATA_URL_BYTES)
+        if len(encoded) > ((maximum_bytes + 2) // 3) * 4 + 8:
+            raise DashboardValidationError("上传文件超过允许大小。")
         try:
             data = base64.b64decode(encoded, validate=True)
         except (ValueError, binascii.Error) as exc:
             raise DashboardValidationError("上传文件无法解码。") from exc
         if not data:
             raise DashboardValidationError("上传文件为空。")
-        if len(data) > _MAX_UPLOAD_BYTES:
-            raise DashboardValidationError("上传文件不能超过 24 MB。")
+        if len(data) > maximum_bytes:
+            raise DashboardValidationError("上传文件超过允许大小。")
         return data
 
     def _write_uploaded_file(self, raw_path: str, filename: str, data: bytes) -> Path:

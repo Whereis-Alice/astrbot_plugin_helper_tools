@@ -8,9 +8,24 @@ const state = {
   theme: "dark",
   dirty: false,
   storageLoadedAt: 0,
+  wallpaper: {
+    libraries: [],
+    selectedLibraryId: "",
+    images: [],
+    pagination: null,
+    query: "",
+    sort: "newest",
+    previewImage: null,
+    uploadMaxBytes: 20 * 1024 * 1024,
+    uploadFileLimit: 24,
+    libraryRequestId: 0,
+    imageRequestId: 0,
+    searchTimer: null,
+  },
 };
 
 const tabTitles = {
+  wallpaper: ["LOCAL / WALLPAPERS", "壁纸库", "管理图库、图片文件、随机抽图指令与本地目录。"],
   overview: ["HELPER / CONTROL", "概览", "查看模块、工具和本地运行状态。"],
   config: ["MODULE / CONFIG", "模块配置", "按模块展开配置；每项会按插件当前 Schema 校验后保存。"],
   activity: ["LOCAL / AUDIT", "运行记录", "查看已记录的重要动作和结果。"],
@@ -73,6 +88,24 @@ async function apiPost(endpoint, body) {
   const bridge = getBridge();
   if (bridge?.apiPost) return bridge.apiPost(endpoint, body);
   return directRequest(endpoint, "POST", body);
+}
+
+function apiUrl(endpoint, params = {}) {
+  const query = new URLSearchParams(params || {}).toString();
+  return `${PLUGIN_API_BASE}/${endpoint}${query ? `?${query}` : ""}`;
+}
+
+async function apiMultipartPost(endpoint, formData) {
+  const response = await fetch(apiUrl(endpoint), {
+    method: "POST",
+    body: formData,
+    credentials: "same-origin",
+  });
+  const payload = await response.json().catch(() => ({ success: false, message: "上传接口返回了无法识别的数据。" }));
+  if (!response.ok && payload?.success !== true) {
+    throw new Error(payload?.message || `上传失败（${response.status}）。`);
+  }
+  return payload;
 }
 
 async function waitForBridge() {
@@ -905,6 +938,500 @@ async function loadStorage(force = false) {
   }
 }
 
+function selectedWallpaperLibrary() {
+  const selected = String(state.wallpaper.selectedLibraryId || "");
+  return state.wallpaper.libraries.find((item) => String(item.id) === selected) || null;
+}
+
+function wallpaperLibraryStateLabel(value) {
+  const labels = {
+    ready: "可用",
+    missing: "待创建",
+    not_directory: "路径无效",
+    unsafe: "受限",
+  };
+  return labels[value] || "未知";
+}
+
+function wallpaperImageUrl(endpoint, image) {
+  return apiUrl(endpoint, {
+    library_id: String(image.library_id ?? state.wallpaper.selectedLibraryId),
+    path: image.relative_path,
+  });
+}
+
+function wallpaperSelectedSummary(library, response = null) {
+  if (!library) return "先从左侧选择一个图库。";
+  const current = response?.library || library;
+  const count = Number(current.image_count ?? library.image_count ?? 0);
+  const location = text(current.resolved_path || library.resolved_path, "目录未配置");
+  return `${library.name} · ${count} 张图片 · ${location}`;
+}
+
+function renderWallpaperMetrics() {
+  const target = byId("wallpaper-metrics");
+  const libraries = state.wallpaper.libraries || [];
+  const images = libraries.reduce((total, item) => total + (Number(item.image_count) || 0), 0);
+  const bytes = libraries.reduce((total, item) => total + (Number(item.total_bytes) || 0), 0);
+  const attention = libraries.filter((item) => item.state !== "ready").length;
+  target.replaceChildren(
+    metric("已配置图库", libraries.length),
+    metric("已索引图片", images),
+    metric("图片占用", formatBytes(bytes)),
+    metric("待处理目录", attention),
+  );
+}
+
+function wallpaperActionButton(symbol, label, action, image = null, extraClass = "") {
+  const button = el("button", `wallpaper-icon-button ${extraClass}`.trim(), symbol);
+  button.type = "button";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.dataset.wallpaperAction = action;
+  if (image) button.dataset.wallpaperPath = image.relative_path;
+  return button;
+}
+
+function renderWallpaperLibraries() {
+  const target = byId("wallpaper-library-list");
+  target.replaceChildren();
+  const libraries = state.wallpaper.libraries || [];
+  if (!libraries.length) {
+    target.append(emptyState("还没有可管理的图库。"));
+    return;
+  }
+  libraries.forEach((library) => {
+    const row = el("div", "wallpaper-library-row");
+    if (String(library.id) === String(state.wallpaper.selectedLibraryId)) row.classList.add("selected");
+    const select = el("button", "wallpaper-library-select");
+    select.type = "button";
+    select.dataset.wallpaperAction = "select-library";
+    select.dataset.wallpaperLibraryId = String(library.id);
+    select.append(el("strong", "", library.name || "未命名图库"));
+    select.append(el("small", "", `${library.image_count || 0} 张 · ${formatBytes(library.total_bytes || 0)}`));
+    const status = el("div", "wallpaper-library-status");
+    const stateName = library.state === "ready" ? "ready" : "warning";
+    status.append(statusPill(stateName, wallpaperLibraryStateLabel(library.state)));
+    if (library.scan_truncated) status.append(el("small", "", "索引已截断"));
+    select.append(status);
+
+    const actions = el("div", "wallpaper-library-actions");
+    const edit = wallpaperActionButton("✎", "编辑图库", "edit-library");
+    edit.dataset.wallpaperLibraryId = String(library.id);
+    const remove = wallpaperActionButton("×", "删除图库配置", "delete-library", null, "danger");
+    remove.dataset.wallpaperLibraryId = String(library.id);
+    actions.append(edit, remove);
+    row.append(select, actions);
+    target.append(row);
+  });
+}
+
+function renderWallpaperBrowserState(response = null) {
+  const library = selectedWallpaperLibrary();
+  byId("wallpaper-selection-summary").textContent = wallpaperSelectedSummary(library, response);
+  const note = byId("wallpaper-browser-note");
+  const detail = text(response?.library?.detail || library?.detail);
+  const scanTruncated = Boolean(response?.pagination?.scan_truncated || library?.scan_truncated);
+  note.textContent = [detail, scanTruncated ? "图片索引较大，当前只显示已扫描范围。" : ""].filter(Boolean).join(" ");
+  const selected = Boolean(library);
+  byId("wallpaper-upload-input").disabled = !selected;
+  byId("wallpaper-image-search").disabled = !selected;
+  byId("wallpaper-image-sort").disabled = !selected;
+  byId("wallpaper-images-refresh").disabled = !selected;
+  updateWallpaperUploadSelection();
+}
+
+function imageMetaText(image) {
+  const dimensions = image.width && image.height ? `${image.width} × ${image.height}` : "尺寸未知";
+  const frameText = Number(image.frames) > 1 ? ` · ${image.frames} 帧` : "";
+  return `${dimensions} · ${image.format || "文件"} · ${formatBytes(image.bytes || 0)}${frameText}`;
+}
+
+function renderWallpaperImages(response) {
+  const target = byId("wallpaper-image-grid");
+  target.replaceChildren();
+  const library = selectedWallpaperLibrary();
+  if (!library) {
+    target.append(emptyState("选择图库后即可查看图片。"));
+    renderWallpaperPagination(null);
+    return;
+  }
+  const images = response?.images || [];
+  if (!images.length) {
+    target.append(emptyState(response?.query ? "没有匹配的图片。" : "这个图库还没有图片。"));
+    renderWallpaperPagination(response?.pagination || null);
+    return;
+  }
+  images.forEach((image) => {
+    const card = el("article", "wallpaper-image-card");
+    const media = el("div", "wallpaper-image-media");
+    if (image.preview_supported) {
+      const preview = document.createElement("img");
+      preview.src = wallpaperImageUrl("wallpaper_thumbnail", image);
+      preview.alt = image.name || "壁纸缩略图";
+      preview.loading = "lazy";
+      preview.addEventListener("error", () => {
+        media.replaceChildren(el("span", "wallpaper-image-fallback", "缩略图不可用"));
+      }, { once: true });
+      media.append(preview);
+    } else {
+      media.append(el("span", "wallpaper-image-fallback", image.error || "仅支持下载原文件"));
+    }
+    const body = el("div", "wallpaper-image-body");
+    const name = el("strong", "wallpaper-image-name", image.name || "未命名图片");
+    name.title = image.name || "";
+    const relative = el("small", "wallpaper-image-path", image.relative_path || "");
+    relative.title = image.relative_path || "";
+    body.append(name, relative, el("p", "wallpaper-image-meta", imageMetaText(image)));
+    const actions = el("div", "wallpaper-image-actions");
+    if (image.preview_supported) actions.append(wallpaperActionButton("⌕", "预览图片", "preview-image", image));
+    actions.append(wallpaperActionButton("↓", "下载原图", "download-image", image));
+    actions.append(wallpaperActionButton("✎", "重命名图片", "rename-image", image));
+    actions.append(wallpaperActionButton("×", "删除图片", "delete-image", image, "danger"));
+    body.append(actions);
+    card.append(media, body);
+    target.append(card);
+  });
+  renderWallpaperPagination(response?.pagination || null);
+}
+
+function renderWallpaperPagination(pagination) {
+  const target = byId("wallpaper-pagination");
+  target.replaceChildren();
+  if (!pagination || Number(pagination.total) <= 0) return;
+  const previous = wallpaperActionButton("‹", "上一页", "wallpaper-page");
+  previous.dataset.wallpaperPage = String(Math.max(1, Number(pagination.page) - 1));
+  previous.disabled = Number(pagination.page) <= 1;
+  const next = wallpaperActionButton("›", "下一页", "wallpaper-page");
+  next.dataset.wallpaperPage = String(Math.min(Number(pagination.page_count), Number(pagination.page) + 1));
+  next.disabled = Number(pagination.page) >= Number(pagination.page_count);
+  target.append(previous, el("span", "", `${pagination.page} / ${pagination.page_count} · ${pagination.total} 张`), next);
+}
+
+function renderWallpaperLoading(message = "正在读取图片…") {
+  byId("wallpaper-image-grid").replaceChildren(el("p", "loading-state", message));
+  byId("wallpaper-pagination").replaceChildren();
+}
+
+async function loadWallpaperLibraries(options = {}) {
+  const requestId = ++state.wallpaper.libraryRequestId;
+  if (!options.silent) byId("wallpaper-library-list").replaceChildren(el("p", "loading-state", "正在读取图库…"));
+  try {
+    const response = await apiGet("wallpaper_libraries");
+    if (!response?.success) throw new Error(response?.message || "无法读取壁纸库。");
+    if (requestId !== state.wallpaper.libraryRequestId) return;
+    state.wallpaper.libraries = Array.isArray(response.libraries) ? response.libraries : [];
+    state.wallpaper.uploadMaxBytes = Number(response.upload_max_bytes) || state.wallpaper.uploadMaxBytes;
+    state.wallpaper.uploadFileLimit = Number(response.upload_file_limit) || state.wallpaper.uploadFileLimit;
+    const selectedStillExists = state.wallpaper.libraries.some((item) => String(item.id) === String(state.wallpaper.selectedLibraryId));
+    if (!selectedStillExists) state.wallpaper.selectedLibraryId = state.wallpaper.libraries[0] ? String(state.wallpaper.libraries[0].id) : "";
+    renderWallpaperMetrics();
+    renderWallpaperLibraries();
+    renderWallpaperBrowserState();
+    if (options.loadImages !== false && state.wallpaper.selectedLibraryId) {
+      await loadWallpaperImages({ page: options.page || 1 });
+    } else if (!state.wallpaper.selectedLibraryId) {
+      renderWallpaperImages(null);
+    }
+  } catch (error) {
+    if (requestId !== state.wallpaper.libraryRequestId) return;
+    byId("wallpaper-library-list").replaceChildren(emptyState("图库读取失败。"));
+    renderWallpaperBrowserState();
+    showToast(error.message || "图库读取失败。", true);
+  }
+}
+
+async function loadWallpaperImages(options = {}) {
+  const library = selectedWallpaperLibrary();
+  if (!library) {
+    renderWallpaperImages(null);
+    return;
+  }
+  const requestId = ++state.wallpaper.imageRequestId;
+  const page = Number(options.page || state.wallpaper.pagination?.page || 1);
+  renderWallpaperLoading();
+  try {
+    const response = await apiGet("wallpaper_images", {
+      library_id: String(library.id),
+      page,
+      page_size: 36,
+      query: state.wallpaper.query,
+      sort: state.wallpaper.sort,
+    });
+    if (!response?.success) throw new Error(response?.message || "无法读取图库图片。");
+    if (requestId !== state.wallpaper.imageRequestId) return;
+    state.wallpaper.images = Array.isArray(response.images) ? response.images : [];
+    state.wallpaper.pagination = response.pagination || null;
+    renderWallpaperBrowserState(response);
+    renderWallpaperImages(response);
+  } catch (error) {
+    if (requestId !== state.wallpaper.imageRequestId) return;
+    byId("wallpaper-image-grid").replaceChildren(emptyState("图片读取失败。"));
+    byId("wallpaper-pagination").replaceChildren();
+    showToast(error.message || "图片读取失败。", true);
+  }
+}
+
+function updateWallpaperUploadSelection() {
+  const input = byId("wallpaper-upload-input");
+  const selection = byId("wallpaper-upload-selection");
+  const upload = byId("wallpaper-upload-button");
+  const files = Array.from(input.files || []);
+  const hasLibrary = Boolean(selectedWallpaperLibrary());
+  const total = files.reduce((sum, file) => sum + file.size, 0);
+  const tooMany = files.length > state.wallpaper.uploadFileLimit;
+  const tooLarge = files.some((file) => file.size > state.wallpaper.uploadMaxBytes);
+  if (!files.length) {
+    selection.textContent = "未选择文件";
+  } else if (tooMany) {
+    selection.textContent = `一次最多 ${state.wallpaper.uploadFileLimit} 张`;
+  } else if (tooLarge) {
+    selection.textContent = `单张不超过 ${formatBytes(state.wallpaper.uploadMaxBytes)}`;
+  } else {
+    selection.textContent = `${files.length} 张 · ${formatBytes(total)}`;
+  }
+  upload.disabled = !hasLibrary || !files.length || tooMany || tooLarge;
+}
+
+async function uploadWallpaperImages() {
+  const library = selectedWallpaperLibrary();
+  const input = byId("wallpaper-upload-input");
+  const files = Array.from(input.files || []);
+  if (!library || !files.length) return;
+  const upload = byId("wallpaper-upload-button");
+  const previousText = upload.textContent;
+  upload.disabled = true;
+  upload.textContent = "上传中…";
+  try {
+    const formData = new FormData();
+    formData.append("library_id", String(library.id));
+    files.forEach((file) => formData.append("files", file, file.name));
+    const response = await apiMultipartPost("wallpaper_upload", formData);
+    if (!response?.success) throw new Error(response?.message || "上传壁纸失败。");
+    input.value = "";
+    updateWallpaperUploadSelection();
+    await loadWallpaperLibraries({ loadImages: false, silent: true });
+    await loadWallpaperImages({ page: 1 });
+    showToast(response.message || "壁纸已上传。", !response.saved?.length);
+  } catch (error) {
+    showToast(error.message || "上传壁纸失败。", true);
+  } finally {
+    upload.textContent = previousText;
+    updateWallpaperUploadSelection();
+  }
+}
+
+function showWallpaperDialog(id) {
+  const dialog = byId(id);
+  if (!dialog) return;
+  if (typeof dialog.showModal === "function") {
+    if (!dialog.open) dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
+}
+
+function closeWallpaperDialog(id) {
+  const dialog = byId(id);
+  if (!dialog) return;
+  if (typeof dialog.close === "function" && dialog.open) dialog.close();
+  else dialog.removeAttribute("open");
+}
+
+function normalizeWallpaperSendMode(value) {
+  const source = text(value);
+  if (source === "caption_first") return "先发文案再发图";
+  if (source === "image_only") return "只发图片";
+  if (source === "together") return "同一条消息";
+  return ["同一条消息", "先发文案再发图", "只发图片"].includes(source) ? source : "同一条消息";
+}
+
+function openWallpaperLibraryDialog(library = null) {
+  byId("wallpaper-library-dialog-title").textContent = library ? "编辑图库" : "新增图库";
+  byId("wallpaper-library-id").value = library ? String(library.id) : "";
+  byId("wallpaper-library-name").value = library?.name || "";
+  byId("wallpaper-library-path").value = library?.configured_path || "";
+  byId("wallpaper-library-commands").value = Array.isArray(library?.commands) ? library.commands.join("\n") : "";
+  byId("wallpaper-library-caption").value = library?.caption || "随机给你抽一张 {library}。";
+  byId("wallpaper-library-send-mode").value = normalizeWallpaperSendMode(library?.send_mode);
+  byId("wallpaper-library-recursive").checked = Boolean(library?.recursive);
+  byId("wallpaper-library-create-directory").checked = true;
+  showWallpaperDialog("wallpaper-library-dialog");
+  byId("wallpaper-library-name").focus();
+}
+
+async function saveWallpaperLibrary() {
+  const libraryId = text(byId("wallpaper-library-id").value);
+  const name = text(byId("wallpaper-library-name").value);
+  const commands = byId("wallpaper-library-commands").value
+    .split(/\r?\n/)
+    .map((item) => text(item))
+    .filter(Boolean);
+  const payload = {
+    library_id: libraryId || null,
+    create_directory: byId("wallpaper-library-create-directory").checked,
+    library: {
+      name,
+      path: byId("wallpaper-library-path").value,
+      commands,
+      caption: byId("wallpaper-library-caption").value,
+      send_mode: byId("wallpaper-library-send-mode").value,
+      recursive: byId("wallpaper-library-recursive").checked,
+    },
+  };
+  try {
+    const response = await apiPost("wallpaper_save_library", payload);
+    if (!response?.success) throw new Error(response?.message || "保存图库失败。");
+    state.wallpaper.selectedLibraryId = String(response.library?.id ?? libraryId);
+    closeWallpaperDialog("wallpaper-library-dialog");
+    await loadWallpaperLibraries({ page: 1 });
+    showToast(response.message || "图库已保存。");
+  } catch (error) {
+    showToast(error.message || "保存图库失败。", true);
+  }
+}
+
+async function deleteWallpaperLibrary(libraryId) {
+  const library = state.wallpaper.libraries.find((item) => String(item.id) === String(libraryId));
+  if (!library) return;
+  if (!window.confirm(`删除图库“${library.name}”的配置？磁盘中的图片不会删除。`)) return;
+  try {
+    const response = await apiPost("wallpaper_delete_library", { library_id: String(library.id), confirm: true });
+    if (!response?.success) throw new Error(response?.message || "删除图库失败。");
+    if (String(state.wallpaper.selectedLibraryId) === String(library.id)) state.wallpaper.selectedLibraryId = "";
+    await loadWallpaperLibraries({ page: 1 });
+    showToast(response.message || "图库配置已删除。");
+  } catch (error) {
+    showToast(error.message || "删除图库失败。", true);
+  }
+}
+
+function findWallpaperImage(path) {
+  return state.wallpaper.images.find((item) => item.relative_path === path) || null;
+}
+
+function downloadWallpaperImage(image) {
+  const link = document.createElement("a");
+  link.href = wallpaperImageUrl("wallpaper_download", image);
+  link.download = image.name || "wallpaper";
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
+function openWallpaperPreview(image) {
+  if (!image?.preview_supported) {
+    showToast("该格式不能直接预览，可下载原文件。", true);
+    return;
+  }
+  state.wallpaper.previewImage = image;
+  byId("wallpaper-preview-title").textContent = image.name || "图片预览";
+  byId("wallpaper-preview-image").src = wallpaperImageUrl("wallpaper_file", image);
+  byId("wallpaper-preview-meta").textContent = `${image.relative_path} · ${imageMetaText(image)} · 修改于 ${formatDate(image.modified_at, true)}`;
+  showWallpaperDialog("wallpaper-preview-dialog");
+}
+
+function openWallpaperRename(image) {
+  if (!image) return;
+  byId("wallpaper-rename-path").value = image.relative_path;
+  byId("wallpaper-rename-name").value = image.name || "";
+  closeWallpaperDialog("wallpaper-preview-dialog");
+  showWallpaperDialog("wallpaper-rename-dialog");
+  byId("wallpaper-rename-name").focus();
+  byId("wallpaper-rename-name").select();
+}
+
+async function renameWallpaperImage() {
+  const path = text(byId("wallpaper-rename-path").value);
+  const newName = text(byId("wallpaper-rename-name").value);
+  const library = selectedWallpaperLibrary();
+  if (!library || !path || !newName) return;
+  try {
+    const response = await apiPost("wallpaper_rename_image", {
+      library_id: String(library.id),
+      path,
+      new_name: newName,
+    });
+    if (!response?.success) throw new Error(response?.message || "重命名图片失败。");
+    closeWallpaperDialog("wallpaper-rename-dialog");
+    state.wallpaper.previewImage = null;
+    await loadWallpaperLibraries({ loadImages: false, silent: true });
+    await loadWallpaperImages();
+    showToast(response.message || "图片已重命名。");
+  } catch (error) {
+    showToast(error.message || "重命名图片失败。", true);
+  }
+}
+
+async function deleteWallpaperImage(image) {
+  const library = selectedWallpaperLibrary();
+  if (!library || !image) return;
+  if (!window.confirm(`删除图片“${image.name}”？此操作无法撤销。`)) return;
+  try {
+    const response = await apiPost("wallpaper_delete_image", {
+      library_id: String(library.id),
+      path: image.relative_path,
+      confirm: true,
+    });
+    if (!response?.success) throw new Error(response?.message || "删除图片失败。");
+    closeWallpaperDialog("wallpaper-preview-dialog");
+    closeWallpaperDialog("wallpaper-rename-dialog");
+    state.wallpaper.previewImage = null;
+    await loadWallpaperLibraries({ loadImages: false, silent: true });
+    await loadWallpaperImages();
+    showToast(response.message || "图片已删除。");
+  } catch (error) {
+    showToast(error.message || "删除图片失败。", true);
+  }
+}
+
+async function handleWallpaperAction(button) {
+  const action = button.dataset.wallpaperAction;
+  const libraryId = button.dataset.wallpaperLibraryId;
+  const image = findWallpaperImage(button.dataset.wallpaperPath || "");
+  if (action === "select-library") {
+    if (String(state.wallpaper.selectedLibraryId) !== String(libraryId)) {
+      state.wallpaper.selectedLibraryId = String(libraryId);
+      state.wallpaper.pagination = null;
+      state.wallpaper.query = "";
+      byId("wallpaper-image-search").value = "";
+      renderWallpaperLibraries();
+      renderWallpaperBrowserState();
+      await loadWallpaperImages({ page: 1 });
+    }
+    return;
+  }
+  if (action === "edit-library") {
+    const library = state.wallpaper.libraries.find((item) => String(item.id) === String(libraryId));
+    if (library) openWallpaperLibraryDialog(library);
+    return;
+  }
+  if (action === "delete-library") {
+    await deleteWallpaperLibrary(libraryId);
+    return;
+  }
+  if (action === "preview-image") {
+    openWallpaperPreview(image);
+    return;
+  }
+  if (action === "download-image") {
+    if (image) downloadWallpaperImage(image);
+    return;
+  }
+  if (action === "rename-image") {
+    openWallpaperRename(image);
+    return;
+  }
+  if (action === "delete-image") {
+    await deleteWallpaperImage(image);
+    return;
+  }
+  if (action === "wallpaper-page") {
+    await loadWallpaperImages({ page: Number(button.dataset.wallpaperPage) || 1 });
+  }
+}
+
 function renderAbout() {
   const target = byId("about-content");
   target.replaceChildren();
@@ -937,6 +1464,7 @@ function switchTab(tab) {
   byId("page-subtitle").textContent = subtitle;
   if (tab === "activity") void loadActivities();
   if (tab === "storage") void loadStorage();
+  if (tab === "wallpaper") void loadWallpaperLibraries();
 }
 
 async function loadState() {
@@ -951,6 +1479,7 @@ async function loadState() {
     renderConfig();
     renderStorage(response.storage, response.runtime);
     renderAbout();
+    if (state.activeTab === "wallpaper") void loadWallpaperLibraries({ silent: true });
     setDirty(false);
     setHeaderState(`配置已加载 · ${response.config_updated_at ? `最近保存 ${formatDate(response.config_updated_at)}` : "未提供保存时间"}`);
   } catch (error) {
@@ -961,6 +1490,16 @@ async function loadState() {
 }
 
 document.addEventListener("click", (event) => {
+  const closeDialog = event.target.closest("[data-close-dialog]");
+  if (closeDialog) {
+    closeWallpaperDialog(closeDialog.dataset.closeDialog);
+    return;
+  }
+  const wallpaperAction = event.target.closest("[data-wallpaper-action]");
+  if (wallpaperAction) {
+    void handleWallpaperAction(wallpaperAction);
+    return;
+  }
   const nav = event.target.closest("[data-tab]");
   if (nav) {
     switchTab(nav.dataset.tab);
@@ -1004,18 +1543,63 @@ document.addEventListener("click", (event) => {
   }
   if (event.target.closest("#storage-refresh")) {
     void loadStorage(true);
+    return;
+  }
+  if (event.target.closest("#wallpaper-library-create")) {
+    openWallpaperLibraryDialog();
+    return;
+  }
+  if (event.target.closest("#wallpaper-upload-button")) {
+    void uploadWallpaperImages();
+    return;
+  }
+  if (event.target.closest("#wallpaper-images-refresh")) {
+    void loadWallpaperLibraries({ page: state.wallpaper.pagination?.page || 1 });
+    return;
+  }
+  if (event.target.closest("#wallpaper-preview-download")) {
+    if (state.wallpaper.previewImage) downloadWallpaperImage(state.wallpaper.previewImage);
+    return;
+  }
+  if (event.target.closest("#wallpaper-preview-rename")) {
+    openWallpaperRename(state.wallpaper.previewImage);
+    return;
+  }
+  if (event.target.closest("#wallpaper-preview-delete")) {
+    void deleteWallpaperImage(state.wallpaper.previewImage);
   }
 });
 
 document.addEventListener("input", (event) => {
   if (event.target.closest("#config-modules")) setDirty(true);
   if (event.target.id === "config-search") filterConfigModules();
+  if (event.target.id === "wallpaper-image-search") {
+    state.wallpaper.query = event.target.value;
+    window.clearTimeout(state.wallpaper.searchTimer);
+    state.wallpaper.searchTimer = window.setTimeout(() => void loadWallpaperImages({ page: 1 }), 260);
+  }
 });
 
 document.addEventListener("change", (event) => {
   if (event.target.closest("#config-modules")) setDirty(true);
   if (event.target.id === "enabled-only") filterConfigModules();
   if (event.target.id === "activity-module-filter" || event.target.id === "activity-status-filter") void loadActivities();
+  if (event.target.id === "wallpaper-upload-input") updateWallpaperUploadSelection();
+  if (event.target.id === "wallpaper-image-sort") {
+    state.wallpaper.sort = event.target.value;
+    void loadWallpaperImages({ page: 1 });
+  }
+});
+
+document.addEventListener("submit", (event) => {
+  if (event.target.id === "wallpaper-library-form") {
+    event.preventDefault();
+    void saveWallpaperLibrary();
+  }
+  if (event.target.id === "wallpaper-rename-form") {
+    event.preventDefault();
+    void renameWallpaperImage();
+  }
 });
 
 applyTheme("dark", false);

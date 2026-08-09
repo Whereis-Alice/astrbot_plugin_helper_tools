@@ -24,6 +24,7 @@
           <button class="nav-item" type="button" data-tab="activity">运行记录</button>
           <button class="nav-item" type="button" data-tab="storage">存储诊断</button>
           <button class="nav-item" type="button" data-tab="about">说明</button>
+          <button class="nav-item" type="button" data-tab="wallpaper">壁纸库</button>
         </nav>
         <div class="sidebar-footer">
           <div class="theme-label"><span>INTERFACE THEME</span><i><b></b>已连接</i></div>
@@ -138,6 +139,36 @@
           </section>
         </section>
 
+        <section id="tab-wallpaper" class="tab-pane" aria-label="壁纸库">
+          <div id="wallpaper-metrics" class="metric-grid" aria-live="polite"></div>
+          <div class="wallpaper-layout">
+            <section class="data-section wallpaper-library-section" aria-labelledby="wallpaper-libraries-heading">
+              <div class="section-heading">
+                <div><p class="eyebrow">LIBRARY INDEX</p><h2 id="wallpaper-libraries-heading">图库</h2></div>
+                <button id="wallpaper-library-create" class="quiet-action" type="button">新增图库</button>
+              </div>
+              <div id="wallpaper-library-list" class="wallpaper-library-list"></div>
+            </section>
+            <section class="data-section wallpaper-browser-section" aria-labelledby="wallpaper-browser-heading">
+              <div class="section-heading wallpaper-browser-heading">
+                <div><p class="eyebrow">IMAGE BROWSER</p><h2 id="wallpaper-browser-heading">图片</h2><p id="wallpaper-selection-summary"></p></div>
+                <button id="wallpaper-images-refresh" class="icon-action compact-icon-action" type="button" title="刷新当前图库" aria-label="刷新当前图库">↻</button>
+              </div>
+              <div id="wallpaper-upload-controls" class="wallpaper-upload-controls">
+                <label class="wallpaper-file-picker"><input id="wallpaper-upload-input" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif" multiple /><span>选择图片</span><small id="wallpaper-upload-selection">未选择文件</small></label>
+                <button id="wallpaper-upload-button" class="primary-compact" type="button" disabled>上传</button>
+              </div>
+              <div class="wallpaper-browser-toolbar">
+                <label class="search-field"><span class="visually-hidden">搜索当前图库</span><input id="wallpaper-image-search" type="search" placeholder="搜索文件名或子目录" autocomplete="off" /></label>
+                <label class="compact-field wallpaper-sort-field"><span>排序</span><select id="wallpaper-image-sort"><option value="newest">最近修改</option><option value="name">文件名</option><option value="size">文件大小</option></select></label>
+              </div>
+              <p id="wallpaper-browser-note" class="wallpaper-browser-note"></p>
+              <div id="wallpaper-image-grid" class="wallpaper-image-grid"></div>
+              <div id="wallpaper-pagination" class="wallpaper-pagination" aria-label="图库分页"></div>
+            </section>
+          </div>
+        </section>
+
         <section id="tab-storage" class="tab-pane" aria-label="存储诊断">
           <div id="storage-metrics" class="metric-grid"></div>
           <div class="section-split">
@@ -162,6 +193,41 @@
         </section>
       </section>
     </main>
+    <dialog id="wallpaper-library-dialog" class="wallpaper-dialog">
+      <form id="wallpaper-library-form" class="wallpaper-dialog-form">
+        <div class="dialog-heading"><div><p class="eyebrow">LIBRARY SETTINGS</p><h2 id="wallpaper-library-dialog-title">新增图库</h2></div><button class="dialog-close" type="button" data-close-dialog="wallpaper-library-dialog" title="关闭" aria-label="关闭">×</button></div>
+        <input id="wallpaper-library-id" type="hidden" />
+        <label class="dialog-field"><span>图库名称</span><input id="wallpaper-library-name" type="text" maxlength="100" required /></label>
+        <label class="dialog-field"><span>本地目录</span><input id="wallpaper-library-path" type="text" placeholder="留空使用 wallpapers/图库名" /></label>
+        <label class="dialog-field"><span>随机抽图指令</span><textarea id="wallpaper-library-commands" placeholder="每行一个指令"></textarea></label>
+        <label class="dialog-field"><span>图片文案</span><textarea id="wallpaper-library-caption" placeholder="可使用 {library}、{filename}、{path}"></textarea></label>
+        <div class="dialog-form-grid">
+          <label class="dialog-field"><span>文案发送方式</span><select id="wallpaper-library-send-mode"><option value="同一条消息">同一条消息</option><option value="先发文案再发图">先发文案再发图</option><option value="只发图片">只发图片</option></select></label>
+          <label class="bool-control dialog-toggle"><input id="wallpaper-library-recursive" type="checkbox" /><span>扫描子目录</span></label>
+        </div>
+        <label class="bool-control dialog-toggle"><input id="wallpaper-library-create-directory" type="checkbox" checked /><span>目录不存在时创建</span></label>
+        <div class="dialog-actions"><button class="quiet-action" type="button" data-close-dialog="wallpaper-library-dialog">取消</button><button class="primary-compact" type="submit">保存图库</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="wallpaper-preview-dialog" class="wallpaper-dialog wallpaper-preview-dialog">
+      <div class="wallpaper-dialog-form">
+        <div class="dialog-heading"><div><p class="eyebrow">IMAGE PREVIEW</p><h2 id="wallpaper-preview-title">图片预览</h2></div><button class="dialog-close" type="button" data-close-dialog="wallpaper-preview-dialog" title="关闭" aria-label="关闭">×</button></div>
+        <div class="wallpaper-preview-frame"><img id="wallpaper-preview-image" alt="壁纸预览" /></div>
+        <p id="wallpaper-preview-meta" class="wallpaper-preview-meta"></p>
+        <div class="dialog-actions"><button id="wallpaper-preview-download" class="quiet-action" type="button">下载原图</button><button id="wallpaper-preview-rename" class="quiet-action" type="button">重命名</button><button id="wallpaper-preview-delete" class="danger-action" type="button">删除</button></div>
+      </div>
+    </dialog>
+
+    <dialog id="wallpaper-rename-dialog" class="wallpaper-dialog wallpaper-rename-dialog">
+      <form id="wallpaper-rename-form" class="wallpaper-dialog-form">
+        <div class="dialog-heading"><div><p class="eyebrow">RENAME IMAGE</p><h2>重命名图片</h2></div><button class="dialog-close" type="button" data-close-dialog="wallpaper-rename-dialog" title="关闭" aria-label="关闭">×</button></div>
+        <input id="wallpaper-rename-path" type="hidden" />
+        <label class="dialog-field"><span>新文件名</span><input id="wallpaper-rename-name" type="text" required maxlength="132" /></label>
+        <p class="dialog-note">扩展名会保持原样。</p>
+        <div class="dialog-actions"><button class="quiet-action" type="button" data-close-dialog="wallpaper-rename-dialog">取消</button><button class="primary-compact" type="submit">确认重命名</button></div>
+      </form>
+    </dialog>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script type="module" src="./app.js"></script>
   </body>

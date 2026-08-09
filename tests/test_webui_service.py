@@ -3,11 +3,13 @@ from __future__ import annotations
 import base64
 import json
 import unittest
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any
 
+from PIL import Image
 from quart import Quart
 
 from astrbot_plugin_helper_tools.webui_activity import WebUiActivityLog
@@ -83,7 +85,7 @@ class DashboardRegistrationTests(unittest.TestCase):
 
             dashboard.register()
 
-            self.assertEqual(len(plugin.context.routes), 8)
+            self.assertEqual(len(plugin.context.routes), 18)
             self.assertEqual(
                 {item[0].rsplit("/", 1)[-1] for item in plugin.context.routes},
                 {
@@ -95,6 +97,16 @@ class DashboardRegistrationTests(unittest.TestCase):
                     "storage",
                     "upload_file",
                     "clear_file",
+                    "wallpaper_libraries",
+                    "wallpaper_images",
+                    "wallpaper_thumbnail",
+                    "wallpaper_file",
+                    "wallpaper_download",
+                    "wallpaper_upload",
+                    "wallpaper_save_library",
+                    "wallpaper_delete_library",
+                    "wallpaper_delete_image",
+                    "wallpaper_rename_image",
                 },
             )
 
@@ -115,6 +127,19 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
                     "ai_review": {"api_key": "review-secret-key"},
                 },
                 "qq_avatar": {"enabled": True},
+                "wallpaper": {
+                    "libraries": [
+                        {
+                            "__template_key": "library",
+                            "name": "测试图库",
+                            "path": "wallpapers/test",
+                            "commands": ["测试壁纸"],
+                            "caption": "随机给你抽一张 {library}。",
+                            "send_mode": "同一条消息",
+                            "recursive": True,
+                        }
+                    ]
+                },
             },
         )
         self.plugin = _Plugin(self.data_dir, self.config)
@@ -129,6 +154,56 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
             methods=["POST"],
         )
         self.app.add_url_rule("/upload", view_func=self.dashboard.upload_file, methods=["POST"])
+        self.app.add_url_rule(
+            "/wallpaper-libraries",
+            view_func=self.dashboard.get_wallpaper_libraries,
+            methods=["GET"],
+        )
+        self.app.add_url_rule(
+            "/wallpaper-images",
+            view_func=self.dashboard.get_wallpaper_images,
+            methods=["GET"],
+        )
+        self.app.add_url_rule(
+            "/wallpaper-thumbnail",
+            view_func=self.dashboard.get_wallpaper_thumbnail,
+            methods=["GET"],
+        )
+        self.app.add_url_rule(
+            "/wallpaper-file",
+            view_func=self.dashboard.get_wallpaper_file,
+            methods=["GET"],
+        )
+        self.app.add_url_rule(
+            "/wallpaper-download",
+            view_func=self.dashboard.download_wallpaper_file,
+            methods=["GET"],
+        )
+        self.app.add_url_rule(
+            "/wallpaper-upload",
+            view_func=self.dashboard.upload_wallpaper_images,
+            methods=["POST"],
+        )
+        self.app.add_url_rule(
+            "/wallpaper-save-library",
+            view_func=self.dashboard.save_wallpaper_library,
+            methods=["POST"],
+        )
+        self.app.add_url_rule(
+            "/wallpaper-delete-library",
+            view_func=self.dashboard.delete_wallpaper_library,
+            methods=["POST"],
+        )
+        self.app.add_url_rule(
+            "/wallpaper-delete-image",
+            view_func=self.dashboard.delete_wallpaper_image,
+            methods=["POST"],
+        )
+        self.app.add_url_rule(
+            "/wallpaper-rename-image",
+            view_func=self.dashboard.rename_wallpaper_image,
+            methods=["POST"],
+        )
         self.client = self.app.test_client()
 
     async def asyncTearDown(self) -> None:
@@ -141,6 +216,18 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def _save(self, config: dict[str, Any]):
         return await self.client.post("/save", json={"config": config})
+
+    def _png_bytes(self, *, size: tuple[int, int] = (48, 32), color: str = "#4bf0df") -> bytes:
+        output = BytesIO()
+        Image.new("RGB", size, color).save(output, format="PNG")
+        return output.getvalue()
+
+    def _write_wallpaper(self, name: str = "one.png") -> Path:
+        directory = self.data_dir / "wallpapers" / "test"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / name
+        path.write_bytes(self._png_bytes())
+        return path
 
     async def test_state_redacts_secrets_and_uses_registered_tool_state(self) -> None:
         state = await self._state()
@@ -259,6 +346,145 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         response = await self.client.get("/activities")
         self.assertEqual((await response.get_json())["records"], [])
+
+    async def test_wallpaper_library_api_browses_previews_and_blocks_path_escape(self) -> None:
+        path = self._write_wallpaper()
+
+        response = await self.client.get("/wallpaper-libraries")
+        body = await response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["libraries"][0]["name"], "测试图库")
+        self.assertEqual(body["libraries"][0]["image_count"], 1)
+
+        response = await self.client.get(
+            "/wallpaper-images?library_id=0&page=1&page_size=36&sort=newest"
+        )
+        body = await response.get_json()
+        self.assertEqual(response.status_code, 200)
+        image = body["images"][0]
+        self.assertEqual(image["relative_path"], "one.png")
+        self.assertEqual((image["width"], image["height"]), (48, 32))
+        self.assertTrue(image["preview_supported"])
+
+        response = await self.client.get("/wallpaper-thumbnail?library_id=0&path=one.png")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content_type, "image/jpeg")
+        self.assertGreater(len(await response.get_data()), 0)
+
+        response = await self.client.get("/wallpaper-file?library_id=0&path=one.png")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content_type, "image/png")
+
+        response = await self.client.get("/wallpaper-download?library_id=0&path=one.png")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment", response.headers.get("Content-Disposition", ""))
+
+        response = await self.client.get("/wallpaper-file?library_id=0&path=../config.json")
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(path.is_file())
+
+    async def test_wallpaper_upload_rename_delete_and_registry_sync(self) -> None:
+        data = self._png_bytes(color="#ff5ac9")
+        payload = base64.b64encode(data).decode("ascii")
+        response = await self.client.post(
+            "/wallpaper-upload",
+            json={
+                "library_id": "0",
+                "files": [
+                    {
+                        "filename": "uploaded.png",
+                        "data_url": f"data:image/png;base64,{payload}",
+                    }
+                ],
+            },
+        )
+        body = await response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(body["saved"]), 1)
+        uploaded = self.data_dir / "wallpapers" / "test" / "uploaded.png"
+        self.assertTrue(uploaded.is_file())
+
+        service = self.dashboard.wallpaper_dashboard.wallpaper
+        service.record_sent_image("message-1", uploaded, "测试图库")
+        response = await self.client.post(
+            "/wallpaper-rename-image",
+            json={"library_id": "0", "path": "uploaded.png", "new_name": "renamed.jpg"},
+        )
+        body = await response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["image"]["relative_path"], "renamed.png")
+        renamed = self.data_dir / "wallpapers" / "test" / "renamed.png"
+        self.assertTrue(renamed.is_file())
+        self.assertEqual(service.load_registry()["message-1"]["path"], str(renamed.resolve()))
+
+        response = await self.client.post(
+            "/wallpaper-delete-image",
+            json={"library_id": "0", "path": "renamed.png", "confirm": True},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(renamed.exists())
+        self.assertNotIn("message-1", service.load_registry())
+
+    async def test_wallpaper_file_api_rejects_symbolic_link(self) -> None:
+        directory = self.data_dir / "wallpapers" / "test"
+        directory.mkdir(parents=True, exist_ok=True)
+        outside = self.data_dir / "outside.png"
+        outside.write_bytes(self._png_bytes())
+        linked = directory / "linked.png"
+        try:
+            linked.symlink_to(outside)
+        except OSError:
+            self.skipTest("当前系统不允许测试进程创建符号链接")
+
+        response = await self.client.get("/wallpaper-file?library_id=0&path=linked.png")
+        self.assertEqual(response.status_code, 400)
+
+    async def test_wallpaper_library_config_create_edit_and_remove_keeps_files(self) -> None:
+        response = await self.client.post(
+            "/wallpaper-save-library",
+            json={
+                "library": {
+                    "name": "新图库",
+                    "path": "wallpapers/new",
+                    "commands": ["新壁纸"],
+                    "caption": "图：{filename}",
+                    "send_mode": "只发图片",
+                    "recursive": False,
+                },
+                "create_directory": True,
+            },
+        )
+        body = await response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["library"]["id"], "1")
+        self.assertTrue((self.data_dir / "wallpapers" / "new").is_dir())
+        self.assertEqual(self.config.save_calls, 1)
+
+        response = await self.client.post(
+            "/wallpaper-save-library",
+            json={
+                "library_id": "1",
+                "library": {
+                    "name": "改名图库",
+                    "path": "wallpapers/new",
+                    "commands": ["改名壁纸"],
+                    "caption": "图：{filename}",
+                    "send_mode": "同一条消息",
+                    "recursive": True,
+                },
+                "create_directory": False,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.config["wallpaper"]["libraries"][1]["name"], "改名图库")
+
+        response = await self.client.post(
+            "/wallpaper-delete-library",
+            json={"library_id": "1", "confirm": True},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.config["wallpaper"]["libraries"]), 1)
+        self.assertTrue((self.data_dir / "wallpapers" / "new").is_dir())
 
 
 class ActivityPrivacyTests(unittest.TestCase):
