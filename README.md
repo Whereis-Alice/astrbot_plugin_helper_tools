@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频与专栏理解、X/Twitter 资料检索、网页浏览、环境感知、QQ 防撤回、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.10.4`
+- 当前版本：`v0.10.5`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -38,7 +38,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.10.4` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.10.5` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -61,6 +61,8 @@ python -m playwright install chromium
 - **存储诊断**：只扫描本插件自己的数据目录，显示文件数量、占用、最近写入和分目录统计，不会展示文件内容、聊天原文或凭据。
 
 敏感文本和上传文件在页面中只会显示“已配置/未配置”，不会回显明文。保存模块总开关或 `llm_tool_enabled` 后，控制台会立即同步本插件当前已注册的 LLM 工具；定时任务、浏览器、下载器、扫码和缓存等已初始化资源的设置改动，仍建议在 AstrBot 插件页重载一次。
+
+控制台桌面侧栏采用紧凑宽度，底部的主题、刷新、保存和状态信息会固定在当前视口内；窄屏时会自动恢复为横向导航，不占用内容区宽度。
 
 ## 网页浏览（Playwright，可选）
 

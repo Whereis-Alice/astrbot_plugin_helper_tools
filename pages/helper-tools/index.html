@@ -27,7 +27,10 @@
           <button class="nav-item" type="button" data-tab="wallpaper">壁纸库</button>
         </nav>
         <div class="sidebar-footer">
-          <div class="theme-label"><span>INTERFACE THEME</span><i><b></b>已连接</i></div>
+          <div class="sidebar-footer-heading">
+            <div class="theme-label"><span>界面外观</span><i><b></b>已连接</i></div>
+            <button id="reload-button" class="icon-action sidebar-reload-action" type="button" title="重新读取配置与状态" aria-label="重新读取配置与状态">↻</button>
+          </div>
           <div class="theme-switcher" role="group" aria-label="控制台主题">
             <button class="theme-option" type="button" data-theme="dark" aria-pressed="true">
               <span class="theme-swatch night" aria-hidden="true"></span>夜间
@@ -36,12 +39,7 @@
               <span class="theme-swatch daylight" aria-hidden="true"></span>普通
             </button>
           </div>
-          <div class="sidebar-actions">
-            <button id="reload-button" class="icon-action" type="button" title="重新读取配置与状态" aria-label="重新读取配置与状态">↻</button>
-            <button id="save-button" class="primary-action" type="button">
-              <span>保存配置</span><small>APPLY CHANGES</small>
-            </button>
-          </div>
+          <button id="save-button" class="primary-action sidebar-save-action" type="button"><span>保存配置</span></button>
           <p id="sidebar-status" class="sidebar-status">正在连接控制台...</p>
         </div>
       </aside>
