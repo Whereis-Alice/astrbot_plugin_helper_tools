@@ -116,6 +116,33 @@ def _event_sender_id(event: Any) -> str:
     return clean_text(getter()) if callable(getter) else ""
 
 
+def _onebot_field(value: Any, name: str) -> Any:
+    """Read a field from a OneBot Event or its mapping representation."""
+    if value is None:
+        return None
+    getter = getattr(value, "get", None)
+    if callable(getter):
+        try:
+            field_value = getter(name, None)
+        except Exception:  # noqa: BLE001 - third-party OneBot event objects vary
+            field_value = None
+        if field_value is not None:
+            return field_value
+    return getattr(value, name, None)
+
+
+def _event_onebot_sender_id(event: Any) -> str:
+    """Return the original OneBot sender ID when the adapter retained it."""
+    if _event_platform_name(event) != "aiocqhttp":
+        return ""
+    message_obj = getattr(event, "message_obj", None)
+    raw_event = getattr(message_obj, "raw_message", None)
+    user_id = _onebot_field(raw_event, "user_id")
+    if user_id is None:
+        user_id = _onebot_field(_onebot_field(raw_event, "sender"), "user_id")
+    return clean_text(user_id)
+
+
 def _event_group_id(event: Any) -> str:
     getter = getattr(event, "get_group_id", None)
     return clean_text(getter()) if callable(getter) else ""
@@ -397,6 +424,18 @@ class WakeService:
                 )
             return "private_bypassed"
 
+        # A plugin can rewrite event.sender while processing a message. Resolve this
+        # before any await and prefer the original OneBot payload to avoid false hits.
+        qqbot_sender_id = _event_onebot_sender_id(event) or sender_id
+        if (
+            self.block_enabled()
+            and self.block_qqbot()
+            and _event_platform_name(event) == "aiocqhttp"
+            and _is_qqbot_id(qqbot_sender_id)
+        ):
+            self._stop_event(event)
+            return "qqbot"
+
         # Evaluate prefix command/LLM blocking before debounce. Otherwise a message
         # sent during the debounce window can be merged into an LLM request first.
         command_reason = self._apply_command_block(event)
@@ -497,17 +536,13 @@ class WakeService:
     def _apply_block(self, event: Any) -> str:
         if not self.block_enabled():
             return ""
-        sender_id = _event_sender_id(event)
         text = clean_text(getattr(event, "message_str", "")) or _plain_text_from_chain(_event_messages(event))
         wake_cd = self.wake_cd()
-        if wake_cd > 0 and sender_id:
+        if wake_cd > 0 and _event_sender_id(event):
             last_wake = self._last_wake.get(self._wake_key(event), 0.0)
             if last_wake and time.time() - last_wake < wake_cd:
                 self._stop_event(event)
                 return "wake_cd"
-        if self.block_qqbot() and _event_platform_name(event) == "aiocqhttp" and _is_qqbot_id(sender_id):
-            self._stop_event(event)
-            return "qqbot"
         if self.block_reread() and text:
             cleaned = _clean_for_compare(text)
             if cleaned:

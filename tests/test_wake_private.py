@@ -17,10 +17,14 @@ class FakeEvent:
         *,
         group_id: str = "",
         sender_id: str = "10001",
+        raw_sender_id: str | None = None,
         text: str = "blocked",
     ) -> None:
         self._group_id = group_id
         self._sender_id = sender_id
+        self.message_obj = SimpleNamespace(
+            raw_message={"user_id": raw_sender_id} if raw_sender_id is not None else None,
+        )
         self.message_str = text
         message_type = "GroupMessage" if group_id else "FriendMessage"
         self.unified_msg_origin = f"default:{message_type}:{group_id or sender_id}"
@@ -134,6 +138,37 @@ class WakePrivateMessageTests(unittest.IsolatedAsyncioTestCase):
         result = await make_service().apply(event)
 
         self.assertEqual(result, "block_keyword")
+        self.assertTrue(event.is_stopped())
+
+    async def test_qqbot_block_uses_original_onebot_sender_before_async_processing(self) -> None:
+        service = make_service()
+        service.config["wake"]["block_qqbot"] = True
+        event = FakeEvent(
+            group_id="30003",
+            sender_id="3889000001",
+            raw_sender_id="137898066",
+            text="normal text",
+        )
+        event.is_at_or_wake_command = False
+
+        result = await service.apply(event)
+
+        self.assertEqual(result, "")
+        self.assertFalse(event.is_stopped())
+
+    async def test_qqbot_block_still_handles_known_bot_from_original_onebot_event(self) -> None:
+        service = make_service()
+        service.config["wake"]["block_qqbot"] = True
+        event = FakeEvent(
+            group_id="30003",
+            sender_id="137898066",
+            raw_sender_id="3889000001",
+            text="normal text",
+        )
+
+        result = await service.apply(event)
+
+        self.assertEqual(result, "qqbot")
         self.assertTrue(event.is_stopped())
 
     async def test_global_blacklist_still_applies_in_private_chat(self) -> None:

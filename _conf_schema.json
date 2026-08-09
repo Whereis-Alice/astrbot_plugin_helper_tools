@@ -267,9 +267,9 @@
       },
       "block_qqbot": {
         "type": "bool",
-        "description": "屏蔽 QQ 机器人账号段",
+        "description": "屏蔽已知 QQ 机器人账号",
         "default": true,
-        "hint": "仅在 aiocqhttp/OneBot 平台上按常见 QQ 机器人账号段判断。"
+        "hint": "仅在 aiocqhttp/OneBot 平台生效。会优先按 OneBot 原始事件中的真实 user_id 判断，避免其它插件改写发送者信息后误拦截；原始数据缺失时才回退到当前发送者 ID。"
       },
       "block_reread": {
         "type": "bool",
