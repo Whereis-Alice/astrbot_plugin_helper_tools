@@ -9,9 +9,11 @@ and a validated POSIX-relative path below that library root.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import re
+import shutil
 import uuid
 import warnings
 from contextlib import contextmanager
@@ -49,6 +51,9 @@ _MAX_WEBUI_UPLOAD_TOTAL_BYTES = 128 * 1024 * 1024
 _MAX_UPLOAD_FILES = 24
 _MAX_IMAGE_PIXELS = 64_000_000
 _THUMBNAIL_SIZE = 560
+_PREVIEW_SIZE = 1_920
+_MAX_THUMBNAIL_BYTES = 900 * 1024
+_MAX_PREVIEW_BYTES = 4 * 1024 * 1024
 
 
 class WallpaperDashboardError(ValueError):
@@ -235,33 +240,30 @@ class WallpaperLibraryDashboard:
         return record, resolved
 
     def make_thumbnail(self, library_id: str, relative_path: str) -> BytesIO:
-        _record, path = self.resolve_image(
+        return self._render_preview_jpeg(
             library_id,
             relative_path,
-            require_previewable=True,
+            maximum_dimension=_THUMBNAIL_SIZE,
+            maximum_bytes=_MAX_THUMBNAIL_BYTES,
+            failure_message="该图片无法生成安全缩略图。",
         )
-        try:
-            with self._open_image(path) as source:
-                source.seek(0)
-                image = ImageOps.exif_transpose(source)
-                self._assert_image_size(image.size)
-                image.thumbnail((_THUMBNAIL_SIZE, _THUMBNAIL_SIZE), self._resampling_filter())
-                if image.mode not in {"RGB", "RGBA"}:
-                    image = image.convert("RGBA" if "transparency" in image.info else "RGB")
-                if image.mode == "RGBA":
-                    background = Image.new("RGB", image.size, "#111827")
-                    background.paste(image, mask=image.getchannel("A"))
-                    image = background
-                else:
-                    image = image.convert("RGB")
-                output = BytesIO()
-                image.save(output, format="JPEG", quality=86, optimize=True)
-                output.seek(0)
-                return output
-        except WallpaperDashboardError:
-            raise
-        except (Image.DecompressionBombError, OSError, UnidentifiedImageError, ValueError) as exc:
-            raise WallpaperDashboardError("该图片无法生成安全缩略图。") from exc
+
+    def make_thumbnail_data(self, library_id: str, relative_path: str) -> str:
+        """Render a small JPEG data URL for an authenticated plugin page."""
+
+        return self._jpeg_data_url(self.make_thumbnail(library_id, relative_path))
+
+    def make_preview_data(self, library_id: str, relative_path: str) -> str:
+        """Render a bounded preview without exposing a direct image URL."""
+
+        preview = self._render_preview_jpeg(
+            library_id,
+            relative_path,
+            maximum_dimension=_PREVIEW_SIZE,
+            maximum_bytes=_MAX_PREVIEW_BYTES,
+            failure_message="该图片无法生成安全预览。",
+        )
+        return self._jpeg_data_url(preview)
 
     def image_content_type(self, path: Path) -> str:
         return _CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
@@ -416,14 +418,43 @@ class WallpaperLibraryDashboard:
         scan = self._scan(record)
         return self._library_brief(record, scan)
 
-    def delete_library(self, library_id: str) -> dict[str, Any]:
+    def delete_library(
+        self,
+        library_id: str,
+        *,
+        delete_files: bool = False,
+        confirmation_name: str = "",
+    ) -> dict[str, Any]:
         record = self.get_library(library_id)
+        root = record.library.path
+        files_deleted = False
+        if delete_files:
+            root = self._library_root(record)
+            if clean_text(confirmation_name) != record.library.name:
+                raise WallpaperDashboardError("请输入完全一致的图库名称后再删除磁盘文件。")
+            if root.exists():
+                self._assert_library_root_can_be_deleted(record, root)
+                try:
+                    shutil.rmtree(root)
+                except OSError as exc:
+                    raise WallpaperDashboardError(f"删除图库目录失败：{exc}") from exc
+                self._remove_registry_under_root(root)
+                files_deleted = True
         entries = self._libraries_config()
         entries.pop(record.index)
+        if delete_files:
+            message = (
+                "已删除壁纸库配置和磁盘中的图库目录。"
+                if files_deleted
+                else "图库目录原本不存在，已删除壁纸库配置。"
+            )
+        else:
+            message = "已删除壁纸库配置，磁盘中的图片文件保持不变。"
         return {
             "name": record.library.name,
-            "resolved_path": str(record.library.path),
-            "message": "已删除壁纸库配置，磁盘中的图片文件保持不变。",
+            "resolved_path": str(root),
+            "files_deleted": files_deleted,
+            "message": message,
         }
 
     def library_entry(self, library_id: str) -> dict[str, Any]:
@@ -552,6 +583,46 @@ class WallpaperLibraryDashboard:
             raise WallpaperDashboardError(f"无法创建壁纸库目录：{exc}") from exc
         return root
 
+    def _assert_library_root_can_be_deleted(
+        self,
+        record: ManagedWallpaperLibrary,
+        root: Path,
+    ) -> None:
+        """Reject high-risk or overlapping roots before a recursive deletion."""
+
+        try:
+            if root.is_symlink():
+                raise WallpaperDashboardError("壁纸库目录是符号链接，不能递归删除。")
+            if not root.is_dir():
+                raise WallpaperDashboardError("配置的壁纸库路径不是目录。")
+            if root.parent == root:
+                raise WallpaperDashboardError("不能删除文件系统根目录。")
+            data_root = self.data_dir.resolve(strict=False)
+            wallpaper_root = (data_root / "wallpapers").resolve(strict=False)
+        except WallpaperDashboardError:
+            raise
+        except OSError as exc:
+            raise WallpaperDashboardError("无法安全验证壁纸库目录。") from exc
+
+        if root in {data_root, wallpaper_root}:
+            raise WallpaperDashboardError("不能删除插件数据目录或 wallpapers 总目录。")
+
+        for other in self._configured_libraries():
+            if other.index == record.index:
+                continue
+            other_root = self._library_root(other)
+            if self._paths_overlap(root, other_root):
+                raise WallpaperDashboardError(
+                    "该图库目录与另一条壁纸库配置重叠，不能删除磁盘文件。"
+                )
+
+    @staticmethod
+    def _paths_overlap(first: Path, second: Path) -> bool:
+        try:
+            return first == second or first.is_relative_to(second) or second.is_relative_to(first)
+        except ValueError:
+            return False
+
     def _library_root(self, record: ManagedWallpaperLibrary) -> Path:
         if record.source_path.is_symlink():
             raise WallpaperDashboardError("壁纸库目录是符号链接，控制台拒绝管理该目录。")
@@ -649,6 +720,70 @@ class WallpaperLibraryDashboard:
         except (Image.DecompressionBombError, OSError, UnidentifiedImageError, ValueError) as exc:
             raise WallpaperDashboardError("文件不是可读取的图片，或图片已损坏。") from exc
 
+    def _render_preview_jpeg(
+        self,
+        library_id: str,
+        relative_path: str,
+        *,
+        maximum_dimension: int,
+        maximum_bytes: int,
+        failure_message: str,
+    ) -> BytesIO:
+        _record, path = self.resolve_image(
+            library_id,
+            relative_path,
+            require_previewable=True,
+        )
+        try:
+            with self._open_image(path) as source:
+                source.seek(0)
+                image = ImageOps.exif_transpose(source)
+                self._assert_image_size(image.size)
+                image = self._prepare_preview_image(image)
+                return self._encode_bounded_jpeg(
+                    image,
+                    maximum_dimension=maximum_dimension,
+                    maximum_bytes=maximum_bytes,
+                )
+        except WallpaperDashboardError:
+            raise
+        except (Image.DecompressionBombError, OSError, UnidentifiedImageError, ValueError) as exc:
+            raise WallpaperDashboardError(failure_message) from exc
+
+    @staticmethod
+    def _prepare_preview_image(image: Image.Image) -> Image.Image:
+        if image.mode not in {"RGB", "RGBA"}:
+            image = image.convert("RGBA" if "transparency" in image.info else "RGB")
+        if image.mode == "RGBA":
+            background = Image.new("RGB", image.size, "#111827")
+            background.paste(image, mask=image.getchannel("A"))
+            return background
+        return image.convert("RGB")
+
+    def _encode_bounded_jpeg(
+        self,
+        image: Image.Image,
+        *,
+        maximum_dimension: int,
+        maximum_bytes: int,
+    ) -> BytesIO:
+        dimension = maximum_dimension
+        while dimension >= 160:
+            candidate = image.copy()
+            candidate.thumbnail((dimension, dimension), self._resampling_filter())
+            for quality in (86, 78, 70, 62):
+                output = BytesIO()
+                candidate.save(output, format="JPEG", quality=quality, optimize=True)
+                if output.tell() <= maximum_bytes:
+                    output.seek(0)
+                    return output
+            dimension = int(dimension * 0.72)
+        raise WallpaperDashboardError("图片内容过大，无法生成受限预览。")
+
+    @staticmethod
+    def _jpeg_data_url(image: BytesIO) -> str:
+        return "data:image/jpeg;base64," + base64.b64encode(image.getvalue()).decode("ascii")
+
     @staticmethod
     @contextmanager
     def _open_image(source: Path | BytesIO):
@@ -738,6 +873,22 @@ class WallpaperLibraryDashboard:
             except (OSError, ValueError):
                 continue
             value["library"] = name
+            changed = True
+        if changed:
+            self.wallpaper.save_registry(registry)
+
+    def _remove_registry_under_root(self, root: Path) -> None:
+        registry = self.wallpaper.load_registry()
+        changed = False
+        for key, value in list(registry.items()):
+            if not isinstance(value, dict):
+                continue
+            try:
+                recorded_path = Path(clean_text(value.get("path"))).resolve(strict=False)
+                recorded_path.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            registry.pop(key, None)
             changed = True
         if changed:
             self.wallpaper.save_registry(registry)

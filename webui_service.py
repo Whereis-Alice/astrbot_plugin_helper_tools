@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import inspect
 import json
 import math
 import os
@@ -93,9 +94,12 @@ class HelperToolsDashboard:
             ("wallpaper_libraries", self.get_wallpaper_libraries, ["GET"], "Get wallpaper library summaries"),
             ("wallpaper_images", self.get_wallpaper_images, ["GET"], "List wallpaper library images"),
             ("wallpaper_thumbnail", self.get_wallpaper_thumbnail, ["GET"], "Get wallpaper image thumbnail"),
+            ("wallpaper_thumbnail_data", self.get_wallpaper_thumbnail_data, ["GET"], "Get authenticated wallpaper thumbnail data"),
             ("wallpaper_file", self.get_wallpaper_file, ["GET"], "View wallpaper image file"),
+            ("wallpaper_preview_data", self.get_wallpaper_preview_data, ["GET"], "Get authenticated wallpaper preview data"),
             ("wallpaper_download", self.download_wallpaper_file, ["GET"], "Download wallpaper image file"),
             ("wallpaper_upload", self.upload_wallpaper_images, ["POST"], "Upload wallpaper images"),
+            ("wallpaper_upload_file/<library_id>", self.upload_wallpaper_file, ["POST"], "Upload one wallpaper image"),
             ("wallpaper_save_library", self.save_wallpaper_library, ["POST"], "Create or update wallpaper library"),
             ("wallpaper_delete_library", self.delete_wallpaper_library, ["POST"], "Delete wallpaper library configuration"),
             ("wallpaper_delete_image", self.delete_wallpaper_image, ["POST"], "Delete wallpaper image"),
@@ -369,6 +373,22 @@ class HelperToolsDashboard:
             cache_timeout=600,
         )
 
+    async def get_wallpaper_thumbnail_data(self):
+        library_id = clean_text(request.args.get("library_id", ""))
+        relative_path = clean_text(request.args.get("path", ""))
+        try:
+            data_url = await asyncio.to_thread(
+                self.wallpaper_dashboard.make_thumbnail_data,
+                library_id,
+                relative_path,
+            )
+        except WallpaperDashboardError as exc:
+            return self._error(str(exc), 400)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[HelperTools/WebUI] wallpaper thumbnail data failed: %r", exc)
+            return self._error("无法生成壁纸缩略图。", 500)
+        return jsonify({"success": True, "data_url": data_url})
+
     async def get_wallpaper_file(self):
         library_id = clean_text(request.args.get("library_id", ""))
         relative_path = clean_text(request.args.get("path", ""))
@@ -390,6 +410,22 @@ class HelperToolsDashboard:
             cache_timeout=300,
             conditional=True,
         )
+
+    async def get_wallpaper_preview_data(self):
+        library_id = clean_text(request.args.get("library_id", ""))
+        relative_path = clean_text(request.args.get("path", ""))
+        try:
+            data_url = await asyncio.to_thread(
+                self.wallpaper_dashboard.make_preview_data,
+                library_id,
+                relative_path,
+            )
+        except WallpaperDashboardError as exc:
+            return self._error(str(exc), 400)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[HelperTools/WebUI] wallpaper preview data failed: %r", exc)
+            return self._error("无法生成壁纸预览。", 500)
+        return jsonify({"success": True, "data_url": data_url})
 
     async def download_wallpaper_file(self):
         library_id = clean_text(request.args.get("library_id", ""))
@@ -419,6 +455,35 @@ class HelperToolsDashboard:
             library_id, uploads = await self._wallpaper_upload_request()
         except WallpaperDashboardError as exc:
             return self._error(str(exc), 400)
+
+        return await self._save_wallpaper_uploads(library_id, uploads)
+
+    async def upload_wallpaper_file(self, library_id: str):
+        """Receive one bridge-proxied image without relying on iframe cookies."""
+
+        try:
+            files = await self._request_part("files")
+            item = files.get("file") if files is not None else None
+            if item is None:
+                raise WallpaperDashboardError("没有收到要上传的图片。")
+            maximum = self.wallpaper_dashboard.upload_max_bytes()
+            data = await self._read_uploaded_file(item, maximum + 1)
+            if len(data) > maximum:
+                raise WallpaperDashboardError("单张图片超过当前壁纸库允许大小。")
+            upload = WallpaperUpload(
+                clean_text(getattr(item, "filename", ""), "wallpaper"),
+                data,
+            )
+        except WallpaperDashboardError as exc:
+            return self._error(str(exc), 400)
+
+        return await self._save_wallpaper_uploads(clean_text(library_id), [upload])
+
+    async def _save_wallpaper_uploads(
+        self,
+        library_id: str,
+        uploads: list[WallpaperUpload],
+    ):
 
         async with self._lock:
             try:
@@ -470,19 +535,30 @@ class HelperToolsDashboard:
 
     async def delete_wallpaper_library(self):
         payload = await self._json_body()
+        delete_files = self._as_bool(payload.get("delete_files", False))
         if not self._as_bool(payload.get("confirm", False)):
-            return self._error("删除壁纸库配置前需要确认；此操作不会删除磁盘中的图片。", 400)
+            return self._error("删除壁纸库前需要确认。", 400)
         library_id = clean_text(payload.get("library_id", ""))
+        confirmation_name = clean_text(payload.get("confirmation_name", ""))
         async with self._lock:
             try:
-                result = await asyncio.to_thread(self.wallpaper_dashboard.delete_library, library_id)
+                result = await asyncio.to_thread(
+                    self.wallpaper_dashboard.delete_library,
+                    library_id,
+                    delete_files=delete_files,
+                    confirmation_name=confirmation_name,
+                )
                 self._save_plugin_config()
             except WallpaperDashboardError as exc:
                 return self._error(str(exc), 400)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("[HelperTools/WebUI] wallpaper library delete failed")
                 return self._error(f"删除壁纸库失败：{type(exc).__name__}", 500)
-        self.activity.record("wallpaper", "控制台删除壁纸库", detail="已删除一个壁纸库配置，图片文件未删除。")
+        self.activity.record(
+            "wallpaper",
+            "控制台删除壁纸库",
+            detail=("已删除图库配置及磁盘文件。" if delete_files else "已删除图库配置，图片文件未删除。"),
+        )
         return jsonify({"success": True, "message": result["message"], "deleted": result})
 
     async def delete_wallpaper_image(self):
@@ -566,10 +642,14 @@ class HelperToolsDashboard:
 
         maximum = self.wallpaper_dashboard.upload_max_bytes()
         if request.mimetype == "multipart/form-data":
-            form = await request.form
-            files = await request.files
+            form = await self._request_part("form") or {}
+            files = await self._request_part("files")
             library_id = clean_text(form.get("library_id", ""))
-            incoming = files.getlist("files") or files.getlist("file")
+            incoming = (
+                files.getlist("files") or files.getlist("file")
+                if files is not None
+                else []
+            )
             if not incoming:
                 raise WallpaperDashboardError("请至少选择一张图片。")
             if len(incoming) > 24:
@@ -579,12 +659,9 @@ class HelperToolsDashboard:
             total_bytes = 0
             for item in incoming:
                 filename = clean_text(getattr(item, "filename", ""), "wallpaper")
-                stream = getattr(item, "stream", None)
-                if stream is None or not callable(getattr(stream, "read", None)):
-                    raise WallpaperDashboardError("上传图片内容无效。")
                 # Never buffer an unbounded multipart request before validation.
                 remaining = total_limit - total_bytes
-                data = stream.read(min(maximum + 1, remaining + 1))
+                data = await self._read_uploaded_file(item, min(maximum + 1, remaining + 1))
                 total_bytes += len(data)
                 if len(data) > maximum:
                     raise WallpaperDashboardError("单张图片超过当前壁纸库允许大小。")
@@ -613,6 +690,30 @@ class HelperToolsDashboard:
                 )
             )
         return library_id, uploads
+
+    @staticmethod
+    async def _request_part(name: str) -> Any:
+        """Read Quart and modern AstrBot request properties through one path."""
+
+        value = getattr(request, name, None)
+        if callable(value):
+            value = value()
+        if inspect.isawaitable(value):
+            value = await value
+        return value
+
+    @staticmethod
+    async def _read_uploaded_file(item: Any, limit: int) -> bytes:
+        reader = getattr(item, "read", None)
+        if not callable(reader):
+            stream = getattr(item, "stream", None)
+            reader = getattr(stream, "read", None)
+        if not callable(reader):
+            raise WallpaperDashboardError("上传图片内容无效。")
+        data = reader(limit)
+        if inspect.isawaitable(data):
+            data = await data
+        return bytes(data or b"")
 
     def _coerce_wallpaper_library_entry(
         self,

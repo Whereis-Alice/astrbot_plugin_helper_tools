@@ -141,14 +141,25 @@
 
         <section id="tab-wallpaper" class="tab-pane" aria-label="壁纸库">
           <div id="wallpaper-metrics" class="metric-grid" aria-live="polite"></div>
-          <div class="wallpaper-layout">
-            <section class="data-section wallpaper-library-section" aria-labelledby="wallpaper-libraries-heading">
-              <div class="section-heading">
-                <div><p class="eyebrow">LIBRARY INDEX</p><h2 id="wallpaper-libraries-heading">图库</h2></div>
-                <button id="wallpaper-library-create" class="quiet-action" type="button">新增图库</button>
+          <div class="wallpaper-workspace">
+            <section class="wallpaper-library-bar" aria-label="当前壁纸库">
+              <div class="wallpaper-library-current">
+                <p class="eyebrow">CURRENT LIBRARY</p>
+                <label class="wallpaper-library-picker"><span>当前图库</span><select id="wallpaper-library-picker" aria-label="选择当前图库"></select></label>
+                <div id="wallpaper-library-status" class="wallpaper-library-status" aria-live="polite"></div>
               </div>
-              <div id="wallpaper-library-list" class="wallpaper-library-list"></div>
+              <div class="wallpaper-library-bar-actions">
+                <button id="wallpaper-library-create" class="quiet-action" type="button">新增图库</button>
+                <button id="wallpaper-library-edit" class="quiet-action" type="button" disabled>编辑当前图库</button>
+                <button id="wallpaper-library-remove-config" class="quiet-action" type="button" disabled>仅删配置</button>
+                <button id="wallpaper-library-delete-files" class="danger-action" type="button" disabled>删除图库文件</button>
+                <button id="wallpaper-library-manage" class="quiet-action" type="button" aria-expanded="false">管理图库</button>
+              </div>
             </section>
+            <details id="wallpaper-library-drawer" class="wallpaper-library-drawer">
+              <summary><span>全部图库</span><small>查看、切换、编辑或删除图库</small></summary>
+              <div id="wallpaper-library-list" class="wallpaper-library-list"></div>
+            </details>
             <section class="data-section wallpaper-browser-section" aria-labelledby="wallpaper-browser-heading">
               <div class="section-heading wallpaper-browser-heading">
                 <div><p class="eyebrow">IMAGE BROWSER</p><h2 id="wallpaper-browser-heading">图片</h2><p id="wallpaper-selection-summary"></p></div>
@@ -213,7 +224,7 @@
     <dialog id="wallpaper-preview-dialog" class="wallpaper-dialog wallpaper-preview-dialog">
       <div class="wallpaper-dialog-form">
         <div class="dialog-heading"><div><p class="eyebrow">IMAGE PREVIEW</p><h2 id="wallpaper-preview-title">图片预览</h2></div><button class="dialog-close" type="button" data-close-dialog="wallpaper-preview-dialog" title="关闭" aria-label="关闭">×</button></div>
-        <div class="wallpaper-preview-frame"><img id="wallpaper-preview-image" alt="壁纸预览" /></div>
+        <div class="wallpaper-preview-frame"><img id="wallpaper-preview-image" alt="壁纸预览" /><p id="wallpaper-preview-status" class="wallpaper-preview-status">正在加载预览...</p></div>
         <p id="wallpaper-preview-meta" class="wallpaper-preview-meta"></p>
         <div class="dialog-actions"><button id="wallpaper-preview-download" class="quiet-action" type="button">下载原图</button><button id="wallpaper-preview-rename" class="quiet-action" type="button">重命名</button><button id="wallpaper-preview-delete" class="danger-action" type="button">删除</button></div>
       </div>
@@ -226,6 +237,15 @@
         <label class="dialog-field"><span>新文件名</span><input id="wallpaper-rename-name" type="text" required maxlength="132" /></label>
         <p class="dialog-note">扩展名会保持原样。</p>
         <div class="dialog-actions"><button class="quiet-action" type="button" data-close-dialog="wallpaper-rename-dialog">取消</button><button class="primary-compact" type="submit">确认重命名</button></div>
+      </form>
+    </dialog>
+    <dialog id="wallpaper-library-purge-dialog" class="wallpaper-dialog wallpaper-rename-dialog">
+      <form id="wallpaper-library-purge-form" class="wallpaper-dialog-form">
+        <div class="dialog-heading"><div><p class="eyebrow">DELETE LIBRARY FILES</p><h2>删除图库文件</h2></div><button class="dialog-close" type="button" data-close-dialog="wallpaper-library-purge-dialog" title="关闭" aria-label="关闭">×</button></div>
+        <input id="wallpaper-library-purge-id" type="hidden" />
+        <p id="wallpaper-library-purge-note" class="dialog-note"></p>
+        <label class="dialog-field"><span>输入图库名称确认</span><input id="wallpaper-library-purge-name" type="text" required maxlength="100" autocomplete="off" /></label>
+        <div class="dialog-actions"><button class="quiet-action" type="button" data-close-dialog="wallpaper-library-purge-dialog">取消</button><button class="danger-action" type="submit">删除配置和文件</button></div>
       </form>
     </dialog>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
