@@ -1049,8 +1049,7 @@ function wallpaperSelectedSummary(library, response = null) {
   if (!library) return "先从上方选择一个图库。";
   const current = response?.library || library;
   const count = Number(current.image_count ?? library.image_count ?? 0);
-  const location = text(current.resolved_path || library.resolved_path, "目录未配置");
-  return `${library.name} · ${count} 张图片 · ${location}`;
+  return `${library.name} · ${count} 张图片`;
 }
 
 function renderWallpaperMetrics() {
@@ -1143,17 +1142,24 @@ function renderWallpaperLibraryPicker() {
     if (!library.writable && library.state === "ready") status.append(el("small", "", "目录不可写"));
   }
   ["wallpaper-library-edit", "wallpaper-library-remove-config", "wallpaper-library-delete-files"].forEach((id) => {
-    byId(id).disabled = !library;
+    const button = byId(id);
+    if (button) button.disabled = !library;
   });
 }
 
 function renderWallpaperBrowserState(response = null) {
   const library = selectedWallpaperLibrary();
-  byId("wallpaper-selection-summary").textContent = wallpaperSelectedSummary(library, response);
+  const summary = byId("wallpaper-selection-summary");
+  summary.textContent = wallpaperSelectedSummary(library, response);
+  summary.title = text(response?.library?.resolved_path || library?.resolved_path);
   const note = byId("wallpaper-browser-note");
+  const meta = byId("wallpaper-browser-meta");
   const detail = text(response?.library?.detail || library?.detail);
   const scanTruncated = Boolean(response?.pagination?.scan_truncated || library?.scan_truncated);
   note.textContent = [detail, scanTruncated ? "图片索引较大，当前只显示已扫描范围。" : ""].filter(Boolean).join(" ");
+  note.hidden = !note.textContent;
+  summary.hidden = true;
+  meta.hidden = !note.textContent;
   const selected = Boolean(library);
   byId("wallpaper-upload-input").disabled = !selected;
   byId("wallpaper-image-search").disabled = !selected;
@@ -1395,6 +1401,7 @@ function normalizeWallpaperSendMode(value) {
 }
 
 function openWallpaperLibraryDialog(library = null) {
+  closeWallpaperDialog("wallpaper-library-management-dialog");
   byId("wallpaper-library-dialog-title").textContent = library ? "编辑图库" : "新增图库";
   byId("wallpaper-library-id").value = library ? String(library.id) : "";
   byId("wallpaper-library-name").value = library?.name || "";
@@ -1466,6 +1473,7 @@ async function deleteWallpaperLibrary(libraryId, options = {}) {
 function openWallpaperLibraryPurge(libraryId) {
   const library = state.wallpaper.libraries.find((item) => String(item.id) === String(libraryId));
   if (!library) return;
+  closeWallpaperDialog("wallpaper-library-management-dialog");
   byId("wallpaper-library-purge-id").value = String(library.id);
   byId("wallpaper-library-purge-name").value = "";
   byId("wallpaper-library-purge-note").textContent = `将删除“${library.name}”的配置，以及 ${library.resolved_path || "对应目录"} 内的全部文件。此操作无法撤销。`;
@@ -1613,6 +1621,7 @@ async function selectWallpaperLibrary(libraryId) {
   renderWallpaperLibraries();
   renderWallpaperLibraryPicker();
   renderWallpaperBrowserState();
+  closeWallpaperDialog("wallpaper-library-management-dialog");
   await loadWallpaperImages({ page: 1 });
 }
 
@@ -1679,9 +1688,25 @@ function renderAbout() {
   target.append(list);
 }
 
+function syncWallpaperToolsForViewport() {
+  const tools = document.querySelector(".wallpaper-mobile-tools");
+  if (!tools) return;
+  if (window.matchMedia("(max-width: 620px)").matches) {
+    if (!tools.dataset.mobileInitialized) {
+      tools.open = false;
+      tools.dataset.mobileInitialized = "true";
+    }
+    return;
+  }
+  tools.open = true;
+  delete tools.dataset.mobileInitialized;
+}
+
 function switchTab(tab) {
   if (!tabTitles[tab]) return;
   state.activeTab = tab;
+  document.body.classList.toggle("wallpaper-focused", tab === "wallpaper");
+  syncWallpaperToolsForViewport();
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.tab === tab));
   document.querySelectorAll(".tab-pane").forEach((item) => item.classList.toggle("active", item.id === `tab-${tab}`));
   const [kicker, title, subtitle] = tabTitles[tab];
@@ -1772,6 +1797,7 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (event.target.closest("#wallpaper-library-create")) {
+    closeWallpaperDialog("wallpaper-library-management-dialog");
     openWallpaperLibraryDialog();
     return;
   }
@@ -1791,9 +1817,7 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (event.target.closest("#wallpaper-library-manage")) {
-    const drawer = byId("wallpaper-library-drawer");
-    drawer.open = !drawer.open;
-    event.target.closest("#wallpaper-library-manage").setAttribute("aria-expanded", String(drawer.open));
+    showWallpaperDialog("wallpaper-library-management-dialog");
     return;
   }
   if (event.target.closest("#wallpaper-upload-button")) {
@@ -1857,6 +1881,8 @@ document.addEventListener("submit", (event) => {
 });
 
 applyTheme("dark", false);
+syncWallpaperToolsForViewport();
+window.addEventListener("resize", syncWallpaperToolsForViewport);
 
 try {
   await waitForBridge();

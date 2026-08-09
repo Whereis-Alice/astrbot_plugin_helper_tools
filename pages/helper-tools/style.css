@@ -299,3 +299,172 @@ input::placeholder, textarea::placeholder { color: var(--faint); } select option
 @media (max-width: 1060px) { .metric { padding: 17px; }.section-split { grid-template-columns: 1fr; }.field-grid { grid-template-columns: 1fr; }.field-grid > .config-node.full { grid-column: auto; } }
 @media (max-width: 820px) { .dashboard-shell { display: block; overflow: visible; }.sidebar { position: relative; min-height: 0; padding: 16px; border-right: 0; border-bottom: 1px solid var(--line); }.sidebar-rule, .sidebar-footer { display: none; }.nav-list { display: flex; overflow-x: auto; margin-top: 15px; padding-bottom: 2px; }.nav-item { min-width: max-content; }.workspace { padding: 24px 18px 42px; }.page-header { min-height: 0; }.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.metric:nth-child(2) { border-right: 0; }.metric:nth-child(3), .metric:nth-child(4) { border-top: 1px solid var(--line); }.metric:nth-child(3) { border-right: 1px solid var(--line); }.metric:nth-child(4) { border-right: 0; }.config-toolbar { align-items: flex-start; flex-wrap: wrap; }.search-field { flex-basis: 100%; max-width: none; }.config-toolbar-actions { margin-left: auto; }.toolbar-summary { margin-left: 0; }.activity-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 540px) { .workspace { padding: 20px 12px 30px; }.page-header { display: block; padding-bottom: 17px; }.header-state { padding-top: 9px; text-align: left; }.page-header h1 { font-size: 24px; }.tab-pane { padding-top: 17px; }.metric { min-height: 94px; padding: 14px; }.metric strong { font-size: 25px; }.data-section { margin-top: 13px; padding: 14px; }.section-split { gap: 13px; margin-top: 13px; }.section-heading { gap: 10px; }.section-heading h2 { font-size: 17px; }.module-summary-meta { display: none; }.config-module > summary { gap: 9px; padding: 11px; }.module-body { padding: 0 11px 14px; }.module-enable { padding: 0 6px; }.secret-control { grid-template-columns: 1fr; }.file-control { align-items: stretch; }.file-control input[type="file"] { max-width: 100%; }.file-clear { margin-left: 0; }.template-toolbar { align-items: stretch; flex-direction: column; }.template-toolbar select { width: 100%; max-width: none; }.template-add { width: 100%; }.activity-item { grid-template-columns: 1fr auto; }.activity-item time { grid-column: 1 / -1; }.activity-summary { grid-template-columns: 1fr 1fr; }.activity-table th, .activity-table td { padding: 8px 6px; }.activity-table th:nth-child(6), .activity-table td:nth-child(6) { min-width: 190px; }.toast { right: 12px; bottom: 12px; max-width: calc(100vw - 24px); } }
+
+/* Wallpaper is a working image browser. Keep its controls compact and reserve
+   the viewport for thumbnails rather than permanently-expanded management UI. */
+body.wallpaper-focused .page-header {
+  align-items: center;
+  min-height: 0;
+  padding-bottom: 8px;
+}
+body.wallpaper-focused .page-header .page-kicker,
+body.wallpaper-focused .page-header > div > p:not(.page-kicker) { display: none; }
+body.wallpaper-focused .page-header h1 { margin: 0; font-size: 22px; line-height: 1.25; }
+body.wallpaper-focused .header-state { align-self: center; padding-top: 0; }
+body.wallpaper-focused .tab-pane { padding-top: 10px; }
+
+.wallpaper-workspace { display: block; margin-top: 0; }
+.wallpaper-quickbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.wallpaper-library-current {
+  display: flex;
+  flex: 1 1 310px;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.wallpaper-library-picker {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.wallpaper-library-picker > span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.wallpaper-library-picker select { min-width: 0; min-height: 36px; padding-block: 4px; }
+.wallpaper-library-status { flex: 0 0 auto; min-height: 0; margin: 0; white-space: nowrap; }
+.wallpaper-quickbar-actions { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; }
+.wallpaper-quickbar-actions .quiet-action { min-height: 36px; }
+.wallpaper-mobile-tools { display: contents; }
+.wallpaper-mobile-tools > summary { display: none; }
+.wallpaper-mobile-tools > .wallpaper-quickbar-tools { display: flex !important; }
+.wallpaper-quickbar-tools {
+  display: flex;
+  flex: 999 1 540px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.wallpaper-upload-controls {
+  display: flex;
+  flex: 0 1 260px;
+  align-items: stretch;
+  gap: 7px;
+  min-width: 196px;
+  min-height: 36px;
+  margin: 0;
+}
+.wallpaper-file-picker { min-height: 36px; padding: 4px 8px; }
+.wallpaper-upload-controls .primary-compact { min-width: 60px; }
+.wallpaper-quickbar-tools .search-field { flex: 1 1 190px; max-width: none; min-width: 0; }
+.wallpaper-quickbar-tools .search-field input { min-height: 36px; }
+.wallpaper-sort-field { flex: 0 0 124px; min-width: 124px; }
+.wallpaper-sort-field select { min-height: 36px; }
+.wallpaper-browser-section { width: 100%; margin-top: 0; }
+.wallpaper-browser-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 20px;
+  margin-top: 5px;
+}
+.wallpaper-browser-meta[hidden] { display: none; }
+#wallpaper-selection-summary {
+  overflow: hidden;
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wallpaper-browser-note { min-height: 0; margin: 0; font-size: 11px; }
+.wallpaper-browser-note[hidden] { display: none; }
+.wallpaper-image-grid { margin-top: 8px; }
+
+.wallpaper-library-management-dialog { width: min(1020px, calc(100vw - 32px)); }
+.wallpaper-management-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-top-color: var(--cyan);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+.wallpaper-management-metrics .metric { min-height: 72px; padding: 13px; }
+.wallpaper-management-metrics .metric strong { margin-top: 7px; font-size: 24px; }
+.wallpaper-management-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+.wallpaper-library-management-dialog .wallpaper-library-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+  gap: 0 14px;
+  max-height: min(48vh, 520px);
+  margin: -3px 0 0;
+  overflow: auto;
+}
+
+@media (max-width: 1160px) {
+  .wallpaper-quickbar-tools { flex-basis: 100%; }
+}
+
+@media (max-width: 820px) {
+  body.wallpaper-focused .page-header { display: flex; }
+  .wallpaper-quickbar-tools { flex-basis: 100%; }
+}
+
+@media (max-width: 620px) {
+  body.wallpaper-focused .page-header { display: none; }
+  .wallpaper-quickbar { align-items: stretch; gap: 7px; }
+  .wallpaper-library-current { flex-basis: 100%; }
+  .wallpaper-library-picker { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+  .wallpaper-quickbar-actions { width: auto; }
+  .wallpaper-mobile-tools { display: block; flex: 0 0 auto; min-width: 0; }
+  .wallpaper-mobile-tools > summary {
+    display: flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--surface-soft);
+    color: var(--cyan);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 650;
+    list-style: none;
+  }
+  .wallpaper-mobile-tools > summary::-webkit-details-marker { display: none; }
+  .wallpaper-mobile-tools > summary::after { margin-left: 7px; color: var(--faint); content: "+"; font-size: 15px; }
+  .wallpaper-mobile-tools[open] { flex-basis: 100%; width: 100%; }
+  .wallpaper-mobile-tools[open] > summary::after { content: "-"; }
+  .wallpaper-mobile-tools:not([open]) > .wallpaper-quickbar-tools { display: none !important; }
+  .wallpaper-mobile-tools[open] > .wallpaper-quickbar-tools { display: grid !important; grid-template-columns: minmax(0, 1fr) 116px; margin-top: 7px; }
+  .wallpaper-upload-controls { grid-column: 1 / -1; width: 100%; min-width: 0; }
+  .wallpaper-quickbar-tools .search-field { grid-column: 1 / -1; }
+  .wallpaper-sort-field { grid-column: 1; width: 116px; min-width: 0; }
+  .wallpaper-browser-meta { display: block; min-height: 0; margin-top: 7px; }
+  #wallpaper-selection-summary { white-space: normal; }
+  .wallpaper-browser-note { margin-top: 3px; }
+  .wallpaper-management-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wallpaper-management-metrics .metric { min-height: 64px; padding: 11px; }
+  .wallpaper-management-metrics .metric:nth-child(2) { border-right: 0; }
+  .wallpaper-management-metrics .metric:nth-child(3), .wallpaper-management-metrics .metric:nth-child(4) { border-top: 1px solid var(--line); }
+  .wallpaper-library-management-dialog .wallpaper-library-list { grid-template-columns: 1fr; }
+}

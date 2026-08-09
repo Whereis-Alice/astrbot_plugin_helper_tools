@@ -140,40 +140,33 @@
         </section>
 
         <section id="tab-wallpaper" class="tab-pane" aria-label="壁纸库">
-          <div id="wallpaper-metrics" class="metric-grid" aria-live="polite"></div>
           <div class="wallpaper-workspace">
-            <section class="wallpaper-library-bar" aria-label="当前壁纸库">
+            <section class="wallpaper-quickbar" aria-label="壁纸库操作">
               <div class="wallpaper-library-current">
-                <p class="eyebrow">CURRENT LIBRARY</p>
-                <label class="wallpaper-library-picker"><span>当前图库</span><select id="wallpaper-library-picker" aria-label="选择当前图库"></select></label>
+                <label class="wallpaper-library-picker"><span>图库</span><select id="wallpaper-library-picker" aria-label="选择当前图库"></select></label>
                 <div id="wallpaper-library-status" class="wallpaper-library-status" aria-live="polite"></div>
               </div>
-              <div class="wallpaper-library-bar-actions">
-                <button id="wallpaper-library-create" class="quiet-action" type="button">新增图库</button>
-                <button id="wallpaper-library-edit" class="quiet-action" type="button" disabled>编辑当前图库</button>
-                <button id="wallpaper-library-remove-config" class="quiet-action" type="button" disabled>仅删配置</button>
-                <button id="wallpaper-library-delete-files" class="danger-action" type="button" disabled>删除图库文件</button>
-                <button id="wallpaper-library-manage" class="quiet-action" type="button" aria-expanded="false">管理图库</button>
-              </div>
-            </section>
-            <details id="wallpaper-library-drawer" class="wallpaper-library-drawer">
-              <summary><span>全部图库</span><small>查看、切换、编辑或删除图库</small></summary>
-              <div id="wallpaper-library-list" class="wallpaper-library-list"></div>
-            </details>
-            <section class="data-section wallpaper-browser-section" aria-labelledby="wallpaper-browser-heading">
-              <div class="section-heading wallpaper-browser-heading">
-                <div><p class="eyebrow">IMAGE BROWSER</p><h2 id="wallpaper-browser-heading">图片</h2><p id="wallpaper-selection-summary"></p></div>
+              <div class="wallpaper-quickbar-actions">
+                <button id="wallpaper-library-manage" class="quiet-action" type="button" aria-haspopup="dialog">管理图库</button>
                 <button id="wallpaper-images-refresh" class="icon-action compact-icon-action" type="button" title="刷新当前图库" aria-label="刷新当前图库">↻</button>
               </div>
-              <div id="wallpaper-upload-controls" class="wallpaper-upload-controls">
-                <label class="wallpaper-file-picker"><input id="wallpaper-upload-input" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif" multiple /><span>选择图片</span><small id="wallpaper-upload-selection">未选择文件</small></label>
-                <button id="wallpaper-upload-button" class="primary-compact" type="button" disabled>上传</button>
+              <details class="wallpaper-mobile-tools" open>
+                <summary>上传与筛选</summary>
+                <div class="wallpaper-quickbar-tools">
+                  <div id="wallpaper-upload-controls" class="wallpaper-upload-controls">
+                    <label class="wallpaper-file-picker"><input id="wallpaper-upload-input" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif" multiple /><span>选择图片</span><small id="wallpaper-upload-selection">未选择文件</small></label>
+                    <button id="wallpaper-upload-button" class="primary-compact" type="button" disabled>上传</button>
+                  </div>
+                  <label class="search-field"><span class="visually-hidden">搜索当前图库</span><input id="wallpaper-image-search" type="search" placeholder="搜索文件名或子目录" autocomplete="off" /></label>
+                  <label class="compact-field wallpaper-sort-field"><span class="visually-hidden">排序</span><select id="wallpaper-image-sort"><option value="newest">最近修改</option><option value="name">文件名</option><option value="size">文件大小</option></select></label>
+                </div>
+              </details>
+            </section>
+            <section class="wallpaper-browser-section" aria-label="图片浏览器">
+              <div id="wallpaper-browser-meta" class="wallpaper-browser-meta" hidden>
+                <p id="wallpaper-selection-summary"></p>
+                <p id="wallpaper-browser-note" class="wallpaper-browser-note" hidden></p>
               </div>
-              <div class="wallpaper-browser-toolbar">
-                <label class="search-field"><span class="visually-hidden">搜索当前图库</span><input id="wallpaper-image-search" type="search" placeholder="搜索文件名或子目录" autocomplete="off" /></label>
-                <label class="compact-field wallpaper-sort-field"><span>排序</span><select id="wallpaper-image-sort"><option value="newest">最近修改</option><option value="name">文件名</option><option value="size">文件大小</option></select></label>
-              </div>
-              <p id="wallpaper-browser-note" class="wallpaper-browser-note"></p>
               <div id="wallpaper-image-grid" class="wallpaper-image-grid"></div>
               <div id="wallpaper-pagination" class="wallpaper-pagination" aria-label="图库分页"></div>
             </section>
@@ -204,6 +197,15 @@
         </section>
       </section>
     </main>
+    <dialog id="wallpaper-library-management-dialog" class="wallpaper-dialog wallpaper-library-management-dialog">
+      <div class="wallpaper-dialog-form">
+        <div class="dialog-heading"><div><p class="eyebrow">LIBRARY MANAGEMENT</p><h2>图库管理</h2></div><button class="dialog-close" type="button" data-close-dialog="wallpaper-library-management-dialog" title="关闭" aria-label="关闭">×</button></div>
+        <div id="wallpaper-metrics" class="wallpaper-management-metrics" aria-live="polite"></div>
+        <div class="wallpaper-management-heading"><span>全部图库</span><button id="wallpaper-library-create" class="primary-compact" type="button">新增图库</button></div>
+        <div id="wallpaper-library-list" class="wallpaper-library-list"></div>
+      </div>
+    </dialog>
+
     <dialog id="wallpaper-library-dialog" class="wallpaper-dialog">
       <form id="wallpaper-library-form" class="wallpaper-dialog-form">
         <div class="dialog-heading"><div><p class="eyebrow">LIBRARY SETTINGS</p><h2 id="wallpaper-library-dialog-title">新增图库</h2></div><button class="dialog-close" type="button" data-close-dialog="wallpaper-library-dialog" title="关闭" aria-label="关闭">×</button></div>
