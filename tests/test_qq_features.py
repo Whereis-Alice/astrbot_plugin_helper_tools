@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import unittest
+from base64 import b64decode
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
+
+from mcp.types import CallToolResult, ImageContent
 
 from astrbot_plugin_helper_tools.main import HelperToolsPlugin
 from astrbot_plugin_helper_tools.qq_features import (
     QQ_GROUP_INFO_TOOL_NAME,
     QQ_GROUP_MEMBER_LIST_TOOL_NAME,
     QQService,
+    build_qq_group_avatar_url,
 )
 
 
@@ -211,6 +216,48 @@ class QQGroupDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("成员统计", result)
         self.assertEqual(bot.calls, [("get_group_info", {"group_id": 30003})])
 
+    async def test_group_info_can_return_group_avatar_to_the_model(self) -> None:
+        bot = FakeBot()
+        service = self._service()
+
+        async def fake_fetch_bytes(url: str, **_kwargs: Any) -> tuple[bytes, str]:
+            self.assertEqual(url, build_qq_group_avatar_url("30003"))
+            return b"group-avatar", "image/png"
+
+        with patch(
+            "astrbot_plugin_helper_tools.qq_features.fetch_bytes",
+            side_effect=fake_fetch_bytes,
+        ):
+            result = await service.get_group_info_result(
+                event=FakeEvent(bot),
+                include_member_statistics=False,
+                include_honors=False,
+                include_at_all_remain=False,
+                include_avatar=True,
+                return_image=True,
+            )
+
+        self.assertIsInstance(result, CallToolResult)
+        text_part, image_part = result.content
+        self.assertIn("群头像 URL: https://p.qlogo.cn/gh/30003/30003/100", text_part.text)
+        self.assertIsInstance(image_part, ImageContent)
+        self.assertEqual(b64decode(image_part.data), b"group-avatar")
+        self.assertEqual(image_part.mimeType, "image/png")
+
+    async def test_group_info_can_return_the_avatar_url_without_downloading(self) -> None:
+        bot = FakeBot()
+        result = await self._service().get_group_info_result(
+            event=FakeEvent(bot),
+            include_member_statistics=False,
+            include_honors=False,
+            include_at_all_remain=False,
+            include_avatar=True,
+            return_image=False,
+        )
+
+        self.assertIsInstance(result, str)
+        self.assertIn("群头像 URL: https://p.qlogo.cn/gh/30003/30003/100", result)
+
 
 class QQGroupToolRegistrationTests(unittest.TestCase):
     def test_group_list_and_detail_tools_are_registered_with_the_member_module(self) -> None:
@@ -224,3 +271,6 @@ class QQGroupToolRegistrationTests(unittest.TestCase):
         names = {tool.name for tool in tools}
         self.assertIn(QQ_GROUP_MEMBER_LIST_TOOL_NAME, names)
         self.assertIn(QQ_GROUP_INFO_TOOL_NAME, names)
+        group_info_tool = next(tool for tool in tools if tool.name == QQ_GROUP_INFO_TOOL_NAME)
+        self.assertIn("include_avatar", group_info_tool.parameters["properties"])
+        self.assertIn("return_image", group_info_tool.parameters["properties"])

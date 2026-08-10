@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频与专栏理解、X/Twitter 资料检索、网页浏览、环境感知、QQ 防撤回、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.10.7`
+- 当前版本：`v0.10.8`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -38,7 +38,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.10.7` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.10.8` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -411,7 +411,7 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 | `get_qq_avatar` | 获取 QQ 用户头像，可把图片交给视觉模型 |
 | `get_qq_group_member_info` | 获取 QQ号、QQ名、群昵称、群身份、群等级、专属头衔及 OneBot 额外字段 |
 | `get_qq_group_member_list` | 获取群成员列表；可按 QQ号、昵称、群昵称、头衔等筛选并分页，返回每位成员的可用详情 |
-| `get_qq_group_info` | 获取群名称、人数、等级、备注、建群时间和可选的成员统计、群荣誉、@全体成员配额 |
+| `get_qq_group_info` | 获取群名称、人数、等级、备注、建群时间、群头像，以及可选的成员统计、群荣誉、@全体成员配额 |
 | `get_qq_profile` | 整合用户资料、群成员资料、群信息和头像 |
 | `poke_qq_user` | 在当前 QQ 会话戳指定用户，默认随戳一戳模块关闭，并受次数上限约束 |
 | `send_payment_qr` | 在转账、赞助、请客等场景发送收款码 |
@@ -473,7 +473,7 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 
 成员列表包含 OneBot 可提供的 QQ号、QQ昵称、群昵称、群身份、群等级、专属头衔、性别、年龄、地区、入群/最后发言/禁言/头衔到期时间，以及适配器额外返回的字段。它支持 `keyword`、`offset`、`limit`，大群会提示下一页的 `offset`，不会一次把全群资料塞满模型上下文。
 
-群详情会读取标准 `get_group_info` 资料，并可选读取成员统计、`get_group_honor_info` 群荣誉和 `get_group_at_all_remain` 的当前 Bot 账号配额。群荣誉与 `@全体` 配额取决于 OneBot/AIOCQHTTP/NapCat 实现，适配器不支持时会明确说明而不影响其它群资料。
+群详情会读取标准 `get_group_info` 资料，并可选读取成员统计、`get_group_honor_info` 群荣誉和 `get_group_at_all_remain` 的当前 Bot 账号配额。它还可按群号构造 QQ 公开群头像地址，并把头像图片交给视觉模型查看；在 `qq_member.group_info_include_avatar` 关闭、模型不需要图片或下载失败时，仍会返回群头像 URL 和其它群资料。群荣誉与 `@全体` 配额取决于 OneBot/AIOCQHTTP/NapCat 实现，适配器不支持时会明确说明而不影响其它群资料。
 
 这里的“QQ昵称”来自 OneBot 返回的公开/群内昵称字段，不等同于 QQ 实名信息；插件不会尝试获取或推断实名认证姓名。可在 `qq_member` 配置里调整单页人数、单次硬上限、文本上限，以及群详情是否默认附带统计、荣誉和 `@全体` 配额。
 

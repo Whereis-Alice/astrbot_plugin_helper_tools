@@ -103,7 +103,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.10.7"
+PLUGIN_VERSION = "0.10.8"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、防撤回、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -428,7 +428,7 @@ class QQGroupInfoTool(FunctionTool[AstrAgentContext]):
     name: str = QQ_GROUP_INFO_TOOL_NAME
     description: str = (
         "获取 QQ 群详情。包括群名称、群号、备注、建群时间、等级、人数上限，"
-        "并可汇总群成员身份、头衔、管理人员、群荣誉和 @全体成员配额等 OneBot 可用信息。"
+        "可选附带群头像供视觉模型查看，并可汇总群成员身份、头衔、管理人员、群荣誉和 @全体成员配额等 OneBot 可用信息。"
     )
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
@@ -453,11 +453,21 @@ class QQGroupInfoTool(FunctionTool[AstrAgentContext]):
                     "description": "是否读取当前账号在本群的 @全体成员可用次数。",
                     "default": True,
                 },
+                "include_avatar": {
+                    "type": "boolean",
+                    "description": "是否附带 QQ 群头像 URL 或图片内容。",
+                    "default": True,
+                },
+                "return_image": {
+                    "type": "boolean",
+                    "description": "是否下载群头像并将图片内容交给模型查看。",
+                    "default": True,
+                },
             },
         }
     )
 
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolResult:
         if self.plugin is None:
             return "QQ群详情工具未绑定插件实例。"
         return await self.plugin.qq.get_group_info_result(
@@ -472,6 +482,8 @@ class QQGroupInfoTool(FunctionTool[AstrAgentContext]):
                 kwargs.get("include_at_all_remain"),
                 True,
             ),
+            include_avatar=_bool_arg(kwargs.get("include_avatar"), True),
+            return_image=_bool_arg(kwargs.get("return_image"), True),
         )
 
 

@@ -105,6 +105,12 @@ def build_qq_avatar_url(qq_id: str, size: str = DEFAULT_AVATAR_SIZE) -> str:
     return f"https://q.qlogo.cn/headimg_dl?dst_uin={qq_id}&spec={normalize_avatar_size(size)}&img_type=jpg"
 
 
+def build_qq_group_avatar_url(group_id: str) -> str:
+    """Return QQ's public group-avatar endpoint for a validated group number."""
+
+    return f"https://p.qlogo.cn/gh/{group_id}/{group_id}/100"
+
+
 def _event_sender_id(event: Any) -> str:
     getter = getattr(event, "get_sender_id", None)
     if callable(getter):
@@ -317,6 +323,12 @@ class QQService:
     def group_info_include_at_all_remain(self) -> bool:
         return read_bool(
             cfg(self.config, "qq_member", "group_info_include_at_all_remain", True),
+            True,
+        )
+
+    def group_info_include_avatar(self) -> bool:
+        return read_bool(
+            cfg(self.config, "qq_member", "group_info_include_avatar", True),
             True,
         )
 
@@ -846,7 +858,9 @@ class QQService:
         include_member_statistics: bool = True,
         include_honors: bool = True,
         include_at_all_remain: bool = True,
-    ) -> str:
+        include_avatar: bool = False,
+        return_image: bool = False,
+    ) -> str | CallToolResult:
         info, error = await self.fetch_group_info_detail(event=event, group_id=group_id)
         if error:
             return error
@@ -894,7 +908,35 @@ class QQService:
                 lines.append("@全体成员配额")
                 lines.extend(values or ["适配器没有返回可用配额字段。"])
 
-        return truncate("\n".join(lines), self.group_info_max_text_chars())
+        text = truncate("\n".join(lines), self.group_info_max_text_chars())
+        if not include_avatar or not self.group_info_include_avatar():
+            return text
+
+        avatar_url = build_qq_group_avatar_url(resolved_group_id)
+        text = f"{text}\n群头像 URL: {avatar_url}"
+        if not return_image or not self.avatar_download_for_llm():
+            return text
+        try:
+            data, mime_type = await fetch_bytes(
+                avatar_url,
+                timeout_seconds=self.avatar_timeout(),
+                max_bytes=self.avatar_max_bytes(),
+            )
+            if not mime_type.startswith("image/"):
+                mime_type = "image/jpeg"
+        except Exception as exc:
+            logger.warning("[HelperTools] group avatar download failed: %s", exc)
+            return f"{text}\n群头像下载失败，已降级为 URL: {exc}"
+        return CallToolResult(
+            content=[
+                TextContent(type="text", text=text),
+                ImageContent(
+                    type="image",
+                    data=base64.b64encode(data).decode("ascii"),
+                    mimeType=mime_type,
+                ),
+            ]
+        )
 
     async def get_group_member_result(self, *, event: Any, qq_id: str = "", group_id: str = "") -> str:
         info, error = await self.fetch_group_member_info(event=event, qq_id=qq_id, group_id=group_id)

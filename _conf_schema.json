@@ -1952,6 +1952,12 @@
         "default": true,
         "hint": "显示的是当前 Bot 账号在该群的 OneBot 可用配额，不代表普通群成员的权限。"
       },
+      "group_info_include_avatar": {
+        "type": "bool",
+        "description": "群详情默认附带群头像",
+        "default": true,
+        "hint": "开启后，get_qq_group_info 会按群号构造 QQ 公开群头像地址，并在模型请求时下载图片供视觉模型查看。下载超时和大小上限沿用【QQ 头像工具】中的设置；关闭后仍可查询其它群资料。"
+      },
       "group_info_max_text_chars": {
         "type": "int",
         "description": "群详情结果最大字符数",

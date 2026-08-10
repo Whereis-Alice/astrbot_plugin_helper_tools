@@ -2,6 +2,12 @@
 
 本项目按语义化版本记录用户可见变更。
 
+## [v0.10.8] - 2026-08-10
+
+### 新增
+
+- `get_qq_group_info` 新增群头像支持。默认会返回 QQ 公开群头像 URL，并在视觉模型可用时下载头像图片供模型查看；可通过工具参数 `include_avatar`、`return_image` 或 `qq_member.group_info_include_avatar` 配置关闭。
+
 ## [v0.10.7] - 2026-08-10
 
 ### 新增
