@@ -110,6 +110,83 @@ class PerceptionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("QQ 号为 123456", qq_context)
         self.assertNotIn("QQ 号为 123456", telegram_context)
 
+    async def test_sender_group_profile_is_injected_once_and_cached(self) -> None:
+        bot = DummyOneBot(
+            {
+                "user_id": 123456,
+                "nickname": "Alice QQ",
+                "card": "群里的爱丽丝",
+                "role": "admin",
+                "level": "42",
+                "title": "星之群管",
+                "title_expire_time": 1_800_000_000,
+                "shut_up_timestamp": 0,
+            }
+        )
+        service = EnvironmentPerceptionService(
+            {
+                "perception": {
+                    "enabled": True,
+                    "include_sender_qq": True,
+                    "include_sender_group_profile": True,
+                    "include_bot_group_identity": False,
+                    "sender_group_profile_cache_seconds": 60,
+                }
+            }
+        )
+        event = DummyEvent(bot=bot)
+
+        first_context = await service.context_for_event(event)
+        second_context = await service.context_for_event(event)
+
+        self.assertIn("当前发言者 QQ 号为 123456", first_context)
+        self.assertIn("当前发言者的 QQ昵称：Alice QQ", first_context)
+        self.assertIn("当前发言者的群昵称：群里的爱丽丝", first_context)
+        self.assertIn("当前发言者的群身份：管理员", first_context)
+        self.assertIn("当前发言者的群等级：42", first_context)
+        self.assertIn("当前发言者的群专属头衔：星之群管", first_context)
+        self.assertIn("头衔有效至：", first_context)
+        self.assertEqual(first_context.count("当前发言者 QQ 号为 123456"), 1)
+        self.assertEqual(first_context, second_context)
+        self.assertEqual(
+            bot.calls,
+            [{"group_id": 10000, "user_id": 123456, "no_cache": True}],
+        )
+
+    async def test_sender_group_profile_respects_config_and_platform(self) -> None:
+        disabled_bot = DummyOneBot({"role": "admin"})
+        disabled_context = await EnvironmentPerceptionService(
+            {
+                "perception": {
+                    "enabled": True,
+                    "include_sender_group_profile": False,
+                    "include_bot_group_identity": False,
+                }
+            }
+        ).context_for_event(DummyEvent(bot=disabled_bot))
+        self.assertNotIn("当前发言者的群身份", disabled_context)
+        self.assertEqual(disabled_bot.calls, [])
+
+        telegram_bot = DummyOneBot({"role": "admin"})
+        telegram_context = await EnvironmentPerceptionService(
+            {"perception": {"enabled": True, "include_sender_group_profile": True}}
+        ).context_for_event(DummyEvent(platform="telegram", bot=telegram_bot))
+        self.assertNotIn("当前发言者的群身份", telegram_context)
+        self.assertEqual(telegram_bot.calls, [])
+
+        fallback_context = await EnvironmentPerceptionService(
+            {
+                "perception": {
+                    "enabled": True,
+                    "include_sender_qq": True,
+                    "include_sender_group_profile": True,
+                    "include_bot_group_identity": False,
+                }
+            }
+        ).context_for_event(DummyEvent(bot=object()))
+        self.assertIn("当前发言者 QQ 号为 123456", fallback_context)
+        self.assertNotIn("当前发言者的群身份", fallback_context)
+
     async def test_bot_group_identity_is_injected_and_cached(self) -> None:
         bot = DummyOneBot(
             {
