@@ -130,6 +130,12 @@
         "default": false,
         "hint": "仅 QQ/OneBot 平台且发送者 ID 为数字时提供。开启后模型会知道当前消息实际来自哪个 QQ 号，可防止有人只靠文字冒充身份。"
       },
+      "include_bot_group_identity": {
+        "type": "bool",
+        "description": "附带 Bot 自己在当前群的身份和头衔",
+        "default": true,
+        "hint": "仅 QQ 群聊且当前适配器支持 OneBot 群成员查询时生效。模型会知道自己是普通群员、管理员还是群主，以及自己的群昵称、群等级和专属头衔；这不是当前发言者的信息。"
+      },
       "group_name_cache_seconds": {
         "type": "int",
         "description": "群名缓存时长（秒）",
@@ -137,6 +143,14 @@
         "min": 0,
         "max": 86400,
         "hint": "设为 0 表示不缓存。"
+      },
+      "bot_group_identity_cache_seconds": {
+        "type": "int",
+        "description": "Bot 群身份缓存时长（秒）",
+        "default": 60,
+        "min": 0,
+        "max": 86400,
+        "hint": "默认 60 秒，避免每条消息都查询一次群成员资料。设为 0 表示不缓存；刚调整管理员身份或专属头衔时，可临时设为 0 或等待缓存到期。"
       }
     }
   },

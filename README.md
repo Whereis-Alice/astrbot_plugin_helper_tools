@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频与专栏理解、X/Twitter 资料检索、网页浏览、环境感知、QQ 防撤回、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.10.6`
+- 当前版本：`v0.10.7`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -14,7 +14,7 @@
 | B站专栏理解 | 引用 B站专栏卡片或发送专栏链接时自动读取正文；可选分析封面图片，正文长度可配置，资料只保留当前轮 |
 | X / Twitter 资料检索 | 查找公开账号、最近动态、推文和图片；区分本人发布与转推，可优先使用自建 Nitter，失败自动回退 FxTwitter，并提供 R18 过滤与可选 AI 图片审核 |
 | 网页浏览 | 可选的 Playwright 只读网页读取；返回正文、标题和可选截图，默认关闭 |
-| 环境感知 | 将当前时间、节假日、农历、节气、平台与可选的真实 QQ 身份作为本轮可信信息交给模型，默认关闭 |
+| 环境感知 | 将当前时间、节假日、农历、节气、平台、可选的真实 QQ 身份和 Bot 自己的群身份作为本轮可信信息交给模型，默认关闭 |
 | QQ 防撤回 | 缓存 QQ 群 OneBot 消息，撤回后转发原消息到配置目标；支持按群目标、忽略名单和管理员管理命令，默认关闭 |
 | 群聊历史检索 | 让模型只检索当前 QQ 群的本地/OneBot 历史；支持关键词、时间、发送者和可选 T2I 摘要卡片，默认关闭 |
 | QQ 工具 | 查看用户头像、群成员资料、综合 QQ 资料 |
@@ -38,7 +38,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.10.6` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.10.7` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -107,6 +107,8 @@ python -m playwright install chromium
 
 `include_sender_qq` 默认关闭。开启后，只有 QQ/OneBot 平台且适配器给出数字发送者 ID 时，模型才会收到“当前发言者 QQ 号为 ……”这一条事实，并被明确要求不要把正文里的自称当成身份依据。它适合防止群成员靠文字冒充别人的场景。
 
+`include_bot_group_identity` 默认开启，但只会在已经开启环境感知的 QQ 群聊中生效。插件会通过 OneBot 查询 Bot 自己的群成员资料，让模型知道自己在当前群是普通群员、管理员还是群主，并附带自己的群昵称、群等级、专属头衔、头衔到期时间和禁言到期时间。这是 Bot 自己的群身份，不是当前发言者的信息；适配器不支持查询时会自动跳过，不会影响回复。
+
 `log_mode` 控制后台日志。默认“仅记录已注入”，只记录会话标识和本轮感知文本长度，不显示具体感知内容；会话标识通常包含平台和群号。选择“记录完整内容”后还会把实际交给模型的感知文本写入日志，可能包含群名或发送者 QQ 号；选择“关闭”则不记录感知注入日志。
 
 ### 节假日数据
@@ -124,6 +126,8 @@ python -m playwright install chromium
 | `include_lunar` / `include_solar_term` / `include_almanac` | 控制农历、节气和可选的民俗黄历信息 |
 | `include_platform` / `include_group_name` / `include_media_types` | 控制平台、群名和媒体类型说明 |
 | `include_sender_qq` | 可选提供当前消息真实 QQ 号，用于身份校验 |
+| `include_bot_group_identity` | 提供 Bot 自己在当前 QQ 群的身份、群昵称、等级和专属头衔，默认开启 |
+| `bot_group_identity_cache_seconds` | Bot 群身份缓存秒数，默认 `60`；设为 `0` 则每轮重新查询 |
 
 ## QQ 防撤回
 
@@ -608,7 +612,7 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 | 分组 | 内容 |
 | --- | --- |
 | `general` | 插件总开关 |
-| `perception` | 当前时间、节假日、农历、平台和可选真实 QQ 身份感知 |
+| `perception` | 当前时间、节假日、农历、平台、真实 QQ 身份和 Bot 自己的群身份感知 |
 | `chat_history` | 当前 QQ 群历史检索、本地保留、OneBot 回填和可选 T2I 卡片 |
 | `bilibili_video` | B 站分析模式、触发方式、下载限制、Cookie、默认模型和 Gemini 子配置 |
 | `bilibili_article` | B 站专栏自动读取、封面视觉资料、正文长度限制和缓存 |
