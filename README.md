@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频与专栏理解、X/Twitter 资料检索、网页浏览、环境感知、QQ 防撤回、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.10.9`
+- 当前版本：`v0.10.10`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -38,7 +38,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.10.9` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.10.10` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -107,7 +107,7 @@ python -m playwright install chromium
 
 `include_sender_qq` 默认关闭。开启后，只有 QQ/OneBot 平台且适配器给出数字发送者 ID 时，模型才会收到“当前发言者 QQ 号为 ……”这一条事实，并被明确要求不要把正文里的自称当成身份依据。它适合防止群成员靠文字冒充别人的场景。
 
-`include_sender_group_profile` 默认关闭。开启后，仅在当前 QQ 群中通过 OneBot 查询当前发言者的同群成员资料，提供 QQ 号、QQ昵称、群昵称、群身份、群等级、群专属头衔、头衔到期时间和禁言到期时间。这里的 QQ昵称是 OneBot 返回的公开昵称，不是实名认证姓名。资料内已含 QQ 号，因此与 `include_sender_qq` 同时开启时不会重复注入；适配器不支持查询时会自动跳过，若 `include_sender_qq` 也开启则仍会保留 QQ 号身份校验。
+`include_sender_group_profile` 默认关闭。开启后，仅在当前 QQ 群中通过 OneBot 查询当前发言者的同群成员资料，提供 QQ 号、QQ昵称、群昵称、群身份、群等级、群专属头衔、头衔到期时间和禁言到期时间。注入内容使用紧凑字段格式，不会反复写“当前发言者的”；这里的 QQ昵称是 OneBot 返回的公开昵称，不是实名认证姓名。资料内已含 QQ 号，因此与 `include_sender_qq` 同时开启时不会重复注入；适配器不支持查询时会自动跳过，若 `include_sender_qq` 也开启则仍会保留 QQ 号身份校验。
 
 `include_bot_group_identity` 默认开启，但只会在已经开启环境感知的 QQ 群聊中生效。插件会通过 OneBot 查询 Bot 自己的群成员资料，让模型知道自己在当前群是普通群员、管理员还是群主，并附带自己的群昵称、群等级、专属头衔、头衔到期时间和禁言到期时间。这是 Bot 自己的群身份，不是当前发言者的信息；适配器不支持查询时会自动跳过，不会影响回复。
 
