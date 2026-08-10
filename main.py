@@ -65,6 +65,8 @@ from .qq_features import (
     DEFAULT_AVATAR_SIZE,
     QQ_AVATAR_TOOL_NAME,
     QQ_GROUP_MEMBER_TOOL_NAME,
+    QQ_GROUP_MEMBER_LIST_TOOL_NAME,
+    QQ_GROUP_INFO_TOOL_NAME,
     QQ_PROFILE_TOOL_NAME,
     QQService,
     build_qq_avatar_url,
@@ -101,7 +103,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.10.5"
+PLUGIN_VERSION = "0.10.6"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、防撤回、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -365,6 +367,111 @@ class QQGroupMemberTool(FunctionTool[AstrAgentContext]):
             event=_tool_event(context),
             qq_id=clean_text(kwargs.get("qq_id")),
             group_id=clean_text(kwargs.get("group_id")),
+        )
+
+
+@pydantic_dataclass
+class QQGroupMemberListTool(FunctionTool[AstrAgentContext]):
+    plugin: Any = Field(default=None, repr=False)
+    name: str = QQ_GROUP_MEMBER_LIST_TOOL_NAME
+    description: str = (
+        "获取 QQ 群成员列表。结果含群名称、QQ号、QQ昵称、群昵称、群身份、群等级、"
+        "专属头衔以及 OneBot 可提供的成员字段；支持按 QQ号、昵称、群昵称或头衔筛选和分页。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "群号；留空时使用当前 QQ 群聊。",
+                },
+                "keyword": {
+                    "type": "string",
+                    "description": "可选筛选词，可匹配 QQ号、QQ昵称、群昵称、头衔、身份或群等级。",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "从第几名匹配成员开始，默认 0。需要继续读取时使用上一次结果提示的 offset。",
+                    "default": 0,
+                    "minimum": 0,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "本次最多返回多少名成员。实际最大值受插件配置限制。",
+                },
+                "include_group_info": {
+                    "type": "boolean",
+                    "description": "是否额外读取群名称和基础群资料。",
+                    "default": True,
+                },
+            },
+        }
+    )
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
+        if self.plugin is None:
+            return "QQ群成员列表工具未绑定插件实例。"
+        return await self.plugin.qq.get_group_member_list_result(
+            event=_tool_event(context),
+            group_id=clean_text(kwargs.get("group_id")),
+            keyword=clean_text(kwargs.get("keyword")),
+            offset=kwargs.get("offset", 0),
+            limit=kwargs.get("limit"),
+            include_group_info=_bool_arg(kwargs.get("include_group_info"), True),
+        )
+
+
+@pydantic_dataclass
+class QQGroupInfoTool(FunctionTool[AstrAgentContext]):
+    plugin: Any = Field(default=None, repr=False)
+    name: str = QQ_GROUP_INFO_TOOL_NAME
+    description: str = (
+        "获取 QQ 群详情。包括群名称、群号、备注、建群时间、等级、人数上限，"
+        "并可汇总群成员身份、头衔、管理人员、群荣誉和 @全体成员配额等 OneBot 可用信息。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "群号；留空时使用当前 QQ 群聊。",
+                },
+                "include_member_statistics": {
+                    "type": "boolean",
+                    "description": "是否读取成员列表并汇总身份、管理员、群昵称和头衔统计。",
+                    "default": True,
+                },
+                "include_honors": {
+                    "type": "boolean",
+                    "description": "是否读取群荣誉，例如龙王、群聊之火和群聊炽焰。",
+                    "default": True,
+                },
+                "include_at_all_remain": {
+                    "type": "boolean",
+                    "description": "是否读取当前账号在本群的 @全体成员可用次数。",
+                    "default": True,
+                },
+            },
+        }
+    )
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
+        if self.plugin is None:
+            return "QQ群详情工具未绑定插件实例。"
+        return await self.plugin.qq.get_group_info_result(
+            event=_tool_event(context),
+            group_id=clean_text(kwargs.get("group_id")),
+            include_member_statistics=_bool_arg(
+                kwargs.get("include_member_statistics"),
+                True,
+            ),
+            include_honors=_bool_arg(kwargs.get("include_honors"), True),
+            include_at_all_remain=_bool_arg(
+                kwargs.get("include_at_all_remain"),
+                True,
+            ),
         )
 
 
@@ -1218,6 +1325,8 @@ class HelperToolsPlugin(Star):
         return [
             QQAvatarTool(plugin=self, active=self._tool_active("qq_avatar")),
             QQGroupMemberTool(plugin=self, active=self._tool_active("qq_member")),
+            QQGroupMemberListTool(plugin=self, active=self._tool_active("qq_member")),
+            QQGroupInfoTool(plugin=self, active=self._tool_active("qq_member")),
             QQProfileTool(plugin=self, active=self._tool_active("qq_profile")),
             PokeQQUserTool(plugin=self, active=self._tool_active("poke", False)),
             PaymentQRTool(plugin=self, active=self._tool_active("payqr")),
@@ -1255,6 +1364,8 @@ class HelperToolsPlugin(Star):
         module_by_tool = {
             QQ_AVATAR_TOOL_NAME: ("qq_avatar", True),
             QQ_GROUP_MEMBER_TOOL_NAME: ("qq_member", True),
+            QQ_GROUP_MEMBER_LIST_TOOL_NAME: ("qq_member", True),
+            QQ_GROUP_INFO_TOOL_NAME: ("qq_member", True),
             QQ_PROFILE_TOOL_NAME: ("qq_profile", True),
             POKE_TOOL_NAME: ("poke", False),
             PAYQR_TOOL_NAME: ("payqr", True),

@@ -2,7 +2,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的辅助能力。插件按模块组织配置，当前包含 B 站视频与专栏理解、X/Twitter 资料检索、网页浏览、环境感知、QQ 防撤回、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体识别、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v0.10.5`
+- 当前版本：`v0.10.6`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -38,7 +38,7 @@
 https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 ```
 
-更新到 `v0.10.5` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
+更新到 `v0.10.6` 后请重载插件。AstrBot 会根据 `requirements.txt` 安装模块所需依赖；手动部署时可在插件目录执行：
 
 ```bash
 pip install -r requirements.txt
@@ -406,6 +406,8 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 | `search_current_group_chat_history` | 只检索当前 QQ 群的历史记录；支持关键词、时间、发送者、分页和按需发送 T2I 摘要卡片，默认关闭 |
 | `get_qq_avatar` | 获取 QQ 用户头像，可把图片交给视觉模型 |
 | `get_qq_group_member_info` | 获取 QQ号、QQ名、群昵称、群身份、群等级、专属头衔及 OneBot 额外字段 |
+| `get_qq_group_member_list` | 获取群成员列表；可按 QQ号、昵称、群昵称、头衔等筛选并分页，返回每位成员的可用详情 |
+| `get_qq_group_info` | 获取群名称、人数、等级、备注、建群时间和可选的成员统计、群荣誉、@全体成员配额 |
 | `get_qq_profile` | 整合用户资料、群成员资料、群信息和头像 |
 | `poke_qq_user` | 在当前 QQ 会话戳指定用户，默认随戳一戳模块关闭，并受次数上限约束 |
 | `send_payment_qr` | 在转账、赞助、请客等场景发送收款码 |
@@ -460,6 +462,16 @@ B 站 Cookie 属于敏感信息，不要发送到聊天中，也不要提交到�
 AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同时检查原始消息，因此 `/指令`、其它唤醒词缀和历史双前缀写法能按各模块规则正确处理。
 
 ## 其它模块说明
+
+### QQ 群成员与群详情
+
+`qq_member` 现在注册三个互不冲突的 LLM 工具：`get_qq_group_member_info` 用于查单个成员，`get_qq_group_member_list` 用于查成员列表，`get_qq_group_info` 用于查群详情。后两项默认使用当前 QQ 群；需要查 Bot 已加入的其它群时可明确传入群号。
+
+成员列表包含 OneBot 可提供的 QQ号、QQ昵称、群昵称、群身份、群等级、专属头衔、性别、年龄、地区、入群/最后发言/禁言/头衔到期时间，以及适配器额外返回的字段。它支持 `keyword`、`offset`、`limit`，大群会提示下一页的 `offset`，不会一次把全群资料塞满模型上下文。
+
+群详情会读取标准 `get_group_info` 资料，并可选读取成员统计、`get_group_honor_info` 群荣誉和 `get_group_at_all_remain` 的当前 Bot 账号配额。群荣誉与 `@全体` 配额取决于 OneBot/AIOCQHTTP/NapCat 实现，适配器不支持时会明确说明而不影响其它群资料。
+
+这里的“QQ昵称”来自 OneBot 返回的公开/群内昵称字段，不等同于 QQ 实名信息；插件不会尝试获取或推断实名认证姓名。可在 `qq_member` 配置里调整单页人数、单次硬上限、文本上限，以及群详情是否默认附带统计、荣誉和 `@全体` 配额。
 
 ### QQ 头像自动更换
 
@@ -605,7 +617,7 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 | `reply_card_reader` | 引用卡片结构化读取 |
 | `wake` | 唤醒、屏蔽、阻塞和防抖 |
 | `wallpaper` | 多图库、抽图、存图和删图 |
-| `qq_avatar` / `qq_member` / `qq_profile` | QQ 头像、群成员和综合资料 |
+| `qq_avatar` / `qq_member` / `qq_profile` | QQ 头像、单成员资料、群成员列表、群详情和综合资料 |
 | `qq_like` | 自动 QQ 名片点赞、陌生人限制提示和可选人设回复 |
 | `rollpig` | 今日小猪、查看被 @ 用户、自定义素材和卡片缓存 |
 | `poke` | 被戳随机回复、主动戳、随机插件命令、LLM 工具和定时戳 |

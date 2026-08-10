@@ -1866,7 +1866,7 @@
   },
   "qq_member": {
     "type": "object",
-    "description": "【QQ群成员信息】",
+    "description": "【QQ群成员与群详情】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1875,7 +1875,8 @@
       },
       "llm_tool_enabled": {
         "type": "bool",
-        "description": "注册 get_qq_group_member_info LLM 工具",
+        "description": "注册 QQ 群成员与群详情 LLM 工具",
+        "hint": "开启后会注册 get_qq_group_member_info、get_qq_group_member_list 和 get_qq_group_info。",
         "default": true
       },
       "commands_enabled": {
@@ -1888,6 +1889,61 @@
         "type": "bool",
         "description": "附带 OneBot 返回的其它原始字段",
         "default": true
+      },
+      "member_list_default_limit": {
+        "type": "int",
+        "description": "成员列表默认返回人数",
+        "default": 80,
+        "min": 1,
+        "max": 300,
+        "hint": "大群成员资料很长。工具会分页返回；需要继续读取时，模型会使用结果提示中的 offset。"
+      },
+      "member_list_max_limit": {
+        "type": "int",
+        "description": "成员列表单次最大返回人数",
+        "default": 200,
+        "min": 1,
+        "max": 500,
+        "hint": "这是 LLM 工具单次调用的硬上限，防止大群成员资料占满上下文。"
+      },
+      "member_list_max_text_chars": {
+        "type": "int",
+        "description": "成员列表结果最大字符数",
+        "default": 16000,
+        "min": 2000,
+        "max": 60000
+      },
+      "group_info_include_member_statistics": {
+        "type": "bool",
+        "description": "群详情默认附带成员统计",
+        "default": true,
+        "hint": "会读取一次成员列表，汇总群主、管理员、成员数、群昵称、头衔和风险标记。"
+      },
+      "group_info_include_honors": {
+        "type": "bool",
+        "description": "群详情默认附带群荣誉",
+        "default": true,
+        "hint": "会尝试读取龙王、群聊之火、群聊炽焰等；适配器不支持时会自动跳过并说明。"
+      },
+      "group_info_honor_member_limit": {
+        "type": "int",
+        "description": "每类群荣誉最多列出人数",
+        "default": 5,
+        "min": 1,
+        "max": 20
+      },
+      "group_info_include_at_all_remain": {
+        "type": "bool",
+        "description": "群详情默认附带 @全体成员配额",
+        "default": true,
+        "hint": "显示的是当前 Bot 账号在该群的 OneBot 可用配额，不代表普通群成员的权限。"
+      },
+      "group_info_max_text_chars": {
+        "type": "int",
+        "description": "群详情结果最大字符数",
+        "default": 12000,
+        "min": 2000,
+        "max": 40000
       }
     }
   },
