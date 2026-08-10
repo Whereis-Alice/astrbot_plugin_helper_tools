@@ -754,9 +754,9 @@
         },
         "onebot_lookup_enabled": {
           "type": "bool",
-          "description": "引用信息不完整时回查 OneBot 原消息",
+          "description": "用 OneBot 原消息核对引用来源",
           "default": true,
-          "hint": "推荐保持开启。它会用被引用消息 ID 调用 get_msg，以识别其它插件自动发出的图片；不会下载图片内容。"
+          "hint": "推荐保持开启。带消息 ID 的引用会调用 get_msg 核对真实发送者和图片段，避免适配器把其它插件发出的图片误归给当前用户；不会下载图片内容。"
         },
         "max_onebot_lookups_per_message": {
           "type": "int",

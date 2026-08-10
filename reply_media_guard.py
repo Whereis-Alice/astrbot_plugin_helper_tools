@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
 
+from astrbot.api import logger
 import astrbot.api.message_components as Comp
 
 from .helper_utils import cfg, clean_text, read_bool, read_int
@@ -63,7 +65,7 @@ class ReplyMediaGuard:
             if (
                 self._onebot_lookup_enabled()
                 and remaining_lookups > 0
-                and self._should_lookup(component, inline, bot_id)
+                and self._should_lookup(component)
             ):
                 remaining_lookups -= 1
                 looked_up = await self._lookup_quoted_message(event, component)
@@ -130,15 +132,11 @@ class ReplyMediaGuard:
         )
 
     @staticmethod
-    def _should_lookup(
-        reply: Any,
-        inline: _QuotedMessageInfo,
-        bot_id: str,
-    ) -> bool:
+    def _should_lookup(reply: Any) -> bool:
+        """Use the protocol message as the source of truth when an ID exists."""
+
         message_id = clean_text(getattr(reply, "id", ""))
-        if not message_id:
-            return False
-        return inline.sender_id != bot_id or inline.image_count <= 0
+        return bool(message_id)
 
     async def _lookup_quoted_message(
         self,
@@ -161,7 +159,12 @@ class ReplyMediaGuard:
                 call_onebot(bot, "get_msg", message_id=lookup_id),
                 timeout=self._lookup_timeout_seconds(),
             )
-        except Exception:  # noqa: BLE001 - OneBot adapters expose implementation-specific errors
+        except Exception as exc:  # noqa: BLE001 - OneBot adapters expose implementation-specific errors
+            logger.debug(
+                "[HelperTools/ReplyMedia] get_msg failed for quoted message %s: %s",
+                message_id,
+                exc,
+            )
             return None
 
         payload = self._unwrap_onebot_payload(response)
@@ -178,9 +181,15 @@ class ReplyMediaGuard:
     def _unwrap_onebot_payload(value: Any) -> Any:
         if not isinstance(value, dict):
             return value
-        nested = value.get("data")
-        if isinstance(nested, dict) and "message" not in value:
-            return nested
+        if any(
+            key in value
+            for key in ("message", "raw_message", "sender", "sender_id", "user_id")
+        ):
+            return value
+        for key in ("data", "result"):
+            nested = value.get(key)
+            if isinstance(nested, dict):
+                return ReplyMediaGuard._unwrap_onebot_payload(nested)
         return value
 
     @staticmethod
@@ -190,11 +199,11 @@ class ReplyMediaGuard:
             for key in ("user_id", "userId", "id", "qq"):
                 value = clean_text(sender.get(key))
                 if value:
-                    return value
+                    return ReplyMediaGuard._normalize_sender_id(value)
         for key in ("sender_id", "user_id", "userId", "qq"):
             value = clean_text(payload.get(key))
             if value:
-                return value
+                return ReplyMediaGuard._normalize_sender_id(value)
         return ""
 
     @classmethod
@@ -258,15 +267,33 @@ class ReplyMediaGuard:
     @staticmethod
     def _event_self_id(event: Any) -> str:
         getter = getattr(event, "get_self_id", None)
-        return clean_text(getter()) if callable(getter) else ""
+        return ReplyMediaGuard._normalize_sender_id(
+            getter() if callable(getter) else ""
+        )
 
     @staticmethod
     def _reply_sender_id(reply: Any) -> str:
         sender_id = clean_text(getattr(reply, "sender_id", ""))
         if sender_id and sender_id != "0":
-            return sender_id
+            return ReplyMediaGuard._normalize_sender_id(sender_id)
         legacy_sender_id = clean_text(getattr(reply, "qq", ""))
-        return legacy_sender_id if legacy_sender_id != "0" else ""
+        return (
+            ReplyMediaGuard._normalize_sender_id(legacy_sender_id)
+            if legacy_sender_id != "0"
+            else ""
+        )
+
+    @staticmethod
+    def _normalize_sender_id(value: Any) -> str:
+        """Normalize numeric QQ IDs and common adapter-scoped ID forms."""
+
+        text = clean_text(value)
+        if not text or text == "0":
+            return ""
+        if text.isdigit():
+            return text
+        numeric_tail = re.search(r"(?<!\d)(\d{1,20})$", text)
+        return numeric_tail.group(1) if numeric_tail else text
 
     @staticmethod
     def _event_messages(event: Any) -> list[Any]:

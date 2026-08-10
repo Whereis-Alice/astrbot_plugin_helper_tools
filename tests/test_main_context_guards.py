@@ -73,6 +73,28 @@ class MainContextGuardTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_late_request_guard_uses_system_prompt_for_real_provider_requests(self) -> None:
+        plugin = SimpleNamespace(
+            enabled=lambda: True,
+            reply_media_guard=ReplyMediaGuard({"reply_media_guard": {"enabled": True}}),
+        )
+        event = ReplyEvent()
+        request = SimpleNamespace(
+            prompt="用户的问题",
+            system_prompt="已有的人格提示",
+            extra_user_content_parts=[],
+        )
+
+        await HelperToolsPlugin.reply_media_llm_request_context_handler(
+            plugin,
+            event,
+            request,
+        )
+
+        self.assertIn("已有的人格提示", request.system_prompt)
+        self.assertIn(BOT_REPLY_IMAGE_MARKER, request.system_prompt)
+        self.assertEqual(request.extra_user_content_parts, [])
+
     async def test_history_tool_result_is_removed_from_future_context(self) -> None:
         message = Message(
             role="tool",

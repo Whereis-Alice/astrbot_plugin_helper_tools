@@ -119,6 +119,38 @@ class ReplyMediaGuardTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_authoritative_lookup_overrides_inline_sender_and_result_wrapper(self) -> None:
+        bot = FakeBot(
+            {
+                "result": {
+                    "sender": {"userId": "qq:10001"},
+                    "message": [{"type": "image", "data": {"file": "bot.jpg"}}],
+                }
+            }
+        )
+        # Some adapters fill the inline Reply sender from the current message
+        # or leave stale metadata when another plugin sent the quoted image.
+        reply = Comp.Reply(
+            id="791",
+            sender_id="20002",
+            chain=[Comp.Image.fromURL("https://example.com/bot.png")],
+        )
+        event = DummyEvent([reply], bot=bot)
+
+        result = await ReplyMediaGuard(
+            {"reply_media_guard": {"enabled": True}}
+        ).mark_bot_reply_images(event)
+
+        self.assertEqual(result.marked_reply_count, 1)
+        self.assertEqual(result.marked_image_count, 1)
+        self.assertEqual(bot.calls, 1)
+        self.assertTrue(
+            any(
+                isinstance(item, Comp.Plain) and item.text == BOT_REPLY_IMAGE_MARKER
+                for item in reply.chain or []
+            )
+        )
+
     async def test_quote_lookup_is_cached_and_non_bot_quotes_are_not_marked(self) -> None:
         bot = FakeBot(
             {

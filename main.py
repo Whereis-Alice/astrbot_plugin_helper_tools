@@ -103,7 +103,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "0.10.10"
+PLUGIN_VERSION = "0.10.11"
 PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、防撤回、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -175,10 +175,32 @@ def _mark_content_part_temporary(part: Any) -> Any:
 def _request_has_text_marker(request: Any, marker: str) -> bool:
     if marker in clean_text(getattr(request, "prompt", "")):
         return True
+    if marker in clean_text(getattr(request, "system_prompt", "")):
+        return True
     parts = getattr(request, "extra_user_content_parts", None)
     if not isinstance(parts, list):
         return False
     return any(marker in clean_text(getattr(part, "text", "")) for part in parts)
+
+
+def _append_reply_media_marker(request: Any, marker: str) -> None:
+    """Put image provenance in a non-persistent request field when possible."""
+
+    if _request_has_text_marker(request, marker):
+        return
+
+    system_prompt = getattr(request, "system_prompt", None)
+    if isinstance(system_prompt, str):
+        request.system_prompt = f"{system_prompt}\n\n{marker}".strip()
+        return
+
+    parts = getattr(request, "extra_user_content_parts", None)
+    if isinstance(parts, list):
+        parts.append(_mark_content_part_temporary(TextPart(text=marker)))
+        return
+
+    original_prompt = clean_text(getattr(request, "prompt", ""))
+    request.prompt = f"{original_prompt}\n\n{marker}".strip()
 
 
 def _bilibili_tool_result(context: BilibiliVideoContext) -> ToolResult:
@@ -1638,15 +1660,9 @@ class HelperToolsPlugin(Star):
             if image_result.marked_image_count:
                 marker = BOT_REPLY_IMAGE_MARKER
                 event._helper_tools_reply_media_marker = marker
-        if not marker or _request_has_text_marker(request, marker):
+        if not marker:
             return
-
-        parts = getattr(request, "extra_user_content_parts", None)
-        if isinstance(parts, list):
-            parts.append(_mark_content_part_temporary(TextPart(text=marker)))
-            return
-        original_prompt = clean_text(getattr(request, "prompt", ""))
-        request.prompt = f"{original_prompt}\n\n{marker}".strip()
+        _append_reply_media_marker(request, marker)
 
     @filter.on_llm_request(priority=22)
     async def perception_context_handler(
