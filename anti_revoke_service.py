@@ -1,19 +1,46 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import re
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 
 from astrbot.api import logger
+from PIL import Image as PILImage
+from PIL import UnidentifiedImageError
 
-from .helper_utils import cfg, clean_text, json_dumps, read_bool, read_int, read_list
+from .helper_utils import (
+    cfg,
+    clean_text,
+    fetch_bytes,
+    json_dumps,
+    read_bool,
+    read_int,
+    read_list,
+)
 from .qq_features import call_onebot
+
+_IMAGE_SEGMENT_TYPES = {"image", "flash", "mface"}
+_IMAGE_CACHE_MAX_BYTES = 12 * 1024 * 1024
+_IMAGE_CACHE_MAX_COUNT = 20
+_IMAGE_FETCH_TIMEOUT_SECONDS = 8
+_IMAGE_FORMAT_EXTENSIONS = {
+    "BMP": ".bmp",
+    "GIF": ".gif",
+    "JPEG": ".jpg",
+    "PNG": ".png",
+    "WEBP": ".webp",
+}
 
 
 @dataclass(slots=True)
@@ -25,10 +52,11 @@ class RevokeRecord:
     timestamp: int
     message: Any
     cached_at: float
+    image_cache_files: dict[str, str] = field(default_factory=dict)
 
 
 def unwrap_onebot_payload(value: Any) -> dict[str, Any]:
-    """Read both direct OneBot payloads and API-style ``data`` wrappers."""
+    """Read direct OneBot payloads and common API response wrappers."""
 
     if isinstance(value, Mapping):
         payload = dict(value)
@@ -41,8 +69,10 @@ def unwrap_onebot_payload(value: Any) -> dict[str, Any]:
     else:
         return {}
 
-    for _ in range(2):
+    for _ in range(3):
         nested = payload.get("data")
+        if not isinstance(nested, Mapping):
+            nested = payload.get("result")
         if not isinstance(nested, Mapping):
             break
         if any(
@@ -169,6 +199,162 @@ def _cache_filename(group_id: str, message_id: str) -> str:
     return f"cache_{safe_group}_{safe_message}.json"
 
 
+def _media_file_prefix(group_id: str, message_id: str) -> str:
+    cache_name = Path(_cache_filename(group_id, message_id)).stem
+    return f"media_{cache_name.removeprefix('cache_')}_"
+
+
+def _media_filename(group_id: str, message_id: str, key: str, extension: str) -> str:
+    safe_key = re.sub(r"[^0-9A-Za-z_.-]", "_", key) or "image"
+    return f"{_media_file_prefix(group_id, message_id)}{safe_key}{extension}"
+
+
+def _iter_image_segments(message: Any) -> list[tuple[str, Mapping[str, Any]]]:
+    if isinstance(message, list):
+        return [
+            (str(index), segment)
+            for index, segment in enumerate(message)
+            if isinstance(segment, Mapping)
+            and clean_text(segment.get("type")).casefold() in _IMAGE_SEGMENT_TYPES
+        ]
+    if (
+        isinstance(message, Mapping)
+        and clean_text(message.get("type")).casefold() in _IMAGE_SEGMENT_TYPES
+    ):
+        return [("root", message)]
+    return []
+
+
+def _segment_for_key(message: Any, key: str) -> dict[str, Any] | None:
+    if key == "root":
+        return message if isinstance(message, dict) else None
+    if not isinstance(message, list) or not key.isdigit():
+        return None
+    index = int(key)
+    if index < 0 or index >= len(message):
+        return None
+    segment = message[index]
+    return segment if isinstance(segment, dict) else None
+
+
+def _decode_image_data_ref(value: str, max_bytes: int) -> bytes | None:
+    text = clean_text(value)
+    if text.startswith("base64://"):
+        payload = text[len("base64://") :]
+    elif text.startswith("data:image/") and ";base64," in text:
+        payload = text.split(";base64,", 1)[1]
+    else:
+        return None
+    try:
+        data = base64.b64decode(payload, validate=False)
+    except (binascii.Error, ValueError):
+        return None
+    if not data or len(data) > max_bytes:
+        return None
+    return data
+
+
+def _path_from_media_ref(value: str) -> Path | None:
+    text = clean_text(value)
+    if not text:
+        return None
+    if text.casefold().startswith("file://"):
+        parsed = urlparse(text)
+        raw_path = url2pathname(unquote(parsed.path))
+        if parsed.netloc and not raw_path.startswith("/"):
+            raw_path = f"//{parsed.netloc}/{raw_path}"
+        path = Path(raw_path)
+    elif "://" not in text:
+        path = Path(text).expanduser()
+    else:
+        return None
+    try:
+        resolved = path.resolve(strict=False)
+    except OSError:
+        return None
+    return resolved if resolved.exists() and resolved.is_file() else None
+
+
+def _read_limited_file(path: Path, max_bytes: int) -> bytes:
+    with path.open("rb") as handle:
+        data = handle.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError(f"image is larger than {max_bytes} bytes")
+    return data
+
+
+def _validated_image_extension(data: bytes) -> str:
+    if not data or len(data) > _IMAGE_CACHE_MAX_BYTES:
+        raise ValueError("invalid anti-revoke image size")
+    try:
+        with PILImage.open(BytesIO(data)) as image:
+            format_name = clean_text(image.format).upper()
+            image.verify()
+    except (OSError, UnidentifiedImageError, ValueError) as exc:
+        raise ValueError("anti-revoke media is not a supported image") from exc
+    extension = _IMAGE_FORMAT_EXTENSIONS.get(format_name)
+    if not extension:
+        raise ValueError(f"unsupported anti-revoke image format: {format_name or 'unknown'}")
+    return extension
+
+
+def _write_bytes_atomic(path: Path, data: bytes) -> None:
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    try:
+        temporary.write_bytes(data)
+        temporary.replace(path)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _materialize_cached_images(
+    message: Any,
+    image_cache_files: Mapping[str, str],
+    cache_dir: Path,
+) -> tuple[Any, int]:
+    prepared = _json_safe(message)
+    restored = 0
+    resolved_cache_dir = cache_dir.resolve(strict=False)
+    for key, filename_value in image_cache_files.items():
+        filename = clean_text(filename_value)
+        if not filename or Path(filename).name != filename:
+            continue
+        path = (cache_dir / filename).resolve(strict=False)
+        if path.parent != resolved_cache_dir or not path.is_file():
+            continue
+        try:
+            data = _read_limited_file(path, _IMAGE_CACHE_MAX_BYTES)
+            _validated_image_extension(data)
+        except (OSError, ValueError):
+            continue
+        segment = _segment_for_key(prepared, clean_text(key))
+        if segment is None:
+            continue
+        segment_type = clean_text(segment.get("type")).casefold()
+        if segment_type not in _IMAGE_SEGMENT_TYPES:
+            continue
+        current_data = segment.get("data")
+        image_data = dict(current_data) if isinstance(current_data, Mapping) else {}
+        image_data["file"] = f"base64://{base64.b64encode(data).decode('ascii')}"
+        image_data.pop("url", None)
+        image_data.pop("path", None)
+        segment["type"] = "image"
+        segment["data"] = image_data
+        restored += 1
+    return prepared, restored
+
+
+def _cached_image_segments(message: Any) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    for _key, segment in _iter_image_segments(message):
+        data = segment.get("data")
+        data_map = data if isinstance(data, Mapping) else {}
+        if clean_text(data_map.get("file")).startswith("base64://"):
+            segments.append(_json_safe(segment))
+    return segments
+
+
 def _message_size(message: Any) -> int:
     return len(json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
@@ -190,6 +376,7 @@ def _message_to_text(message: Any) -> str:
     labels = {
         "image": "[图片]",
         "flash": "[闪照]",
+        "mface": "[表情图片]",
         "record": "[语音]",
         "video": "[视频]",
         "file": "[文件]",
@@ -320,6 +507,146 @@ class AntiRevokeService:
             True,
         )
 
+    async def _read_image_reference(
+        self,
+        value: Any,
+        *,
+        allow_local: bool = False,
+    ) -> tuple[bytes, str]:
+        reference = clean_text(value)
+        if not reference:
+            raise ValueError("empty image reference")
+        embedded = _decode_image_data_ref(reference, _IMAGE_CACHE_MAX_BYTES)
+        if embedded is not None:
+            return embedded, _validated_image_extension(embedded)
+        local_path = _path_from_media_ref(reference) if allow_local else None
+        if local_path is not None:
+            data = await asyncio.to_thread(
+                _read_limited_file,
+                local_path,
+                _IMAGE_CACHE_MAX_BYTES,
+            )
+            return data, _validated_image_extension(data)
+        if not reference.casefold().startswith(("http://", "https://")):
+            raise ValueError("unresolved image reference")
+        data, _content_type = await fetch_bytes(
+            reference,
+            timeout_seconds=_IMAGE_FETCH_TIMEOUT_SECONDS,
+            max_bytes=_IMAGE_CACHE_MAX_BYTES,
+        )
+        return data, _validated_image_extension(data)
+
+    async def _read_image_segment(
+        self,
+        event: Any,
+        segment: Mapping[str, Any],
+    ) -> tuple[bytes, str]:
+        raw_data = segment.get("data")
+        data = raw_data if isinstance(raw_data, Mapping) else {}
+        references = [
+            value
+            for key in ("path", "file", "url")
+            if (value := clean_text(data.get(key)))
+        ]
+        seen: set[str] = set()
+        for reference in references:
+            if reference in seen:
+                continue
+            seen.add(reference)
+            try:
+                return await self._read_image_reference(reference)
+            except (OSError, ValueError):
+                continue
+
+        bot = getattr(event, "bot", None)
+        file_ref = clean_text(data.get("file"))
+        if bot is None or not file_ref:
+            raise ValueError("image has no downloadable reference")
+        response = await asyncio.wait_for(
+            call_onebot(bot, "get_image", file=file_ref),
+            timeout=_IMAGE_FETCH_TIMEOUT_SECONDS,
+        )
+        resolved = unwrap_onebot_payload(response)
+        resolved_refs = [
+            value
+            for key in ("base64", "path", "file", "url")
+            if (value := clean_text(resolved.get(key))) and value != file_ref
+        ]
+        for reference in resolved_refs:
+            if reference in seen:
+                continue
+            seen.add(reference)
+            if not reference.startswith(("base64://", "data:image/")) and clean_text(
+                resolved.get("base64")
+            ) == reference:
+                reference = f"base64://{reference}"
+            try:
+                return await self._read_image_reference(reference, allow_local=True)
+            except (OSError, ValueError):
+                continue
+        raise ValueError("OneBot could not resolve the image")
+
+    def _cached_image_path(self, filename_value: Any) -> Path | None:
+        filename = clean_text(filename_value)
+        if not filename or Path(filename).name != filename:
+            return None
+        path = (self.cache_dir / filename).resolve(strict=False)
+        if path.parent != self.cache_dir.resolve(strict=False):
+            return None
+        return path
+
+    async def _cache_record_images(self, event: Any, record: RevokeRecord) -> bool:
+        segments = _iter_image_segments(record.message)[:_IMAGE_CACHE_MAX_COUNT]
+        pending: list[tuple[str, Mapping[str, Any]]] = []
+        for key, segment in segments:
+            path = self._cached_image_path(record.image_cache_files.get(key))
+            if path is not None and path.is_file():
+                continue
+            pending.append((key, segment))
+        if not pending:
+            return False
+
+        async def cache_one(
+            key: str,
+            segment: Mapping[str, Any],
+        ) -> tuple[str, str]:
+            data, extension = await self._read_image_segment(event, segment)
+            filename = _media_filename(record.group_id, record.message_id, key, extension)
+            path = self.cache_dir / filename
+            await asyncio.to_thread(_write_bytes_atomic, path, data)
+            return key, filename
+
+        results = await asyncio.gather(
+            *(cache_one(key, segment) for key, segment in pending),
+            return_exceptions=True,
+        )
+        changed = False
+        for (key, _segment), result in zip(pending, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.debug(
+                    "[HelperTools/AntiRevoke] image snapshot failed group=%s message=%s "
+                    "segment=%s error=%r",
+                    record.group_id,
+                    record.message_id,
+                    key,
+                    result,
+                )
+                continue
+            cached_key, filename = result
+            old_path = self._cached_image_path(record.image_cache_files.get(cached_key))
+            if old_path is not None and old_path.name != filename:
+                old_path.unlink(missing_ok=True)
+            record.image_cache_files[cached_key] = filename
+            changed = True
+        if changed:
+            logger.debug(
+                "[HelperTools/AntiRevoke] snapshotted %d image(s) group=%s message=%s",
+                len(record.image_cache_files),
+                record.group_id,
+                record.message_id,
+            )
+        return changed
+
     async def start(self) -> None:
         if not self.enabled() or self._cleanup_task is not None:
             return
@@ -379,6 +706,7 @@ class AntiRevokeService:
             message=message,
             cached_at=time.time(),
         )
+        await self._cache_record_images(event, record)
         key = self._record_key(group_id, message_id)
         self._records[key] = record
         self._records.move_to_end(key)
@@ -425,6 +753,8 @@ class AntiRevokeService:
         if bot is None:
             logger.warning("[HelperTools/AntiRevoke] recall has no OneBot bot handle group=%s", group_id)
             return
+        if await self._cache_record_images(event, record):
+            await asyncio.to_thread(self._write_record, record)
         group_name, sender_name, operator_name = await self._resolve_names(
             bot, group_id, record.sender_id or sender_id, operator_id
         )
@@ -437,6 +767,12 @@ class AntiRevokeService:
             operator_id,
             record.timestamp,
         )
+        original_message, restored_images = await asyncio.to_thread(
+            _materialize_cached_images,
+            sanitize_recall_message(record.message),
+            record.image_cache_files,
+            self.cache_dir,
+        )
         for target_type, target_id in targets:
             await self._send_to_target(
                 bot,
@@ -444,6 +780,8 @@ class AntiRevokeService:
                 target_id,
                 record,
                 header,
+                original_message,
+                restored_images,
             )
 
     async def _try_get_message(
@@ -508,8 +846,18 @@ class AntiRevokeService:
         try:
             data = json.loads(await asyncio.to_thread(path.read_text, encoding="utf-8"))
             if time.time() - float(data.get("cached_at", 0)) > self.cache_expiration_seconds():
-                path.unlink(missing_ok=True)
+                self._delete_record_cache(group_id, message_id)
                 return None
+            cached_images = data.get("image_cache_files")
+            image_cache_files = (
+                {
+                    clean_text(key): clean_text(value)
+                    for key, value in cached_images.items()
+                    if clean_text(key) and clean_text(value)
+                }
+                if isinstance(cached_images, Mapping)
+                else {}
+            )
             record = RevokeRecord(
                 group_id=clean_text(data.get("group_id")),
                 message_id=clean_text(data.get("message_id")),
@@ -518,6 +866,7 @@ class AntiRevokeService:
                 timestamp=read_int(data.get("timestamp"), int(time.time())),
                 message=data.get("message", ""),
                 cached_at=float(data.get("cached_at", time.time())),
+                image_cache_files=image_cache_files,
             )
         except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
             logger.debug("[HelperTools/AntiRevoke] invalid cache file %s: %r", path, exc)
@@ -539,6 +888,7 @@ class AntiRevokeService:
             "timestamp": record.timestamp,
             "message": record.message,
             "cached_at": record.cached_at,
+            "image_cache_files": record.image_cache_files,
         }
         temporary = path.with_suffix(".tmp")
         try:
@@ -551,9 +901,7 @@ class AntiRevokeService:
     def _evict_memory_records(self) -> None:
         while len(self._records) > self.max_cached_messages():
             _key, record = self._records.popitem(last=False)
-            (self.cache_dir / _cache_filename(record.group_id, record.message_id)).unlink(
-                missing_ok=True
-            )
+            self._delete_record_cache(record.group_id, record.message_id)
 
     async def _cleanup_loop(self) -> None:
         while True:
@@ -566,12 +914,29 @@ class AntiRevokeService:
         for key, record in list(self._records.items()):
             if now - record.cached_at > self.cache_expiration_seconds():
                 self._records.pop(key, None)
+                self._delete_record_cache(record.group_id, record.message_id)
 
     def _cleanup_disk(self) -> None:
         cutoff = time.time() - self.cache_expiration_seconds()
         for path in self.cache_dir.glob("cache_*.json"):
             try:
                 if path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                continue
+        for path in self.cache_dir.glob("media_*"):
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                continue
+
+    def _delete_record_cache(self, group_id: str, message_id: str) -> None:
+        (self.cache_dir / _cache_filename(group_id, message_id)).unlink(missing_ok=True)
+        prefix = _media_file_prefix(group_id, message_id)
+        for path in self.cache_dir.glob(f"{prefix}*"):
+            try:
+                if path.is_file():
                     path.unlink(missing_ok=True)
             except OSError:
                 continue
@@ -732,13 +1097,14 @@ class AntiRevokeService:
         target_id: str,
         record: RevokeRecord,
         header: str,
+        original_message: Any,
+        restored_images: int,
     ) -> None:
         action = "send_private_msg" if target_type == "private" else "send_group_msg"
         params = {"user_id" if target_type == "private" else "group_id": int(target_id)}
+        include_header = self.include_recall_header()
+        include_original = self.send_original_message()
         try:
-            include_header = self.include_recall_header()
-            include_original = self.send_original_message()
-            original_message = sanitize_recall_message(record.message)
             if include_header and include_original:
                 message = _message_with_header(header, original_message)
             elif include_header:
@@ -750,30 +1116,63 @@ class AntiRevokeService:
             if message:
                 await self._call_send(bot, action, params, message)
             logger.info(
-                "[HelperTools/AntiRevoke] restored recall successfully group=%s message=%s target=%s:%s",
+                "[HelperTools/AntiRevoke] restored recall successfully group=%s message=%s "
+                "target=%s:%s cached_images=%d",
                 record.group_id,
                 record.message_id,
                 target_type,
                 target_id,
+                restored_images,
             )
         except Exception as exc:  # noqa: BLE001 - OneBot adapters vary by message type
             fallback = _message_to_text(sanitize_recall_message(record.message)) or "[原消息没有可转换的文字内容]"
+            cached_images = _cached_image_segments(original_message) if include_original else []
+            media_fallback_exc: BaseException | None = None
+            if cached_images:
+                fallback_text = f"原消息部分内容无法原样重发，已恢复图片。\n文字内容：{fallback}"
+                if include_header:
+                    fallback_text = f"{header}\n{fallback_text}"
+                media_fallback = [_text_segment(fallback_text), *cached_images]
+                try:
+                    await self._call_send(bot, action, params, media_fallback)
+                except Exception as image_exc:  # noqa: BLE001 - continue to text-only fallback
+                    media_fallback_exc = image_exc
+                else:
+                    logger.warning(
+                        "[HelperTools/AntiRevoke] original restore failed but image fallback succeeded "
+                        "group=%s message=%s target=%s:%s cached_images=%d error=%r",
+                        record.group_id,
+                        record.message_id,
+                        target_type,
+                        target_id,
+                        len(cached_images),
+                        exc,
+                    )
+                    return
+
+            fallback_parts: list[str] = []
+            if include_header:
+                fallback_parts.append(header)
+            if include_original:
+                fallback_parts.append(f"原消息重发失败，文字内容兜底：{fallback}")
+            text_fallback = "\n".join(fallback_parts) or "撤回消息恢复失败。"
             try:
                 await self._call_send(
                     bot,
                     action,
                     params,
-                    f"{header}\n原消息重发失败，文字内容兜底：{fallback}",
+                    text_fallback,
                 )
             except Exception as fallback_exc:  # noqa: BLE001 - report both failures
                 logger.error(
                     "[HelperTools/AntiRevoke] restore failed group=%s message=%s target=%s:%s "
-                    "error=%r fallback_error=%r",
+                    "error=%r image_fallback_error=%r fallback_error=%r",
                     record.group_id,
                     record.message_id,
                     target_type,
                     target_id,
                     exc,
+                    media_fallback_exc,
                     fallback_exc,
                 )
             else:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,10 @@ from astrbot_plugin_helper_tools.anti_revoke_service import (
     extract_event_payload,
     is_group_recall,
     sanitize_recall_message,
+)
+
+TINY_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 
 
@@ -31,6 +36,18 @@ class FakeBot:
     async def send_group_msg(self, *, group_id: int, message: object) -> dict[str, object]:
         self.sent.append(("group", {"group_id": group_id, "message": message}))
         return {"status": "ok", "retcode": 0}
+
+
+class RejectFirstSendBot(FakeBot):
+    def __init__(self) -> None:
+        super().__init__()
+        self.send_attempts = 0
+
+    async def send_group_msg(self, *, group_id: int, message: object) -> dict[str, object]:
+        self.send_attempts += 1
+        if self.send_attempts == 1:
+            return {"status": "failed", "retcode": 100}
+        return await super().send_group_msg(group_id=group_id, message=message)
 
 
 class FakeEvent:
@@ -175,6 +192,116 @@ class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
                 {"type": "text", "data": {"text": "\u3010\u5f15\u7528\u6d88\u606f\u3011"}},
             )
             self.assertEqual(sent_message[2], {"type": "face", "data": {"id": "128"}})
+
+    async def test_recalled_image_uses_snapshot_after_original_reference_expires(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = FakeBot()
+            service = AntiRevokeService(
+                {
+                    "anti_revoke": {
+                        "enabled": True,
+                        "target_groups": ["999"],
+                    }
+                },
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "message": [
+                    {"type": "text", "data": {"text": "图片会被撤回"}},
+                    {
+                        "type": "image",
+                        "data": {"file": f"base64://{TINY_PNG_BASE64}"},
+                    },
+                ],
+            }
+            await service.handle_event(FakeEvent(original, bot))
+
+            record = service._records["123:456"]
+            self.assertEqual(set(record.image_cache_files), {"1"})
+            cached_path = service.cache_dir / record.image_cache_files["1"]
+            self.assertTrue(cached_path.is_file())
+            record.message[1]["data"]["file"] = "expired-image-reference"
+
+            await service.handle_event(
+                FakeEvent(
+                    {
+                        "post_type": "notice",
+                        "notice_type": "group_recall",
+                        "group_id": 123,
+                        "message_id": 456,
+                        "user_id": 789,
+                        "operator_id": 789,
+                    },
+                    bot,
+                )
+            )
+
+            sent_message = bot.sent[0][1]["message"]
+            self.assertIsInstance(sent_message, list)
+            assert isinstance(sent_message, list)
+            image_segment = sent_message[2]
+            self.assertEqual(image_segment["type"], "image")
+            restored_ref = image_segment["data"]["file"]
+            self.assertTrue(restored_ref.startswith("base64://"))
+            self.assertEqual(
+                base64.b64decode(restored_ref.removeprefix("base64://")),
+                base64.b64decode(TINY_PNG_BASE64),
+            )
+
+    async def test_failed_full_restore_keeps_cached_image_in_single_message(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = RejectFirstSendBot()
+            service = AntiRevokeService(
+                {
+                    "anti_revoke": {
+                        "enabled": True,
+                        "target_groups": ["999"],
+                    }
+                },
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "message": [
+                    {"type": "text", "data": {"text": "混合消息"}},
+                    {
+                        "type": "image",
+                        "data": {"file": f"base64://{TINY_PNG_BASE64}"},
+                    },
+                    {"type": "video", "data": {"file": "expired-video"}},
+                ],
+            }
+            await service.handle_event(FakeEvent(original, bot))
+            await service.handle_event(
+                FakeEvent(
+                    {
+                        "post_type": "notice",
+                        "notice_type": "group_recall",
+                        "group_id": 123,
+                        "message_id": 456,
+                        "user_id": 789,
+                        "operator_id": 789,
+                    },
+                    bot,
+                )
+            )
+
+            self.assertEqual(bot.send_attempts, 2)
+            self.assertEqual(len(bot.sent), 1)
+            sent_message = bot.sent[0][1]["message"]
+            self.assertIsInstance(sent_message, list)
+            assert isinstance(sent_message, list)
+            self.assertIn("已恢复图片", sent_message[0]["data"]["text"])
+            self.assertEqual(len([item for item in sent_message if item["type"] == "image"]), 1)
 
     async def test_custom_target_commands_are_persisted_and_override_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
