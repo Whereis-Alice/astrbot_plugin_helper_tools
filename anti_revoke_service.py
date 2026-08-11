@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import inspect
 import json
 import re
 import time
@@ -34,6 +35,10 @@ _IMAGE_SEGMENT_TYPES = {"image", "flash", "mface"}
 _IMAGE_CACHE_MAX_BYTES = 12 * 1024 * 1024
 _IMAGE_CACHE_MAX_COUNT = 20
 _IMAGE_FETCH_TIMEOUT_SECONDS = 8
+_QQ_IMAGE_HEADERS = {
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "Referer": "https://qzone.qq.com/",
+}
 _IMAGE_FORMAT_EXTENSIONS = {
     "BMP": ".bmp",
     "GIF": ".gif",
@@ -144,8 +149,16 @@ def _event_id(payload: Mapping[str, Any], event: Any, key: str) -> str:
     return clean_text(getattr(message_obj, key, ""))
 
 
+def _component_type_name(component: Any) -> str:
+    component_type = getattr(component, "type", None)
+    name = clean_text(getattr(component_type, "name", "")) or clean_text(component_type)
+    if not name:
+        name = component.__class__.__name__
+    return name.casefold()
+
+
 def _component_to_segment(component: Any) -> dict[str, Any] | None:
-    type_name = clean_text(getattr(getattr(component, "type", None), "name", "")).casefold()
+    type_name = _component_type_name(component)
     if type_name in {"plain", "text"}:
         return {"type": "text", "data": {"text": clean_text(getattr(component, "text", ""))}}
     if type_name == "at":
@@ -157,7 +170,7 @@ def _component_to_segment(component: Any) -> dict[str, Any] | None:
         for key in ("file", "url", "path"):
             value = clean_text(getattr(component, key, ""))
             if value:
-                data[key if key != "path" else "file"] = value
+                data[key] = value
         return {"type": type_name, "data": data}
     if type_name in {"record", "video", "file", "json", "xml", "forward"}:
         data: dict[str, Any] = {}
@@ -169,13 +182,88 @@ def _component_to_segment(component: Any) -> dict[str, Any] | None:
     return None
 
 
+def _event_image_components(event: Any) -> list[Any]:
+    getter = getattr(event, "get_messages", None)
+    try:
+        value = getter() if callable(getter) else []
+    except Exception:  # noqa: BLE001 - adapter events vary
+        value = []
+    if not isinstance(value, (list, tuple)):
+        message_obj = getattr(event, "message_obj", None)
+        candidate = getattr(message_obj, "message", None)
+        if isinstance(candidate, (list, tuple)):
+            value = candidate
+    if not isinstance(value, (list, tuple)):
+        for attribute in ("chain", "components"):
+            candidate = getattr(value, attribute, None)
+            if isinstance(candidate, (list, tuple)):
+                value = candidate
+                break
+        else:
+            value = []
+    return [component for component in value if _component_type_name(component) == "image"]
+
+
+def _merge_image_segment_references(
+    target: Mapping[str, Any],
+    source: Mapping[str, Any],
+    *,
+    replace_existing: bool = False,
+) -> dict[str, Any]:
+    merged = _json_safe(target)
+    if not isinstance(merged, dict):
+        merged = {}
+    target_data = merged.get("data")
+    merged_data = dict(target_data) if isinstance(target_data, Mapping) else {}
+    source_data = source.get("data")
+    if isinstance(source_data, Mapping):
+        for key in ("path", "file", "url"):
+            value = clean_text(source_data.get(key))
+            if value and (replace_existing or not clean_text(merged_data.get(key))):
+                merged_data[key] = value
+    merged["type"] = clean_text(merged.get("type"), "image")
+    merged["data"] = merged_data
+    return merged
+
+
+def _merge_event_image_references(message: Any, event: Any) -> Any:
+    components = _event_image_components(event)
+    component_segments = [
+        segment
+        for component in components
+        if (segment := _component_to_segment(component)) is not None
+    ]
+    if not component_segments:
+        return message
+    merged = _json_safe(message)
+    raw_images = _iter_image_segments(merged)
+    if not raw_images:
+        if isinstance(merged, list):
+            merged.extend(component_segments)
+            return merged
+        if isinstance(merged, Mapping):
+            return [merged, *component_segments]
+        text = clean_text(merged)
+        return [_text_segment(text), *component_segments] if text else component_segments
+    for (_key, raw_segment), component_segment in zip(
+        raw_images,
+        component_segments,
+        strict=False,
+    ):
+        replacement = _merge_image_segment_references(raw_segment, component_segment)
+        if isinstance(raw_segment, dict):
+            raw_segment.clear()
+            raw_segment.update(replacement)
+    return merged
+
+
 def extract_message_payload(payload: Mapping[str, Any], event: Any) -> Any:
     message = payload.get("message")
     if isinstance(message, (str, list, dict)):
         return _json_safe(message)
     getter = getattr(event, "get_messages", None)
     components = getter() if callable(getter) else []
-    if not isinstance(components, list):
+    if not isinstance(components, (list, tuple)):
         return ""
     segments = [
         segment
@@ -296,6 +384,49 @@ def _validated_image_extension(data: bytes) -> str:
     if not extension:
         raise ValueError(f"unsupported anti-revoke image format: {format_name or 'unknown'}")
     return extension
+
+
+def _safe_image_error(error: BaseException) -> str:
+    text = clean_text(error) or error.__class__.__name__
+    text = re.sub(r"(?:base64://|data:image/)[^\s]+", "<embedded-image>", text)
+    text = re.sub(r"https?://[^\s]+", "<http-image>", text)
+    prefix = f"{error.__class__.__name__}:"
+    rendered = text if text.casefold().startswith(prefix.casefold()) else f"{prefix} {text}"
+    return rendered[:320]
+
+
+def _image_id_candidates(data: Mapping[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    for key in ("file", "file_id", "id", "image"):
+        reference = clean_text(data.get(key))
+        if not reference or reference.casefold().startswith(
+            ("http://", "https://", "file://", "base64://", "data:image/")
+        ):
+            continue
+        if reference not in candidates:
+            candidates.append(reference)
+        base_name, extension = Path(reference).stem, Path(reference).suffix.casefold()
+        if (
+            extension in {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
+            and base_name
+            and base_name not in candidates
+        ):
+            candidates.append(base_name)
+    return candidates
+
+
+def _resolved_image_references(response: Any) -> list[str]:
+    resolved = unwrap_onebot_payload(response)
+    references: list[str] = []
+    for key in ("base64", "path", "file", "url"):
+        reference = clean_text(resolved.get(key))
+        if not reference:
+            continue
+        if key == "base64" and not reference.startswith(("base64://", "data:image/")):
+            reference = f"base64://{reference}"
+        if reference not in references:
+            references.append(reference)
+    return references
 
 
 def _write_bytes_atomic(path: Path, data: bytes) -> None:
@@ -533,58 +664,184 @@ class AntiRevokeService:
             reference,
             timeout_seconds=_IMAGE_FETCH_TIMEOUT_SECONDS,
             max_bytes=_IMAGE_CACHE_MAX_BYTES,
+            headers=_QQ_IMAGE_HEADERS,
         )
         return data, _validated_image_extension(data)
+
+    async def _read_image_component(self, component: Any) -> tuple[bytes, str]:
+        errors: list[str] = []
+        for key in ("path", "file", "url"):
+            reference = clean_text(getattr(component, key, ""))
+            if not reference:
+                continue
+            try:
+                return await self._read_image_reference(reference, allow_local=True)
+            except (OSError, ValueError) as exc:
+                errors.append(_safe_image_error(exc))
+
+        converter = getattr(component, "convert_to_base64", None)
+        if callable(converter):
+            try:
+                converted = converter()
+                if inspect.isawaitable(converted):
+                    converted = await converted
+                if isinstance(converted, bytes):
+                    return converted, _validated_image_extension(converted)
+                reference = clean_text(converted)
+                if reference and not reference.startswith(("base64://", "data:image/")):
+                    reference = f"base64://{reference}"
+                if reference:
+                    return await self._read_image_reference(reference)
+            except Exception as exc:  # noqa: BLE001 - component implementations vary
+                errors.append(_safe_image_error(exc))
+        detail = "; ".join(errors[-3:]) or "component has no usable image reference"
+        raise ValueError(detail)
+
+    async def _resolve_image_with_onebot(
+        self,
+        event: Any,
+        data: Mapping[str, Any],
+    ) -> tuple[bytes, str]:
+        bot = getattr(event, "bot", None)
+        candidates = _image_id_candidates(data)
+        if bot is None or not candidates:
+            raise ValueError("image has no OneBot-resolvable file identifier")
+
+        actions: list[tuple[str, dict[str, Any]]] = []
+        for candidate in candidates:
+            actions.extend(
+                (
+                    ("get_image", {"file": candidate}),
+                    ("get_image", {"file_id": candidate}),
+                    ("get_image", {"id": candidate}),
+                    ("get_image", {"image": candidate}),
+                    ("get_file", {"file_id": candidate}),
+                    ("get_file", {"file": candidate}),
+                )
+            )
+        try:
+            group_id = clean_text(getattr(event, "get_group_id", lambda: "")())
+        except Exception:  # noqa: BLE001 - notice events vary by adapter
+            group_id = ""
+        if group_id:
+            group_value: int | str = int(group_id) if group_id.isdigit() else group_id
+            actions.extend(
+                (
+                    "get_group_file_url",
+                    {"group_id": group_value, "file_id": candidate},
+                )
+                for candidate in candidates
+            )
+
+        deadline = asyncio.get_running_loop().time() + _IMAGE_FETCH_TIMEOUT_SECONDS
+        errors: list[str] = []
+        seen_references: set[str] = set(candidates)
+        for action, params in actions:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                errors.append("OneBot image resolution timed out")
+                break
+            try:
+                response = await asyncio.wait_for(
+                    call_onebot(bot, action, **params),
+                    timeout=min(1.5, remaining),
+                )
+            except Exception as exc:  # noqa: BLE001 - adapters expose varying errors
+                errors.append(f"{action}: {_safe_image_error(exc)}")
+                continue
+            for reference in _resolved_image_references(response):
+                if reference in seen_references:
+                    continue
+                seen_references.add(reference)
+                try:
+                    return await self._read_image_reference(reference, allow_local=True)
+                except (OSError, ValueError) as exc:
+                    errors.append(f"{action} result: {_safe_image_error(exc)}")
+        detail = "; ".join(errors[-4:]) or "OneBot returned no downloadable image"
+        raise ValueError(detail)
 
     async def _read_image_segment(
         self,
         event: Any,
         segment: Mapping[str, Any],
+        *,
+        component: Any | None = None,
+        resolve_onebot: bool = False,
     ) -> tuple[bytes, str]:
         raw_data = segment.get("data")
         data = raw_data if isinstance(raw_data, Mapping) else {}
         references = [
-            value
+            (key, value)
             for key in ("path", "file", "url")
             if (value := clean_text(data.get(key)))
         ]
         seen: set[str] = set()
-        for reference in references:
+        errors: list[str] = []
+        for key, reference in references:
             if reference in seen:
                 continue
             seen.add(reference)
             try:
-                return await self._read_image_reference(reference)
-            except (OSError, ValueError):
-                continue
+                return await self._read_image_reference(
+                    reference,
+                    allow_local=key in {"path", "file"},
+                )
+            except (OSError, ValueError) as exc:
+                errors.append(_safe_image_error(exc))
+        if component is not None:
+            try:
+                return await self._read_image_component(component)
+            except (OSError, ValueError) as exc:
+                errors.append(f"AstrBot Image: {_safe_image_error(exc)}")
+        if resolve_onebot:
+            try:
+                return await self._resolve_image_with_onebot(event, data)
+            except (OSError, ValueError) as exc:
+                errors.append(f"OneBot: {_safe_image_error(exc)}")
+        detail = "; ".join(errors[-4:]) or "image has no downloadable reference"
+        raise ValueError(detail)
 
+    async def _lookup_onebot_message(self, event: Any, message_id: str) -> dict[str, Any]:
         bot = getattr(event, "bot", None)
-        file_ref = clean_text(data.get("file"))
-        if bot is None or not file_ref:
-            raise ValueError("image has no downloadable reference")
-        response = await asyncio.wait_for(
-            call_onebot(bot, "get_image", file=file_ref),
-            timeout=_IMAGE_FETCH_TIMEOUT_SECONDS,
+        if bot is None or not message_id:
+            return {}
+        lookup_values: list[int | str] = [message_id]
+        if message_id.isdigit():
+            lookup_values.insert(0, int(message_id))
+        attempts: list[dict[str, Any]] = []
+        for value in lookup_values:
+            attempts.extend(({"message_id": value}, {"id": value}))
+
+        timeout = read_int(
+            cfg(self.config, "anti_revoke", "lookup_timeout_seconds", 3),
+            3,
+            minimum=1,
+            maximum=15,
         )
-        resolved = unwrap_onebot_payload(response)
-        resolved_refs = [
-            value
-            for key in ("base64", "path", "file", "url")
-            if (value := clean_text(resolved.get(key))) and value != file_ref
-        ]
-        for reference in resolved_refs:
-            if reference in seen:
-                continue
-            seen.add(reference)
-            if not reference.startswith(("base64://", "data:image/")) and clean_text(
-                resolved.get("base64")
-            ) == reference:
-                reference = f"base64://{reference}"
+        deadline = asyncio.get_running_loop().time() + timeout
+        last_error: BaseException | None = None
+        for params in attempts:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
             try:
-                return await self._read_image_reference(reference, allow_local=True)
-            except (OSError, ValueError):
+                response = await asyncio.wait_for(
+                    call_onebot(bot, "get_msg", **params),
+                    timeout=min(1.5, remaining),
+                )
+            except Exception as exc:  # noqa: BLE001 - adapters expose varying errors
+                last_error = exc
                 continue
-        raise ValueError("OneBot could not resolve the image")
+            payload = unwrap_onebot_payload(response)
+            if payload:
+                return payload
+        if last_error is not None:
+            logger.debug(
+                "[HelperTools/AntiRevoke] get_msg lookup failed message=%s error=%s",
+                message_id,
+                _safe_image_error(last_error),
+            )
+        return {}
 
     def _cached_image_path(self, filename_value: Any) -> Path | None:
         filename = clean_text(filename_value)
@@ -595,8 +852,15 @@ class AntiRevokeService:
             return None
         return path
 
-    async def _cache_record_images(self, event: Any, record: RevokeRecord) -> bool:
-        segments = _iter_image_segments(record.message)[:_IMAGE_CACHE_MAX_COUNT]
+    async def _cache_record_images(
+        self,
+        event: Any,
+        record: RevokeRecord,
+        *,
+        phase: str = "capture",
+    ) -> bool:
+        all_segments = _iter_image_segments(record.message)
+        segments = all_segments[:_IMAGE_CACHE_MAX_COUNT]
         pending: list[tuple[str, Mapping[str, Any]]] = []
         for key, segment in segments:
             path = self._cached_image_path(record.image_cache_files.get(key))
@@ -606,46 +870,153 @@ class AntiRevokeService:
         if not pending:
             return False
 
+        components = _event_image_components(event)
+        component_by_key: dict[str, Any] = {}
+        component_index = 0
+        for key, segment in segments:
+            if clean_text(segment.get("type")).casefold() != "image":
+                continue
+            if component_index >= len(components):
+                break
+            component_by_key[key] = components[component_index]
+            component_index += 1
+
+        changed = False
+        message_changed = False
+        error_history: dict[str, list[str]] = {}
+
         async def cache_one(
             key: str,
             segment: Mapping[str, Any],
+            *,
+            component: Any | None,
+            resolve_onebot: bool,
         ) -> tuple[str, str]:
-            data, extension = await self._read_image_segment(event, segment)
+            data, extension = await self._read_image_segment(
+                event,
+                segment,
+                component=component,
+                resolve_onebot=resolve_onebot,
+            )
             filename = _media_filename(record.group_id, record.message_id, key, extension)
             path = self.cache_dir / filename
             await asyncio.to_thread(_write_bytes_atomic, path, data)
             return key, filename
 
-        results = await asyncio.gather(
-            *(cache_one(key, segment) for key, segment in pending),
-            return_exceptions=True,
+        async def run_attempt(
+            entries: list[tuple[str, Mapping[str, Any]]],
+            *,
+            use_components: bool,
+            resolve_onebot: bool,
+        ) -> list[tuple[str, Mapping[str, Any]]]:
+            nonlocal changed
+            results = await asyncio.gather(
+                *(
+                    cache_one(
+                        key,
+                        segment,
+                        component=component_by_key.get(key) if use_components else None,
+                        resolve_onebot=resolve_onebot,
+                    )
+                    for key, segment in entries
+                ),
+                return_exceptions=True,
+            )
+            failed: list[tuple[str, Mapping[str, Any]]] = []
+            for (key, segment), result in zip(entries, results, strict=True):
+                if isinstance(result, BaseException):
+                    error_history.setdefault(key, []).append(_safe_image_error(result))
+                    failed.append((key, segment))
+                    continue
+                cached_key, filename = result
+                old_path = self._cached_image_path(record.image_cache_files.get(cached_key))
+                if old_path is not None and old_path.name != filename:
+                    old_path.unlink(missing_ok=True)
+                record.image_cache_files[cached_key] = filename
+                changed = True
+            return failed
+
+        failed = await run_attempt(
+            pending,
+            use_components=True,
+            resolve_onebot=False,
         )
-        changed = False
-        for (key, _segment), result in zip(pending, results, strict=True):
-            if isinstance(result, BaseException):
-                logger.debug(
-                    "[HelperTools/AntiRevoke] image snapshot failed group=%s message=%s "
-                    "segment=%s error=%r",
+        if failed:
+            looked_up = await self._lookup_onebot_message(event, record.message_id)
+            fresh_message = looked_up.get("message")
+            fresh_segments = (
+                _iter_image_segments(_json_safe(fresh_message))
+                if isinstance(fresh_message, (list, dict))
+                else []
+            )
+            segment_positions = {key: index for index, (key, _segment) in enumerate(segments)}
+            retry_entries: list[tuple[str, Mapping[str, Any]]] = []
+            for key, segment in failed:
+                position = segment_positions.get(key)
+                if position is None or position >= len(fresh_segments):
+                    error_history.setdefault(key, []).append("get_msg returned no matching image")
+                    retry_entries.append((key, segment))
+                    continue
+                fresh_segment = fresh_segments[position][1]
+                replacement = _merge_image_segment_references(
+                    segment,
+                    fresh_segment,
+                    replace_existing=True,
+                )
+                if isinstance(segment, dict) and replacement != segment:
+                    segment.clear()
+                    segment.update(replacement)
+                    message_changed = True
+                retry_entries.append((key, segment))
+            failed = await run_attempt(
+                retry_entries,
+                use_components=False,
+                resolve_onebot=False,
+            )
+        if failed:
+            failed = await run_attempt(
+                failed,
+                use_components=False,
+                resolve_onebot=True,
+            )
+
+        cached_count = sum(
+            1
+            for key, _segment in segments
+            if (path := self._cached_image_path(record.image_cache_files.get(key))) is not None
+            and path.is_file()
+        )
+        if failed or cached_count < len(segments):
+            for key, _segment in failed:
+                logger.warning(
+                    "[HelperTools/AntiRevoke] image snapshot failed phase=%s group=%s "
+                    "message=%s segment=%s error=%s",
+                    phase,
                     record.group_id,
                     record.message_id,
                     key,
-                    result,
+                    "; ".join(error_history.get(key, [])[-4:]),
                 )
-                continue
-            cached_key, filename = result
-            old_path = self._cached_image_path(record.image_cache_files.get(cached_key))
-            if old_path is not None and old_path.name != filename:
-                old_path.unlink(missing_ok=True)
-            record.image_cache_files[cached_key] = filename
-            changed = True
-        if changed:
-            logger.debug(
-                "[HelperTools/AntiRevoke] snapshotted %d image(s) group=%s message=%s",
-                len(record.image_cache_files),
+            logger.warning(
+                "[HelperTools/AntiRevoke] image snapshot incomplete phase=%s group=%s "
+                "message=%s cached_images=%d/%d",
+                phase,
                 record.group_id,
                 record.message_id,
+                cached_count,
+                len(all_segments),
             )
-        return changed
+        elif changed:
+            logger.info(
+                "[HelperTools/AntiRevoke] image snapshot ready phase=%s group=%s "
+                "message=%s cached_images=%d/%d",
+                phase,
+                record.group_id,
+                record.message_id,
+                cached_count,
+                len(all_segments),
+            )
+        return changed or message_changed
 
     async def start(self) -> None:
         if not self.enabled() or self._cleanup_task is not None:
@@ -688,7 +1059,10 @@ class AntiRevokeService:
         )
         if not group_id or not message_id or sender_id in self.ignore_senders():
             return
-        message = extract_message_payload(payload, event)
+        message = _merge_event_image_references(
+            extract_message_payload(payload, event),
+            event,
+        )
         if _message_size(message) > self.max_message_bytes():
             logger.warning(
                 "[HelperTools/AntiRevoke] skipped oversized message cache group=%s message=%s bytes>%s",
@@ -706,7 +1080,7 @@ class AntiRevokeService:
             message=message,
             cached_at=time.time(),
         )
-        await self._cache_record_images(event, record)
+        await self._cache_record_images(event, record, phase="capture")
         key = self._record_key(group_id, message_id)
         self._records[key] = record
         self._records.move_to_end(key)
@@ -753,7 +1127,7 @@ class AntiRevokeService:
         if bot is None:
             logger.warning("[HelperTools/AntiRevoke] recall has no OneBot bot handle group=%s", group_id)
             return
-        if await self._cache_record_images(event, record):
+        if await self._cache_record_images(event, record, phase="recall"):
             await asyncio.to_thread(self._write_record, record)
         group_name, sender_name, operator_name = await self._resolve_names(
             bot, group_id, record.sender_id or sender_id, operator_id
@@ -791,29 +1165,7 @@ class AntiRevokeService:
         message_id: str,
         sender_id: str,
     ) -> RevokeRecord | None:
-        bot = getattr(event, "bot", None)
-        if bot is None:
-            return None
-        try:
-            lookup_id: int | str = int(message_id) if message_id.isdigit() else message_id
-            response = await asyncio.wait_for(
-                call_onebot(bot, "get_msg", message_id=lookup_id),
-                timeout=read_int(
-                    cfg(self.config, "anti_revoke", "lookup_timeout_seconds", 3),
-                    3,
-                    minimum=1,
-                    maximum=15,
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 - adapters expose implementation-specific errors
-            logger.debug(
-                "[HelperTools/AntiRevoke] get_msg fallback failed group=%s message=%s error=%r",
-                group_id,
-                message_id,
-                exc,
-            )
-            return None
-        looked_up = unwrap_onebot_payload(response)
+        looked_up = await self._lookup_onebot_message(event, message_id)
         message = looked_up.get("message")
         if not isinstance(message, (str, list, dict)):
             return None
@@ -1104,6 +1456,7 @@ class AntiRevokeService:
         params = {"user_id" if target_type == "private" else "group_id": int(target_id)}
         include_header = self.include_recall_header()
         include_original = self.send_original_message()
+        expected_images = len(_iter_image_segments(record.message)) if include_original else 0
         try:
             if include_header and include_original:
                 message = _message_with_header(header, original_message)
@@ -1115,14 +1468,26 @@ class AntiRevokeService:
                 message = ""
             if message:
                 await self._call_send(bot, action, params, message)
+            if restored_images < expected_images:
+                logger.warning(
+                    "[HelperTools/AntiRevoke] recall notification sent with incomplete image "
+                    "restore group=%s message=%s target=%s:%s restored_images=%d/%d",
+                    record.group_id,
+                    record.message_id,
+                    target_type,
+                    target_id,
+                    restored_images,
+                    expected_images,
+                )
             logger.info(
-                "[HelperTools/AntiRevoke] restored recall successfully group=%s message=%s "
-                "target=%s:%s cached_images=%d",
+                "[HelperTools/AntiRevoke] recall notification sent group=%s message=%s "
+                "target=%s:%s restored_images=%d/%d",
                 record.group_id,
                 record.message_id,
                 target_type,
                 target_id,
                 restored_images,
+                expected_images,
             )
         except Exception as exc:  # noqa: BLE001 - OneBot adapters vary by message type
             fallback = _message_to_text(sanitize_recall_message(record.message)) or "[原消息没有可转换的文字内容]"

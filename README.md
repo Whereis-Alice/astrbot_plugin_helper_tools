@@ -135,9 +135,11 @@ python -m playwright install chromium
 
 ## QQ 防撤回
 
-`anti_revoke.enabled` 默认关闭，且只处理 `aiocqhttp`/OneBot 群聊。开启后，插件会在内存和插件数据目录中短暂保存群消息的 OneBot 原始消息段；图片会同时保存一份短期原图快照。撤回发生时，会把撤回说明、原文字和图片组合成一条普通 QQ 消息发送到配置的私聊或群聊目标。图片通过 `base64://` 交给 OneBot，不依赖撤回后可能失效的 QQ 临时链接，也不要求 AstrBot 与 QQ 协议端共享文件目录。
+`anti_revoke.enabled` 默认关闭，且只处理 `aiocqhttp`/OneBot 群聊。开启后，插件会在内存和插件数据目录中短暂保存群消息的 OneBot 原始消息段；图片会同时保存一份短期原图快照。图片捕获会同时读取 OneBot 原始图片段和 AstrBot 已转换的 `Image` 组件，并使用 QQ 图片所需的 Qzone 来源请求头。撤回发生时，会把撤回说明、原文字和图片组合成一条普通 QQ 消息发送到配置的私聊或群聊目标。图片通过 `base64://` 交给 OneBot，不依赖撤回后可能失效的 QQ 临时链接，也不要求 AstrBot 与 QQ 协议端共享文件目录。
 
-支持文本、图片、语音、视频、文件、卡片和合并转发等消息段。完整混合消息被适配器拒绝时，插件会先尝试在同一条消息中保留文字说明和已缓存图片，最后才降级为纯文字；异常不会打断 AstrBot。单条消息最多缓存前 20 张、每张不超过 12 MiB 的有效图片，图片文件会随 `消息缓存保留时长` 一起自动清理。
+支持文本、图片、语音、视频、文件、卡片和合并转发等消息段。图片初次下载失败时，插件会用同一消息 ID 调 `get_msg` 刷新图片引用，再兼容尝试 `get_image`、`get_file` 和常见参数名。完整混合消息被适配器拒绝时，插件会先尝试在同一条消息中保留文字说明和已缓存图片，最后才降级为纯文字；异常不会打断 AstrBot。单条消息最多缓存前 20 张、每张不超过 12 MiB 的有效图片，图片文件会随 `消息缓存保留时长` 一起自动清理。
+
+后台出现 `image snapshot ready ... cached_images=1/1`，表示图片在原消息到达时已经真实落盘；撤回后出现 `restored_images=1/1`，表示一张原图已经实际放入撤回通知。若显示 `0/1`，日志会同时输出不含完整临时 URL、签名或 Base64 的失败原因，不再笼统显示“恢复成功”。
 
 ### 配置方式
 
@@ -697,7 +699,7 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 - X/Twitter 账号、推文和媒体检索的产品场景参考 [Ars1027/astrbot_plugin_twitter](https://github.com/Ars1027/astrbot_plugin_twitter)。该上游仓库采用 AGPL-3.0；本插件没有复制或并入其代码，实现为独立的 Nitter/FxTwitter 数据源模块。
 - 环境感知的产品场景参考 [miaoxutao123/astrbot_plugin_LLMPerception](https://github.com/miaoxutao123/astrbot_plugin_LLMPerception)。该上游仓库采用 AGPL-3.0；本模块独立实现，使用可验证的节假日、农历和节气数据，不复制或并入其代码。
 - 当前群聊历史工具的产品场景参考 [kawayiYokami/astrbot_plugin_angel_eye](https://github.com/kawayiYokami/astrbot_plugin_angel_eye)。该上游仓库采用 AGPL-3.0；本模块独立实现为有范围和保留上限的本地 SQLite + OneBot 回填方案，不复制或并入其代码。
-- QQ 防撤回的产品场景参考 [Foolllll-J/astrbot_plugin_anti_revoke](https://github.com/Foolllll-J/astrbot_plugin_anti_revoke)。该上游仓库采用 AGPL-3.0；本模块独立实现了新版 AstrBot/OneBot 事件兼容、原始消息缓存和失败降级，不复制或并入上游源码。
+- QQ 防撤回的产品场景参考 [Foolllll-J/astrbot_plugin_anti_revoke](https://github.com/Foolllll-J/astrbot_plugin_anti_revoke)，并参考了其在消息到达时读取 AstrBot `Image` 组件、下载 QQ 图片时使用 Qzone `Referer` 的兼容经验。该上游仓库采用 AGPL-3.0；本模块独立实现了新版 AstrBot/OneBot 多层图片解析、原始消息缓存和失败降级，不复制或并入上游源码。
 - B 站识别、字幕优先、yt-dlp 下载和必剪转写流程参考 [storyAura/astrbot_plugin_biliVideo](https://github.com/storyAura/astrbot_plugin_biliVideo)，Copyright (c) 2025 storyAura。
 - B 站短链的无 Cookie 展开请求策略参考 [drdon1234/astrbot_plugin_media_parser](https://github.com/drdon1234/astrbot_plugin_media_parser)。
 - B 站二维码获取、扫码轮询和凭据保存流程参考 [Soulter/astrbot_plugin_bilibili](https://github.com/Soulter/astrbot_plugin_bilibili)，并按本插件的视频理解场景重新实现。

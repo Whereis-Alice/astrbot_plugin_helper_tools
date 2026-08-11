@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from astrbot_plugin_helper_tools.anti_revoke_service import (
     AntiRevokeService,
@@ -50,13 +51,64 @@ class RejectFirstSendBot(FakeBot):
         return await super().send_group_msg(group_id=group_id, message=message)
 
 
+class FreshMessageBot(FakeBot):
+    async def get_msg(self, **_params: object) -> dict[str, object]:
+        return {
+            "data": {
+                "message": [
+                    {
+                        "type": "image",
+                        "data": {"file": f"base64://{TINY_PNG_BASE64}"},
+                    }
+                ]
+            }
+        }
+
+
+class AlternateImageParamBot(FakeBot):
+    def __init__(self) -> None:
+        super().__init__()
+        self.image_params: list[str] = []
+
+    async def get_msg(self, **_params: object) -> dict[str, object]:
+        return {}
+
+    async def get_image(self, *, file_id: str) -> dict[str, object]:
+        self.image_params.append(file_id)
+        return {"data": {"base64": TINY_PNG_BASE64}}
+
+
+class FakeImageComponent:
+    type = SimpleNamespace(name="Image")
+
+    def __init__(self, *, file: str = "", url: str = "", converted: str = "") -> None:
+        self.file = file
+        self.url = url
+        self.path = ""
+        self.converted = converted
+
+    async def convert_to_base64(self) -> str:
+        if not self.converted:
+            raise ValueError("no converted image")
+        return self.converted
+
+
 class FakeEvent:
-    def __init__(self, raw_message: dict[str, object], bot: FakeBot) -> None:
+    def __init__(
+        self,
+        raw_message: dict[str, object],
+        bot: FakeBot,
+        components: list[object] | None = None,
+    ) -> None:
         self.message_obj = SimpleNamespace(raw_message=raw_message)
         self.bot = bot
+        self._components = components or []
 
     def get_group_id(self) -> str:
         return str(self.message_obj.raw_message.get("group_id") or "")
+
+    def get_messages(self) -> list[object]:
+        return self._components
 
 
 class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -252,6 +304,135 @@ class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
                 base64.b64decode(restored_ref.removeprefix("base64://")),
                 base64.b64decode(TINY_PNG_BASE64),
             )
+
+    async def test_astrbot_image_component_supplies_snapshot_when_raw_file_is_opaque(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = FakeBot()
+            service = AntiRevokeService(
+                {"anti_revoke": {"enabled": True}},
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "message": [{"type": "image", "data": {"file": "opaque-image-id"}}],
+            }
+            component = FakeImageComponent(converted=TINY_PNG_BASE64)
+
+            await service.handle_event(FakeEvent(original, bot, [component]))
+
+            record = service._records["123:456"]
+            self.assertEqual(set(record.image_cache_files), {"0"})
+            self.assertTrue((service.cache_dir / record.image_cache_files["0"]).is_file())
+
+    async def test_astrbot_image_component_is_added_when_raw_payload_has_no_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = FakeBot()
+            service = AntiRevokeService(
+                {"anti_revoke": {"enabled": True}},
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "message": [{"type": "text", "data": {"text": "图片"}}],
+            }
+            component = FakeImageComponent(file=f"base64://{TINY_PNG_BASE64}")
+
+            await service.handle_event(FakeEvent(original, bot, [component]))
+
+            record = service._records["123:456"]
+            self.assertEqual(len(record.message), 2)
+            self.assertEqual(record.message[1]["type"], "image")
+            self.assertEqual(set(record.image_cache_files), {"1"})
+
+    async def test_get_msg_refreshes_image_reference_after_initial_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = FreshMessageBot()
+            service = AntiRevokeService(
+                {"anti_revoke": {"enabled": True}},
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "message": [{"type": "image", "data": {"file": "expired-image"}}],
+            }
+
+            await service.handle_event(FakeEvent(original, bot))
+
+            record = service._records["123:456"]
+            self.assertEqual(set(record.image_cache_files), {"0"})
+            self.assertTrue(record.message[0]["data"]["file"].startswith("base64://"))
+
+    async def test_get_image_compatibility_tries_file_id_parameter(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = AlternateImageParamBot()
+            service = AntiRevokeService(
+                {"anti_revoke": {"enabled": True}},
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "message": [{"type": "image", "data": {"file": "opaque.png"}}],
+            }
+
+            await service.handle_event(FakeEvent(original, bot))
+
+            record = service._records["123:456"]
+            self.assertEqual(set(record.image_cache_files), {"0"})
+            self.assertEqual(bot.image_params, ["opaque.png"])
+
+    async def test_qq_image_download_uses_qzone_referer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = AntiRevokeService({}, Path(temp_dir))
+            image_bytes = base64.b64decode(TINY_PNG_BASE64)
+            fetch = AsyncMock(return_value=(image_bytes, "image/png"))
+
+            with patch(
+                "astrbot_plugin_helper_tools.anti_revoke_service.fetch_bytes",
+                fetch,
+            ):
+                await service._read_image_reference("https://gchat.qpic.cn/example")
+
+            self.assertEqual(fetch.await_args.kwargs["headers"]["Referer"], "https://qzone.qq.com/")
+
+    async def test_failed_image_snapshot_writes_visible_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = FakeBot()
+            service = AntiRevokeService(
+                {"anti_revoke": {"enabled": True}},
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "message": [{"type": "image", "data": {"file": "unresolved-image"}}],
+            }
+
+            with patch(
+                "astrbot_plugin_helper_tools.anti_revoke_service.logger.warning"
+            ) as warning:
+                await service.handle_event(FakeEvent(original, bot))
+
+            formats = [clean_call.args[0] for clean_call in warning.call_args_list]
+            self.assertTrue(any("image snapshot incomplete" in value for value in formats))
 
     async def test_failed_full_restore_keeps_cached_image_in_single_message(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
