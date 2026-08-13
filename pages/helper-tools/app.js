@@ -137,6 +137,35 @@ function showToast(message, error = false) {
   toastTimer = window.setTimeout(() => target.classList.remove("visible"), 3400);
 }
 
+let pendingConfirmation = null;
+
+function settleConfirmation(confirmed) {
+  const pending = pendingConfirmation;
+  pendingConfirmation = null;
+  closeWallpaperDialog("confirm-action-dialog");
+  if (pending) pending(Boolean(confirmed));
+}
+
+function confirmAction(message, options = {}) {
+  const dialog = byId("confirm-action-dialog");
+  const title = byId("confirm-action-title");
+  const body = byId("confirm-action-message");
+  const submit = byId("confirm-action-submit");
+  if (!dialog || !title || !body || !submit) {
+    return Promise.resolve(window.confirm(message));
+  }
+  if (pendingConfirmation) settleConfirmation(false);
+  title.textContent = options.title || "确认操作";
+  body.textContent = message || "确认继续执行这个操作吗？";
+  submit.textContent = options.confirmLabel || "确认";
+  dialog.dataset.tone = options.tone || "danger";
+  showWallpaperDialog("confirm-action-dialog");
+  window.setTimeout(() => submit.focus(), 0);
+  return new Promise((resolve) => {
+    pendingConfirmation = resolve;
+  });
+}
+
 function setDirty(value) {
   state.dirty = Boolean(value);
   const button = byId("save-button");
@@ -534,7 +563,10 @@ function renderFileControl(node, entry, path) {
     clear.title = "清除已上传的配置文件";
     clear.addEventListener("click", async () => {
       if (!allowFileConfigMutation()) return;
-      if (!window.confirm("确认清除这个已配置文件吗？")) return;
+      if (!await confirmAction("确认清除这个已配置文件吗？", {
+        title: "清除配置文件",
+        confirmLabel: "确认清除",
+      })) return;
       await clearConfigFile(pathKey(path));
     });
     holder.append(clear);
@@ -885,7 +917,10 @@ async function loadActivities() {
 }
 
 async function clearActivities() {
-  if (!window.confirm("确认清空本插件控制台保存的全部运行记录吗？此操作不能恢复。")) return;
+  if (!await confirmAction("确认清空本插件控制台保存的全部运行记录吗？此操作不能恢复。", {
+    title: "清空运行记录",
+    confirmLabel: "确认清空",
+  })) return;
   try {
     const response = await apiPost("clear_activities", {});
     if (!response?.success) throw new Error(response?.message || "清空失败。");
@@ -1450,7 +1485,13 @@ async function deleteWallpaperLibrary(libraryId, options = {}) {
   const library = state.wallpaper.libraries.find((item) => String(item.id) === String(libraryId));
   if (!library) return false;
   const deleteFiles = Boolean(options.deleteFiles);
-  if (!deleteFiles && !window.confirm(`删除图库“${library.name}”的配置？磁盘中的图片不会删除。`)) return false;
+  if (
+    !deleteFiles
+    && !await confirmAction(`删除图库“${library.name}”的配置？磁盘中的图片不会删除。`, {
+      title: "删除图库配置",
+      confirmLabel: "删除配置",
+    })
+  ) return false;
   try {
     const response = await apiPost("wallpaper_delete_library", {
       library_id: String(library.id),
@@ -1592,7 +1633,11 @@ async function renameWallpaperImage() {
 async function deleteWallpaperImage(image) {
   const library = selectedWallpaperLibrary();
   if (!library || !image) return;
-  if (!window.confirm(`删除图片“${image.name}”？此操作无法撤销。`)) return;
+  const confirmed = await confirmAction(`删除图片“${image.name}”？图片文件会从磁盘中删除，此操作无法撤销。`, {
+    title: "删除图片",
+    confirmLabel: "删除图片",
+  });
+  if (!confirmed) return;
   try {
     const response = await apiPost("wallpaper_delete_image", {
       library_id: String(library.id),
@@ -1741,6 +1786,11 @@ async function loadState() {
 }
 
 document.addEventListener("click", (event) => {
+  const confirmationAction = event.target.closest("[data-confirm-action]");
+  if (confirmationAction) {
+    settleConfirmation(confirmationAction.dataset.confirmAction === "confirm");
+    return;
+  }
   const closeDialog = event.target.closest("[data-close-dialog]");
   if (closeDialog) {
     closeWallpaperDialog(closeDialog.dataset.closeDialog);
@@ -1771,9 +1821,17 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (event.target.closest("#reload-button")) {
-    if (state.dirty && !window.confirm("存在尚未保存的更改，确认重新读取并放弃这些更改吗？")) return;
-    setDirty(false);
-    void loadState();
+    void (async () => {
+      if (
+        state.dirty
+        && !await confirmAction("存在尚未保存的更改，确认重新读取并放弃这些更改吗？", {
+          title: "放弃未保存更改",
+          confirmLabel: "放弃并重新读取",
+        })
+      ) return;
+      setDirty(false);
+      await loadState();
+    })();
     return;
   }
   if (event.target.closest("#expand-all-config")) {
@@ -1838,6 +1896,7 @@ document.addEventListener("click", (event) => {
   }
   if (event.target.closest("#wallpaper-preview-delete")) {
     void deleteWallpaperImage(state.wallpaper.previewImage);
+    return;
   }
 });
 
@@ -1866,6 +1925,11 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
+  if (event.target.id === "confirm-action-form") {
+    event.preventDefault();
+    settleConfirmation(true);
+    return;
+  }
   if (event.target.id === "wallpaper-library-form") {
     event.preventDefault();
     void saveWallpaperLibrary();
@@ -1878,6 +1942,15 @@ document.addEventListener("submit", (event) => {
     event.preventDefault();
     void purgeWallpaperLibrary();
   }
+});
+
+byId("confirm-action-dialog")?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  settleConfirmation(false);
+});
+
+byId("confirm-action-dialog")?.addEventListener("close", () => {
+  if (pendingConfirmation) settleConfirmation(false);
 });
 
 applyTheme("dark", false);

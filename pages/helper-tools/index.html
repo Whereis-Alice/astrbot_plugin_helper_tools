@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
     <title>辅助工具控制台</title>
-    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./style.css?v=0.10.14" />
   </head>
   <body data-theme="dark">
     <main class="dashboard-shell">
@@ -248,7 +248,14 @@
         <div class="dialog-actions"><button class="quiet-action" type="button" data-close-dialog="wallpaper-library-purge-dialog">取消</button><button class="danger-action" type="submit">删除配置和文件</button></div>
       </form>
     </dialog>
+    <dialog id="confirm-action-dialog" class="wallpaper-dialog confirm-action-dialog">
+      <form id="confirm-action-form" class="wallpaper-dialog-form">
+        <div class="dialog-heading"><div><p class="eyebrow">CONFIRM ACTION</p><h2 id="confirm-action-title">确认操作</h2></div><button class="dialog-close" type="button" data-confirm-action="cancel" title="关闭" aria-label="关闭">×</button></div>
+        <p id="confirm-action-message" class="confirm-action-message"></p>
+        <div class="dialog-actions"><button class="quiet-action" type="button" data-confirm-action="cancel">取消</button><button id="confirm-action-submit" class="danger-action" type="submit">确认</button></div>
+      </form>
+    </dialog>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./app.js?v=0.10.14"></script>
   </body>
 </html>
