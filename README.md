@@ -139,6 +139,8 @@ python -m playwright install chromium
 
 支持文本、图片、语音、视频、文件、卡片和合并转发等消息段。图片初次下载失败时，插件会用同一消息 ID 调 `get_msg` 刷新图片引用，再兼容尝试 `get_image`、`get_file` 和常见参数名。完整混合消息被适配器拒绝时，插件会先尝试在同一条消息中保留文字说明和已缓存图片，最后才降级为纯文字；异常不会打断 AstrBot。单条消息最多缓存前 20 张、每张不超过 12 MiB 的有效图片，图片文件会随 `消息缓存保留时长` 一起自动清理。
 
+bot 自己发出的内容也会保护。某些插件会把 bot 的消息发出后立刻调用 OneBot 的 `delete_msg` 撤回，导致协议端还没把该消息事件送到 AstrBot 就已经消失。防撤回现在会在删除前用 `get_msg` 再抓一次原消息；通过 `delete_msg`、`call_action("delete_msg")` 或 `bot.api.call_action("delete_msg")` 撤回的文本和图片都能进入缓存。这个兼容处理不需要新增配置，启用防撤回后自动生效。
+
 后台出现 `image snapshot ready ... cached_images=1/1`，表示图片在原消息到达时已经真实落盘；撤回后出现 `restored_images=1/1`，表示一张原图已经实际放入撤回通知。若显示 `0/1`，日志会同时输出不含完整临时 URL、签名或 Base64 的失败原因，不再笼统显示“恢复成功”。
 
 ### 配置方式

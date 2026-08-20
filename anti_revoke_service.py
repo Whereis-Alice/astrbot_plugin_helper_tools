@@ -60,6 +60,34 @@ class RevokeRecord:
     image_cache_files: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class _DeleteInterceptor:
+    """Original OneBot methods replaced on one live bot instance."""
+
+    bot: Any
+    delete_msg: Any | None = None
+    delete_msg_wrapper: Any | None = None
+    call_action: Any | None = None
+    call_action_wrapper: Any | None = None
+    api: Any | None = None
+    api_call_action: Any | None = None
+    api_call_action_wrapper: Any | None = None
+
+
+class _PreDeleteCaptureEvent:
+    """Small event facade used while saving a message immediately before deletion."""
+
+    def __init__(self, bot: Any, group_id: str = "") -> None:
+        self.bot = bot
+        self._group_id = group_id
+
+    def get_group_id(self) -> str:
+        return self._group_id
+
+    def get_messages(self) -> list[Any]:
+        return []
+
+
 def unwrap_onebot_payload(value: Any) -> dict[str, Any]:
     """Read direct OneBot payloads and common API response wrappers."""
 
@@ -577,6 +605,8 @@ class AntiRevokeService:
         self._records: OrderedDict[str, RevokeRecord] = OrderedDict()
         self._cleanup_task: asyncio.Task[None] | None = None
         self._forward_targets = self._load_forward_targets()
+        self._delete_interceptors: dict[int, _DeleteInterceptor] = {}
+        self._pre_delete_capture_tasks: dict[str, asyncio.Task[None]] = {}
 
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "anti_revoke", "enabled", False), False)
@@ -637,6 +667,162 @@ class AntiRevokeService:
             cfg(self.config, "anti_revoke", "include_recall_header", True),
             True,
         )
+
+    def _install_delete_interceptor(self, bot: Any) -> None:
+        """Save messages before plugins call OneBot's delete_msg API.
+
+        OneBot normally emits a group-message event after an outgoing message is
+        sent. A plugin can, however, send and immediately delete a message before
+        that event reaches AstrBot. Intercepting deletion gives us one last
+        reliable chance to read the message with get_msg while it still exists.
+        """
+
+        if bot is None or id(bot) in self._delete_interceptors:
+            return
+
+        interceptor = _DeleteInterceptor(bot=bot)
+        installed = False
+
+        original_delete = getattr(bot, "delete_msg", None)
+        if callable(original_delete):
+
+            async def delete_msg_wrapper(*args: Any, **kwargs: Any) -> Any:
+                await self._capture_before_delete_from_args(bot, args, kwargs)
+                value = original_delete(*args, **kwargs)
+                if inspect.isawaitable(value):
+                    return await value
+                return value
+
+            try:
+                bot.delete_msg = delete_msg_wrapper
+            except (AttributeError, TypeError):
+                pass
+            else:
+                interceptor.delete_msg = original_delete
+                interceptor.delete_msg_wrapper = delete_msg_wrapper
+                installed = True
+
+        original_call_action = getattr(bot, "call_action", None)
+        if callable(original_call_action):
+            call_action_wrapper = self._make_call_action_wrapper(bot, original_call_action)
+            try:
+                bot.call_action = call_action_wrapper
+            except (AttributeError, TypeError):
+                pass
+            else:
+                interceptor.call_action = original_call_action
+                interceptor.call_action_wrapper = call_action_wrapper
+                installed = True
+
+        api = getattr(bot, "api", None)
+        original_api_call_action = getattr(api, "call_action", None)
+        if api is not None and api is not bot and callable(original_api_call_action):
+            api_call_action_wrapper = self._make_call_action_wrapper(bot, original_api_call_action)
+            try:
+                api.call_action = api_call_action_wrapper
+            except (AttributeError, TypeError):
+                pass
+            else:
+                interceptor.api = api
+                interceptor.api_call_action = original_api_call_action
+                interceptor.api_call_action_wrapper = api_call_action_wrapper
+                installed = True
+
+        if installed:
+            self._delete_interceptors[id(bot)] = interceptor
+            logger.debug("[HelperTools/AntiRevoke] installed pre-delete capture hook")
+
+    def _make_call_action_wrapper(self, bot: Any, original: Any) -> Any:
+        async def call_action_wrapper(action: Any, *args: Any, **kwargs: Any) -> Any:
+            if clean_text(action).casefold() in {"delete_msg", "delete_message"}:
+                await self._capture_before_delete_from_args(bot, args, kwargs)
+            value = original(action, *args, **kwargs)
+            if inspect.isawaitable(value):
+                return await value
+            return value
+
+        return call_action_wrapper
+
+    async def _capture_before_delete_from_args(
+        self,
+        bot: Any,
+        args: tuple[Any, ...],
+        kwargs: Mapping[str, Any],
+    ) -> None:
+        message_id = clean_text(kwargs.get("message_id") or kwargs.get("id"))
+        if not message_id and args:
+            message_id = clean_text(args[0])
+        if not message_id:
+            return
+        try:
+            await self._capture_before_delete(bot, message_id)
+        except Exception as exc:  # noqa: BLE001 - never block the caller's recall API
+            logger.debug(
+                "[HelperTools/AntiRevoke] pre-delete capture failed message=%s error=%s",
+                message_id,
+                _safe_image_error(exc),
+            )
+
+    async def _capture_before_delete(self, bot: Any, message_id: str) -> None:
+        if not self.enabled():
+            return
+        task_key = f"{id(bot)}:{message_id}"
+        task = self._pre_delete_capture_tasks.get(task_key)
+        if task is not None and task is not asyncio.current_task():
+            await asyncio.shield(task)
+            return
+
+        async def capture() -> None:
+            event = _PreDeleteCaptureEvent(bot)
+            looked_up = await self._lookup_onebot_message(event, message_id)
+            message = looked_up.get("message")
+            group_id = _payload_value(looked_up, "group_id")
+            if (
+                not group_id
+                or not isinstance(message, (str, list, dict))
+                or not self._is_monitored(group_id)
+            ):
+                return
+            sender = looked_up.get("sender")
+            sender_map = sender if isinstance(sender, Mapping) else {}
+            sender_id = _payload_value(looked_up, "user_id", "sender_id") or _payload_value(
+                sender_map,
+                "user_id",
+            )
+            if sender_id in self.ignore_senders():
+                return
+
+            record = await self._load_record(group_id, message_id)
+            if record is None:
+                record = RevokeRecord(
+                    group_id=group_id,
+                    message_id=message_id,
+                    sender_id=sender_id,
+                    sender_name=_payload_value(sender_map, "card", "nickname") or sender_id,
+                    timestamp=read_int(looked_up.get("time"), int(time.time())),
+                    message=_json_safe(message),
+                    cached_at=time.time(),
+                )
+                if _message_size(record.message) > self.max_message_bytes():
+                    return
+                await self._store_record(record)
+
+            event._group_id = group_id
+            if await self._cache_record_images(event, record, phase="pre_delete"):
+                await asyncio.to_thread(self._write_record, record)
+            logger.debug(
+                "[HelperTools/AntiRevoke] pre-delete message capture ready group=%s message=%s",
+                group_id,
+                message_id,
+            )
+
+        task = asyncio.create_task(capture())
+        self._pre_delete_capture_tasks[task_key] = task
+        try:
+            await task
+        finally:
+            if self._pre_delete_capture_tasks.get(task_key) is task:
+                self._pre_delete_capture_tasks.pop(task_key, None)
 
     async def _read_image_reference(
         self,
@@ -1033,6 +1219,14 @@ class AntiRevokeService:
                 await task
             except asyncio.CancelledError:
                 pass
+        capture_tasks = list(self._pre_delete_capture_tasks.values())
+        self._pre_delete_capture_tasks.clear()
+        for capture_task in capture_tasks:
+            if not capture_task.done():
+                capture_task.cancel()
+        if capture_tasks:
+            await asyncio.gather(*capture_tasks, return_exceptions=True)
+        self._restore_delete_interceptors()
         self._records.clear()
 
     async def handle_event(self, event: Any) -> None:
@@ -1042,6 +1236,8 @@ class AntiRevokeService:
         if not payload:
             logger.debug("[HelperTools/AntiRevoke] ignored event without raw OneBot payload")
             return
+        if is_group_recall(payload) or is_group_message(payload, event):
+            self._install_delete_interceptor(getattr(event, "bot", None))
         if is_group_recall(payload):
             await self._handle_recall(event, payload)
         elif is_group_message(payload, event):
@@ -1080,11 +1276,10 @@ class AntiRevokeService:
             message=message,
             cached_at=time.time(),
         )
+        # Store first: a bot can send and delete an image before its download
+        # finishes, but the recall handler can still find the text/segments.
+        await self._store_record(record)
         await self._cache_record_images(event, record, phase="capture")
-        key = self._record_key(group_id, message_id)
-        self._records[key] = record
-        self._records.move_to_end(key)
-        self._evict_memory_records()
         await asyncio.to_thread(self._write_record, record)
 
     async def _handle_recall(self, event: Any, payload: Mapping[str, Any]) -> None:
@@ -1184,6 +1379,15 @@ class AntiRevokeService:
             return None
         return record
 
+    async def _store_record(self, record: RevokeRecord) -> None:
+        """Make a record visible before any slow image snapshot work begins."""
+
+        key = self._record_key(record.group_id, record.message_id)
+        self._records[key] = record
+        self._records.move_to_end(key)
+        self._evict_memory_records()
+        await asyncio.to_thread(self._write_record, record)
+
     async def _load_record(self, group_id: str, message_id: str) -> RevokeRecord | None:
         key = self._record_key(group_id, message_id)
         record = self._records.get(key)
@@ -1229,6 +1433,43 @@ class AntiRevokeService:
         self._records.move_to_end(key)
         self._evict_memory_records()
         return record
+
+    def _restore_delete_interceptors(self) -> None:
+        for interceptor in self._delete_interceptors.values():
+            self._restore_interceptor_attribute(
+                interceptor.bot,
+                "delete_msg",
+                interceptor.delete_msg_wrapper,
+                interceptor.delete_msg,
+            )
+            self._restore_interceptor_attribute(
+                interceptor.bot,
+                "call_action",
+                interceptor.call_action_wrapper,
+                interceptor.call_action,
+            )
+            self._restore_interceptor_attribute(
+                interceptor.api,
+                "call_action",
+                interceptor.api_call_action_wrapper,
+                interceptor.api_call_action,
+            )
+        self._delete_interceptors.clear()
+
+    @staticmethod
+    def _restore_interceptor_attribute(
+        target: Any,
+        name: str,
+        wrapper: Any,
+        original: Any,
+    ) -> None:
+        if target is None or wrapper is None or original is None:
+            return
+        try:
+            if getattr(target, name, None) is wrapper:
+                setattr(target, name, original)
+        except (AttributeError, TypeError):
+            return
 
     def _write_record(self, record: RevokeRecord) -> None:
         path = self.cache_dir / _cache_filename(record.group_id, record.message_id)

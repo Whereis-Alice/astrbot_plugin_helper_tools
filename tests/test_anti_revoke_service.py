@@ -39,6 +39,37 @@ class FakeBot:
         return {"status": "ok", "retcode": 0}
 
 
+class PreDeleteCaptureBot(FakeBot):
+    def __init__(self) -> None:
+        super().__init__()
+        self.deleted: list[int] = []
+
+    async def get_msg(self, **params: object) -> dict[str, object]:
+        message_id = int(params.get("message_id") or params.get("id") or 0)
+        if message_id != 456:
+            return {}
+        return {
+            "data": {
+                "message_id": message_id,
+                "group_id": 123,
+                "user_id": 10001,
+                "time": 1700000000,
+                "sender": {"user_id": 10001, "card": "机器人"},
+                "message": [
+                    {"type": "text", "data": {"text": "马上被撤回的图片"}},
+                    {
+                        "type": "image",
+                        "data": {"file": f"base64://{TINY_PNG_BASE64}"},
+                    },
+                ],
+            }
+        }
+
+    async def delete_msg(self, *, message_id: int) -> dict[str, object]:
+        self.deleted.append(message_id)
+        return {"status": "ok", "retcode": 0}
+
+
 class RejectFirstSendBot(FakeBot):
     def __init__(self) -> None:
         super().__init__()
@@ -196,6 +227,62 @@ class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
             assert isinstance(sent_message, list)
             self.assertIn("撤回消息", str(sent_message[0]))
             self.assertEqual(sent_message[1:], original["message"])
+
+    async def test_pre_delete_hook_caches_bot_message_before_qqadmin_style_recall(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = PreDeleteCaptureBot()
+            service = AntiRevokeService(
+                {
+                    "anti_revoke": {
+                        "enabled": True,
+                        "target_groups": ["999"],
+                    }
+                },
+                Path(temp_dir),
+            )
+            # Any normal group event installs the OneBot deletion interceptor.
+            await service.handle_event(
+                FakeEvent(
+                    {
+                        "post_type": "message",
+                        "message_type": "group",
+                        "group_id": 123,
+                        "message_id": 1,
+                        "user_id": 10001,
+                        "message": "install hook",
+                    },
+                    bot,
+                )
+            )
+
+            result = await bot.delete_msg(message_id=456)
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(bot.deleted, [456])
+            record = service._records["123:456"]
+            self.assertEqual(record.sender_name, "机器人")
+            self.assertEqual(set(record.image_cache_files), {"1"})
+
+            await service.handle_event(
+                FakeEvent(
+                    {
+                        "post_type": "notice",
+                        "notice_type": "group_recall",
+                        "group_id": 123,
+                        "message_id": 456,
+                        "user_id": 10001,
+                        "operator_id": 10001,
+                    },
+                    bot,
+                )
+            )
+
+            self.assertEqual(len(bot.sent), 1)
+            restored = bot.sent[0][1]["message"]
+            self.assertIsInstance(restored, list)
+            assert isinstance(restored, list)
+            self.assertEqual(restored[2]["type"], "image")
+            self.assertTrue(restored[2]["data"]["file"].startswith("base64://"))
 
     async def test_recalled_reply_does_not_send_expired_quote_reference(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
