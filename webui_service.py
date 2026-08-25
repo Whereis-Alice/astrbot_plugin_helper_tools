@@ -20,14 +20,13 @@ from astrbot.api import logger
 from quart import jsonify, request, send_file
 
 from .helper_utils import cfg, clean_text, extract_file_config_value, read_bool
+from .wallpaper_service import WallpaperService
 from .webui_activity import WebUiActivityLog
 from .webui_wallpaper import (
     WallpaperDashboardError,
     WallpaperLibraryDashboard,
     WallpaperUpload,
 )
-from .wallpaper_service import WallpaperService
-
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
 _SCHEMA_PATH = Path(__file__).with_name("_conf_schema.json")
@@ -155,6 +154,11 @@ class HelperToolsDashboard:
         async with self._lock:
             try:
                 current = self._config_mapping()
+                incoming = self._protect_wallpaper_library_snapshot(
+                    current,
+                    incoming,
+                    payload.get("wallpaper_config_snapshot"),
+                )
                 changed_modules: list[str] = []
                 for module_name, schema_entry in self._schema.items():
                     if module_name not in incoming:
@@ -531,7 +535,14 @@ class HelperToolsDashboard:
                 logger.exception("[HelperTools/WebUI] wallpaper library save failed")
                 return self._error(f"保存壁纸库失败：{type(exc).__name__}", 500)
         self.activity.record("wallpaper", "控制台保存壁纸库", detail=f"已保存图库“{result['name']}”。")
-        return jsonify({"success": True, "library": result, "message": "壁纸库配置已保存。"})
+        return jsonify(
+            {
+                "success": True,
+                "library": result,
+                "config_libraries": self.wallpaper_dashboard.configuration_entries(),
+                "message": "壁纸库配置已保存。",
+            }
+        )
 
     async def delete_wallpaper_library(self):
         payload = await self._json_body()
@@ -559,7 +570,14 @@ class HelperToolsDashboard:
             "控制台删除壁纸库",
             detail=("已删除图库配置及磁盘文件。" if delete_files else "已删除图库配置，图片文件未删除。"),
         )
-        return jsonify({"success": True, "message": result["message"], "deleted": result})
+        return jsonify(
+            {
+                "success": True,
+                "message": result["message"],
+                "deleted": result,
+                "config_libraries": self.wallpaper_dashboard.configuration_entries(),
+            }
+        )
 
     async def delete_wallpaper_image(self):
         payload = await self._json_body()
@@ -750,6 +768,33 @@ class HelperToolsDashboard:
         if isinstance(config, dict):
             return config
         raise RuntimeError("插件配置对象不可写。")
+
+    def _protect_wallpaper_library_snapshot(
+        self,
+        current: dict[str, Any],
+        incoming: dict[str, Any],
+        snapshot: Any,
+    ) -> dict[str, Any]:
+        """Prevent an old dashboard form from deleting newer managed rows."""
+
+        if not isinstance(snapshot, list):
+            return incoming
+        current_wallpaper = current.get("wallpaper")
+        incoming_wallpaper = incoming.get("wallpaper")
+        if not isinstance(current_wallpaper, dict) or not isinstance(incoming_wallpaper, dict):
+            return incoming
+        current_rows = current_wallpaper.get("libraries")
+        incoming_rows = incoming_wallpaper.get("libraries")
+        if not isinstance(current_rows, list) or not isinstance(incoming_rows, list):
+            return incoming
+        if current_rows != snapshot and incoming_rows == snapshot:
+            protected = deepcopy(incoming)
+            protected["wallpaper"]["libraries"] = deepcopy(current_rows)
+            logger.info(
+                "[HelperTools/WebUI] preserved newer wallpaper library rows during stale config save"
+            )
+            return protected
+        return incoming
 
     def _ensure_config_section(self, key: str) -> dict[str, Any]:
         config = self._config_mapping()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import unittest
+from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -534,6 +535,74 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(self.config["wallpaper"]["libraries"]), 1)
         self.assertTrue((self.data_dir / "wallpapers" / "new").is_dir())
+
+    async def test_wallpaper_library_api_returns_current_config_rows(self) -> None:
+        response = await self.client.get("/wallpaper-libraries")
+        body = await response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            body["config_libraries"],
+            self.config["wallpaper"]["libraries"],
+        )
+
+        response = await self.client.post(
+            "/wallpaper-save-library",
+            json={
+                "library": {
+                    "name": "管理器新图库",
+                    "path": "wallpapers/manager",
+                    "commands": ["管理器壁纸"],
+                    "caption": "{library}",
+                    "send_mode": "只发图片",
+                    "recursive": False,
+                },
+                "create_directory": True,
+            },
+        )
+        body = await response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            body["config_libraries"],
+            self.config["wallpaper"]["libraries"],
+        )
+        self.assertEqual(body["config_libraries"][-1]["name"], "管理器新图库")
+
+    async def test_stale_generic_save_preserves_new_library_with_snapshot(self) -> None:
+        initial = (await self._state())["config"]
+        snapshot = deepcopy(initial["wallpaper"]["libraries"])
+        response = await self.client.post(
+            "/wallpaper-save-library",
+            json={
+                "library": {
+                    "name": "不会丢失的图库",
+                    "path": "wallpapers/persistent",
+                    "commands": ["持久壁纸"],
+                    "caption": "{library}",
+                    "send_mode": "同一条消息",
+                    "recursive": False,
+                },
+                "create_directory": True,
+            },
+        )
+        body = await response.get_json()
+        self.assertEqual(response.status_code, 200)
+
+        # This is the payload the fixed WebUI builds after replacing its old
+        # library rows with the API's canonical snapshot.
+        response = await self.client.post(
+            "/save",
+            json={
+                "config": initial,
+                "wallpaper_config_snapshot": snapshot,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.config["wallpaper"]["libraries"][-1]["name"],
+            "不会丢失的图库",
+        )
 
     async def test_wallpaper_library_file_removal_requires_name_and_removes_registry(self) -> None:
         response = await self.client.post(

@@ -17,6 +17,7 @@ import shutil
 import uuid
 import warnings
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
@@ -27,7 +28,6 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .helper_utils import clean_text, read_bool
 from .wallpaper_service import WallpaperLibrary, WallpaperService
-
 
 _SAFE_PREVIEW_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
 _FORMAT_EXTENSIONS = {
@@ -139,10 +139,23 @@ class WallpaperLibraryDashboard:
             )
         return {
             "libraries": summaries,
+            # Keep the raw rows alongside the scan summaries so the WebUI can
+            # reconcile its generic configuration form after a library is
+            # changed through the dedicated manager.
+            "config_libraries": self.configuration_entries(),
             "safe_preview_extensions": sorted(_SAFE_PREVIEW_EXTENSIONS),
             "upload_max_bytes": self.upload_max_bytes(),
             "upload_file_limit": _MAX_UPLOAD_FILES,
         }
+
+    def configuration_entries(self) -> list[dict[str, Any]]:
+        """Return detached copies of the currently configured library rows."""
+
+        return [
+            deepcopy(row)
+            for row in self._libraries_config()
+            if isinstance(row, dict)
+        ]
 
     def list_images(
         self,

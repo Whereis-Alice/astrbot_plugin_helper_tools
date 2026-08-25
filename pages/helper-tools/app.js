@@ -21,6 +21,7 @@ const state = {
     uploadFileLimit: 24,
     libraryRequestId: 0,
     imageRequestId: 0,
+    serverConfigRows: null,
     searchTimer: null,
     thumbnailCache: new Map(),
     thumbnailRequests: new Map(),
@@ -728,6 +729,73 @@ function readNode(node) {
   return node._control.value;
 }
 
+function valuesEqual(left, right) {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
+function wallpaperConfigFormRows() {
+  const details = state.moduleNodes.get("wallpaper");
+  const node = details?._rootNode?._children?.get("libraries");
+  if (!node || node._kind !== "template_list") return null;
+  try {
+    return readNode(node);
+  } catch {
+    // An invalid JSON field elsewhere should not prevent the wallpaper page
+    // from refreshing its own server-side configuration snapshot.
+    return null;
+  }
+}
+
+function replaceWallpaperConfigFormRows(rows) {
+  const nextRows = Array.isArray(rows) ? cloneValue(rows) : [];
+  if (state.data?.config?.wallpaper) {
+    state.data.config.wallpaper.libraries = nextRows;
+  }
+  const details = state.moduleNodes.get("wallpaper");
+  const oldNode = details?._rootNode?._children?.get("libraries");
+  const schemaEntry = state.data?.schema?.wallpaper?.items?.libraries;
+  if (!details?._rootNode?._children || !oldNode || !schemaEntry) return;
+  const replacement = renderNode(schemaEntry, nextRows, ["wallpaper", "libraries"]);
+  oldNode.replaceWith(replacement);
+  details._rootNode._children.set("libraries", replacement);
+}
+
+function reconcileWallpaperConfigRows(rows, previousServerRows = state.wallpaper.serverConfigRows) {
+  if (!Array.isArray(rows)) return;
+  const localRows = wallpaperConfigFormRows();
+  const formMatchesServer = (
+    localRows === null
+    || (Array.isArray(previousServerRows) && valuesEqual(localRows, previousServerRows))
+  );
+  // Preserve an intentional edit in the generic module form. When the form
+  // still matches the last server snapshot, it is safe to update it with a
+  // library created by the dedicated manager or by a message handler.
+  if (formMatchesServer || !state.dirty) replaceWallpaperConfigFormRows(rows);
+  state.wallpaper.serverConfigRows = cloneValue(rows);
+}
+
+async function refreshLatestWallpaperConfig(config) {
+  const localRows = config?.wallpaper?.libraries;
+  const previousServerRows = state.wallpaper.serverConfigRows;
+  if (!Array.isArray(localRows) || !Array.isArray(previousServerRows)) return;
+  if (!valuesEqual(localRows, previousServerRows)) return;
+
+  const response = await apiGet("wallpaper_libraries");
+  if (!response?.success || !Array.isArray(response.config_libraries)) {
+    throw new Error("无法确认最新图库配置，请刷新控制台后再保存。");
+  }
+  const latestRows = response.config_libraries;
+  if (!valuesEqual(localRows, latestRows)) {
+    config.wallpaper.libraries = cloneValue(latestRows);
+    replaceWallpaperConfigFormRows(latestRows);
+  }
+  state.wallpaper.serverConfigRows = cloneValue(latestRows);
+}
+
 function buildConfigPayload() {
   return Object.fromEntries([...state.moduleNodes.entries()].map(([key, details]) => [key, readNode(details._rootNode)]));
 }
@@ -759,6 +827,7 @@ async function saveConfig() {
   let config;
   try {
     config = buildConfigPayload();
+    await refreshLatestWallpaperConfig(config);
   } catch (error) {
     showToast(error.message || "请先修正配置格式。", true);
     return false;
@@ -767,7 +836,11 @@ async function saveConfig() {
   button.disabled = true;
   setHeaderState("正在保存配置...");
   try {
-    const response = await apiPost("save_config", { config });
+    const payload = { config };
+    if (Array.isArray(state.wallpaper.serverConfigRows)) {
+      payload.wallpaper_config_snapshot = cloneValue(state.wallpaper.serverConfigRows);
+    }
+    const response = await apiPost("save_config", payload);
     if (!response?.success) throw new Error(response?.message || "配置保存失败。");
     showToast(response.message || "配置已保存。");
     setDirty(false);
@@ -1275,6 +1348,8 @@ async function loadWallpaperLibraries(options = {}) {
     const response = await apiGet("wallpaper_libraries");
     if (!response?.success) throw new Error(response?.message || "无法读取壁纸库。");
     if (requestId !== state.wallpaper.libraryRequestId) return;
+    const previousServerRows = state.wallpaper.serverConfigRows;
+    reconcileWallpaperConfigRows(response.config_libraries, previousServerRows);
     state.wallpaper.libraries = Array.isArray(response.libraries) ? response.libraries : [];
     state.wallpaper.uploadMaxBytes = Number(response.upload_max_bytes) || state.wallpaper.uploadMaxBytes;
     state.wallpaper.uploadFileLimit = Number(response.upload_file_limit) || state.wallpaper.uploadFileLimit;
@@ -1769,6 +1844,7 @@ async function loadState() {
     const response = await apiGet("state");
     if (!response?.success) throw new Error(response?.message || "控制台状态读取失败。");
     state.data = response;
+    state.wallpaper.serverConfigRows = cloneValue(response.config?.wallpaper?.libraries || []);
     state.storageLoadedAt = Date.now();
     applyTheme(response.theme, false);
     renderOverview();
