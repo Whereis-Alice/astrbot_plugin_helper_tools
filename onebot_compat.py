@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import re
+from base64 import b64encode
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from time import monotonic
 from typing import Any
 from weakref import WeakKeyDictionary
@@ -746,16 +748,62 @@ async def set_online_status(
     )
 
 
-async def set_bot_avatar(bot: Any, file: str) -> Any:
-    """设置机器人头像。"""
+#: 已经是协议端能直接理解的引用形式，不需要再转 base64。
+_REMOTE_FILE_PREFIXES = ("http://", "https://", "base64://", "data:", "file://")
 
-    variants = (
+
+async def _local_file_as_base64(file: str) -> str | None:
+    """把本地文件读成 ``base64://`` 引用；不是本地可读文件时返回 ``None``。"""
+
+    if not file or file.startswith(_REMOTE_FILE_PREFIXES):
+        return None
+    candidate = Path(file)
+    try:
+        if not await asyncio.to_thread(candidate.is_file):
+            return None
+        data = await asyncio.to_thread(candidate.read_bytes)
+    except OSError:
+        return None
+    if not data:
+        return None
+    return "base64://" + b64encode(data).decode("ascii")
+
+
+def _avatar_variants(file: str) -> tuple[OneBotVariant, ...]:
+    return (
         OneBotVariant("set_qq_avatar", {"file": file}),
         OneBotVariant(
             "set_avatar", {"file": file}, skip_impls=(IMPL_LLONEBOT,)
         ),
     )
-    return await call_onebot_variants(bot, variants, op_key="profile:avatar")
+
+
+async def set_bot_avatar(bot: Any, file: str) -> Any:
+    """设置机器人头像。
+
+    ``file`` 可以是 URL、``base64://``/``data:`` 引用或本地路径。协议端解析
+    本地路径时用的是 **它自己进程** 的文件系统，所以 AstrBot 与协议端不在同
+    一台机器（或分别跑在不同容器）时，直接传路径必然失败。这里在失败后把文件
+    读成 base64 再重试一次，让头像池这类本地文件在分离部署下也能用。
+    """
+
+    try:
+        return await call_onebot_variants(
+            bot, _avatar_variants(file), op_key="profile:avatar"
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        encoded = await _local_file_as_base64(file)
+        if encoded is None:
+            raise
+        logger.info(
+            "[HelperTools/OneBot] 协议端读不到本地头像文件（%s），改用 base64 重试。",
+            exc,
+        )
+        return await call_onebot_variants(
+            bot, _avatar_variants(encoded), op_key="profile:avatar_base64"
+        )
 
 
 async def send_like(bot: Any, *, user_id: int | str, times: int = 1) -> Any:

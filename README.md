@@ -661,7 +661,7 @@ QQ 资料、群成员、自动换头像、名片点赞、戳一戳、群历史�
 | 设置 Bot 昵称 | `set_qq_profile.nickname` | 自动探测回退 | 自动探测回退 | `set_qq_profile` |
 | 设置 Bot 签名 | `set_qq_profile.personal_note` | 自动探测回退 | 自动探测回退 | 自动探测回退 |
 | 设置在线状态 | `set_online_status`（三参数必填） | 自动探测回退 | 自动探测回退 | 多为不支持，会提示 |
-| 设置 Bot 头像 | `set_qq_avatar` | 自动探测回退 | 自动探测回退 | 自动探测回退 |
+| 设置 Bot 头像 | `set_qq_avatar`（本地路径失败自动转 base64 重试） | 自动探测回退 | 自动探测回退 | 自动探测回退 |
 | 名片点赞 | `send_like` | 支持 | 自动探测回退 | 支持 |
 | 群历史消息回填 | `get_group_msg_history`（`reverseOrder`） | 自动探测回退 | 自动探测回退 | 自动探测回退 |
 | 按 `message_id` 取消息 | `get_msg`（受消息缓存时效限制） | 支持 | 支持 | 支持 |
@@ -675,6 +675,7 @@ QQ 资料、群成员、自动换头像、名片点赞、戳一戳、群历史�
 - 消息上报格式使用 `array`（LLOneBot 默认值），不要改成 `string`。
 - LLOneBot 的消息缓存 `msgCacheExpire` 默认 120 秒。超过这个时间的 `message_id` 查不到属于正常现象，防撤回、引用识别和存图都会静默降级，不会报错。
 - 语音和视频相关能力需要 LLOneBot 侧可用的 ffmpeg。
+- `set_qq_avatar` 传本地路径时由协议端自己去读文件，路径解析发生在 LLOneBot 所在的文件系统上。AstrBot 与 LLOneBot 不在同一台机器或不在同一个容器时，直接传路径必然失败，插件会自动把图片读成 `base64://` 再重试一次，所以头像池放在 AstrBot 侧也能用。
 - LLOneBot 缺少 `set_self_longnick`、`set_diy_online_status` 和裸 `poke` 这几个动作，兼容层已改走等价接口，无需额外配置。
 
 ### 协议端注册成了别的平台名

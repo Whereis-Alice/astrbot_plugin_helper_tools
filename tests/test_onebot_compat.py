@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import pathlib
+import tempfile
 import unittest
 from typing import Any
 
@@ -877,6 +880,93 @@ class PayloadErrorTests(CompatTestCase):
             )
         self.assertNotIsInstance(ctx.exception, compat.OneBotPayloadError)
         self.assertIn("不支持", str(ctx.exception))
+
+class AvatarBase64FallbackTests(CompatTestCase):
+    """协议端读不到本地路径时应自动改用 base64 重试。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.image = pathlib.Path(self._tmp.name) / "avatar.jpg"
+        self.image.write_bytes(b"\xff\xd8\xff\xe0fake-jpeg")
+        self.expected = "base64://" + base64.b64encode(
+            b"\xff\xd8\xff\xe0fake-jpeg"
+        ).decode("ascii")
+
+    async def test_local_path_is_retried_as_base64(self) -> None:
+        seen: list[str] = []
+
+        def handler(**params: Any) -> Any:
+            seen.append(params["file"])
+            if not params["file"].startswith("base64://"):
+                raise FakeActionFailed(
+                    {"status": "failed", "retcode": 1200, "message": "路径不存在"}
+                )
+            return {"status": "ok", "retcode": 0, "data": None}
+
+        bot = FakeBot(
+            {"set_qq_avatar": handler}, version=LLONEBOT_VERSION
+        )
+        result = await compat.set_bot_avatar(bot, str(self.image))
+        self.assertEqual(result, {"status": "ok", "retcode": 0, "data": None})
+        self.assertEqual(seen, [str(self.image), self.expected])
+
+    async def test_successful_path_call_skips_base64(self) -> None:
+        seen: list[str] = []
+
+        def handler(**params: Any) -> Any:
+            seen.append(params["file"])
+            return {"status": "ok", "retcode": 0, "data": None}
+
+        bot = FakeBot({"set_qq_avatar": handler}, version=LLONEBOT_VERSION)
+        await compat.set_bot_avatar(bot, str(self.image))
+        self.assertEqual(seen, [str(self.image)])
+
+    async def test_url_failure_is_not_retried(self) -> None:
+        seen: list[str] = []
+
+        def handler(**params: Any) -> Any:
+            seen.append(params["file"])
+            raise FakeActionFailed(
+                {"status": "failed", "retcode": 1200, "message": "下载失败"}
+            )
+
+        bot = FakeBot({"set_qq_avatar": handler}, version=LLONEBOT_VERSION)
+        with self.assertRaises(FakeActionFailed):
+            await compat.set_bot_avatar(bot, "https://example.com/a.jpg")
+        self.assertEqual(seen, ["https://example.com/a.jpg"])
+
+    async def test_missing_local_file_reports_original_error(self) -> None:
+        bot = FakeBot(
+            {
+                "set_qq_avatar": lambda **_p: (_ for _ in ()).throw(
+                    FakeActionFailed(
+                        {
+                            "status": "failed",
+                            "retcode": 1200,
+                            "message": "路径不存在",
+                        }
+                    )
+                )
+            },
+            version=LLONEBOT_VERSION,
+        )
+        missing = str(pathlib.Path(self._tmp.name) / "nope.jpg")
+        with self.assertRaises(FakeActionFailed) as ctx:
+            await compat.set_bot_avatar(bot, missing)
+        self.assertEqual(ctx.exception.retcode, 1200)
+
+    async def test_base64_reference_is_passed_through(self) -> None:
+        seen: list[str] = []
+
+        def handler(**params: Any) -> Any:
+            seen.append(params["file"])
+            return {"status": "ok", "retcode": 0, "data": None}
+
+        bot = FakeBot({"set_qq_avatar": handler}, version=LLONEBOT_VERSION)
+        await compat.set_bot_avatar(bot, self.expected)
+        self.assertEqual(seen, [self.expected])
 
 if __name__ == "__main__":
     unittest.main()
