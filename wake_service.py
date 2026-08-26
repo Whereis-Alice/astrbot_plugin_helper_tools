@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import astrbot.api.message_components as Comp
+from astrbot.api import logger
 
 from .helper_utils import (
     cfg,
@@ -22,6 +23,7 @@ from .helper_utils import (
     read_list,
     section,
 )
+from .onebot_compat import is_onebot_platform
 
 WAKE_MODE_CONTAINS = "contains"
 WAKE_MODE_PREFIX = "prefix"
@@ -133,7 +135,7 @@ def _onebot_field(value: Any, name: str) -> Any:
 
 def _event_onebot_sender_id(event: Any) -> str:
     """Return the original OneBot sender ID when the adapter retained it."""
-    if _event_platform_name(event) != "aiocqhttp":
+    if not _is_onebot_platform_event(event):
         return ""
     message_obj = getattr(event, "message_obj", None)
     raw_event = getattr(message_obj, "raw_message", None)
@@ -160,6 +162,14 @@ def _event_self_id(event: Any) -> str:
 def _event_platform_name(event: Any) -> str:
     getter = getattr(event, "get_platform_name", None)
     return clean_text(getter()) if callable(getter) else ""
+
+
+def _is_onebot_platform_event(event: Any) -> bool:
+    """Whether the event comes from a OneBot v11 adapter (LLOneBot/NapCat/...)."""
+    name = _event_platform_name(event)
+    # is_onebot_platform() treats an empty name as compatible; keep the strict
+    # behaviour here so non-OneBot adapters without a name are not matched.
+    return bool(name) and is_onebot_platform(name)
 
 
 def _is_admin(event: Any) -> bool:
@@ -322,7 +332,7 @@ class WakeService:
                 try:
                     saver()
                 except Exception:
-                    pass
+                    logger.warning("[HelperTools/Wake] save wake config failed", exc_info=True)
 
     @staticmethod
     def _dedupe_words(values: list[Any]) -> list[str]:
@@ -430,7 +440,7 @@ class WakeService:
         if (
             self.block_enabled()
             and self.block_qqbot()
-            and _event_platform_name(event) == "aiocqhttp"
+            and _is_onebot_platform_event(event)
             and _is_qqbot_id(qqbot_sender_id)
         ):
             self._stop_event(event)

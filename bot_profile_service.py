@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,17 @@ import astrbot.api.message_components as Comp
 from astrbot.api import logger
 
 from .helper_utils import cfg, clean_text, fetch_bytes, read_bool
-from .qq_features import call_onebot, require_onebot
+from .onebot_compat import (
+    call_onebot,
+    is_unsupported_action_error,
+    onebot_error_info,
+    set_bot_avatar,
+    set_bot_nickname,
+    set_bot_signature,
+    set_online_status,
+    unwrap_payload,
+)
+from .qq_features import require_onebot
 
 
 BOT_PROFILE_TOOL_NAME = "set_bot_qq_profile"
@@ -43,6 +54,23 @@ STATUS_MAPPING: dict[str, tuple[int, int]] = {
     "追剧中": (10, 1021),
     "我的电量": (10, 1000),
 }
+
+_UNSUPPORTED_HINT = (
+    "当前 OneBot 协议端（LLOneBot / NapCat / Lagrange / go-cqhttp 等）"
+    "没有提供可用的接口"
+)
+
+
+def _failure_message(label: str, exc: BaseException) -> str:
+    """把底层 OneBot 异常转成可读的中文提示，避免裸异常直接抛给用户。"""
+
+    retcode, message = onebot_error_info(exc)
+    detail = clean_text(message) or "请求失败"
+    if is_unsupported_action_error(exc):
+        return f"{label}失败：{_UNSUPPORTED_HINT}。（{detail}）"
+    if retcode is not None:
+        return f"{label}失败：{detail}（retcode={retcode}）"
+    return f"{label}失败：{detail}"
 
 
 class BotProfileService:
@@ -99,9 +127,26 @@ class BotProfileService:
         if not nickname:
             return "没有提供新昵称，也没有识别到当前人格名。"
         bot = require_onebot(event)
-        await call_onebot(bot, "set_qq_profile", nickname=nickname)
+        try:
+            await set_bot_nickname(bot, nickname)
+        except Exception as exc:  # noqa: BLE001 - 各协议端异常类型不统一
+            logger.warning("[HelperTools] 设置 Bot 昵称失败: %r", exc)
+            return _failure_message("设置 Bot 昵称", exc)
         self._current_nickname = nickname
         return f"Bot 昵称已更新为: {nickname}"
+
+    async def _login_nickname(self, bot: Any) -> str:
+        """尽力读取当前登录昵称；失败时返回空串（不影响主流程）。"""
+
+        try:
+            payload = await call_onebot(bot, "get_login_info")
+        except Exception as exc:  # noqa: BLE001 - 只是尽力而为的辅助查询
+            logger.debug("[HelperTools] 读取 get_login_info 失败: %r", exc)
+            return ""
+        data = unwrap_payload(payload)
+        if isinstance(data, dict):
+            return clean_text(data.get("nickname"))
+        return ""
 
     async def set_signature(self, event: Any, signature: str) -> str:
         if not self.enabled():
@@ -110,7 +155,14 @@ class BotProfileService:
         if not signature:
             return "没有提供新签名。"
         bot = require_onebot(event)
-        await call_onebot(bot, "set_self_longnick", longNick=signature)
+        # LLOneBot 没有 set_self_longnick，签名只能落到 set_qq_profile.personal_note；
+        # 该接口会整体覆盖资料，所以先尽力取回当前昵称一起提交，避免昵称被清空。
+        nickname = await self._login_nickname(bot) or self._current_nickname
+        try:
+            await set_bot_signature(bot, signature, nickname=nickname)
+        except Exception as exc:  # noqa: BLE001 - 各协议端异常类型不统一
+            logger.warning("[HelperTools] 设置 Bot 签名失败: %r", exc)
+            return _failure_message("设置 Bot 签名", exc)
         return f"Bot 签名已更新: {signature}"
 
     async def set_status(self, event: Any, status_name: str) -> str:
@@ -123,13 +175,16 @@ class BotProfileService:
         if not params:
             return "暂不支持该状态。可用状态: " + "、".join(STATUS_MAPPING.keys())
         bot = require_onebot(event)
-        await call_onebot(
-            bot,
-            "set_online_status",
-            status=params[0],
-            ext_status=params[1],
-            battery_status=0,
-        )
+        try:
+            await set_online_status(
+                bot,
+                status=params[0],
+                ext_status=params[1],
+                battery_status=0,
+            )
+        except Exception as exc:  # noqa: BLE001 - 各协议端异常类型不统一
+            logger.warning("[HelperTools] 设置 Bot 在线状态失败: %r", exc)
+            return _failure_message("设置 Bot 在线状态", exc)
         return f"Bot 在线状态已更新为: {status_name}"
 
     def extract_image_url(self, event: Any) -> str:
@@ -151,14 +206,29 @@ class BotProfileService:
         if not image_ref:
             return "请提供图片 URL，或引用/发送一张图片。"
         bot = require_onebot(event)
-        await call_onebot(bot, "set_qq_avatar", file=image_ref)
+        try:
+            await set_bot_avatar(bot, image_ref)
+        except Exception as exc:  # noqa: BLE001 - 各协议端异常类型不统一
+            logger.warning("[HelperTools] 设置 Bot 头像失败: %r", exc)
+            return _failure_message("设置 Bot 头像", exc)
         persona_id = await self.current_persona_id(event)
         if persona_id and image_ref.startswith(("http://", "https://")):
             try:
                 data, _mime = await fetch_bytes(image_ref, timeout_seconds=20, max_bytes=10 * 1024 * 1024)
-                (self.avatar_dir / f"{persona_id}.jpg").write_bytes(data)
-            except Exception as exc:
-                logger.warning("[HelperTools] failed to cache persona avatar: %s", exc)
+                await asyncio.to_thread(
+                    self.avatar_dir.mkdir, parents=True, exist_ok=True
+                )
+                await asyncio.to_thread(
+                    (self.avatar_dir / f"{persona_id}.jpg").write_bytes, data
+                )
+            except Exception as exc:  # noqa: BLE001 - 缓存失败不影响头像本身
+                logger.warning(
+                    "[HelperTools] failed to cache persona avatar: %r", exc, exc_info=True
+                )
+                return (
+                    f"Bot 头像已更新，但人格「{persona_id}」的头像没有缓存成功，"
+                    "下次同步人格时不会自动换回这张头像。"
+                )
         return "Bot 头像已更新。"
 
     async def switch_persona(self, event: Any, persona_id: str = "") -> str:
@@ -190,10 +260,10 @@ class BotProfileService:
         avatar_path = self.avatar_dir / f"{persona_id}.jpg"
         if avatar_path.exists():
             try:
-                await self.set_avatar(event, str(avatar_path))
-                result += "\n已同步该人格缓存头像。"
-            except Exception as exc:
-                result += f"\n头像同步失败: {exc}"
+                avatar_result = await self.set_avatar(event, str(avatar_path))
+            except Exception as exc:  # noqa: BLE001 - 各协议端异常类型不统一
+                avatar_result = f"头像同步失败: {exc}"
+            result += f"\n{avatar_result}"
         return result
 
     def list_personas(self) -> str:

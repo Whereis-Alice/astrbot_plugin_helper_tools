@@ -4,7 +4,7 @@ import asyncio
 import json
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,20 @@ def _resolve_redirect_sync(url: str, timeout_seconds: int) -> str:
             return clean_text(exc.headers.get("Location"))
         raise
     return ""
+
+
+def _local_now() -> datetime:
+    """Current time as a timezone-aware datetime in the local zone."""
+
+    return datetime.now(timezone.utc).astimezone()
+
+
+def _as_aware(value: datetime) -> datetime:
+    """Treat legacy naive cache timestamps as local time so comparisons stay valid."""
+
+    if value.tzinfo is None:
+        return value.astimezone()
+    return value
 
 
 class Anime1Service:
@@ -90,7 +104,7 @@ class Anime1Service:
     async def _scheduler_loop(self) -> None:
         while True:
             try:
-                now = datetime.now()
+                now = _local_now()
                 run_key = f"{now:%Y-%m-%d}-{now.hour}"
                 if now.minute == 0 and now.hour in self.update_times() and run_key not in self._last_run_keys:
                     self._last_run_keys.add(run_key)
@@ -102,7 +116,7 @@ class Anime1Service:
                 logger.warning("[HelperTools] Anime1 scheduler error: %s", exc)
                 await asyncio.sleep(60)
 
-    def load_cache(self) -> list[dict[str, Any]]:
+    def _load_cache_sync(self) -> list[dict[str, Any]]:
         if not self.cache_path.exists():
             return []
         try:
@@ -112,12 +126,18 @@ class Anime1Service:
             return []
         return payload if isinstance(payload, list) else []
 
-    def save_cache(self, entries: list[dict[str, Any]]) -> None:
+    def _save_cache_sync(self, entries: list[dict[str, Any]]) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.cache_path.write_text(
             json.dumps(entries, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    async def load_cache(self) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._load_cache_sync)
+
+    async def save_cache(self, entries: list[dict[str, Any]]) -> None:
+        await asyncio.to_thread(self._save_cache_sync, entries)
 
     async def fetch_remote_list(self) -> list[Any]:
         payload = await fetch_json(ANIME1_LIST_URL, timeout_seconds=self.timeout())
@@ -127,8 +147,12 @@ class Anime1Service:
 
     async def update_cache(self) -> int:
         remote = await self.fetch_remote_list()
-        existing = {str(item.get("id")): item for item in self.load_cache() if item.get("id") is not None}
-        now = datetime.now().isoformat(timespec="seconds")
+        existing = {
+            str(item.get("id")): item
+            for item in await self.load_cache()
+            if item.get("id") is not None
+        }
+        now = _local_now().isoformat(timespec="seconds")
         new_ids: set[str] = set()
         merged: list[dict[str, Any]] = []
         for raw in remote:
@@ -163,7 +187,7 @@ class Anime1Service:
         for old_id, old_entry in existing.items():
             if old_id not in new_ids:
                 merged.append(old_entry)
-        self.save_cache(merged)
+        await self.save_cache(merged)
         logger.info("[HelperTools] Anime1 cache updated: %s entries", len(merged))
         return len(merged)
 
@@ -191,7 +215,7 @@ class Anime1Service:
             "全部": "",
         }
         selected_range = range_aliases.get(normalized_range, normalized_range)
-        now = datetime.now()
+        now = _local_now()
         if selected_range:
             filtered = []
             for item in entries:
@@ -199,7 +223,7 @@ class Anime1Service:
                 if not updated_at:
                     continue
                 try:
-                    updated = datetime.fromisoformat(updated_at)
+                    updated = _as_aware(datetime.fromisoformat(updated_at))
                 except ValueError:
                     continue
                 if selected_range == "year" and updated.year == now.year:
@@ -233,7 +257,7 @@ class Anime1Service:
             return "Anime1 功能当前未启用。"
         if not use_cache:
             await self.update_cache()
-        entries = self.load_cache()
+        entries = await self.load_cache()
         if not entries:
             return "暂无 Anime1 缓存数据，可以先执行更新或让工具 use_cache=false。"
         entries = self.filter_entries(entries, time_range=time_range, query=query)

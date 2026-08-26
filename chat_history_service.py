@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import sqlite3
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import astrbot.api.message_components as Comp
 
 from .helper_utils import cfg, clean_text, read_bool, read_int, read_list, truncate
-from .qq_features import call_onebot
+from .onebot_compat import get_group_msg_history, is_onebot_platform, unwrap_payload
 
 CHAT_HISTORY_TOOL_NAME = "search_current_group_chat_history"
 CHAT_HISTORY_TOOL_RESULT_MARKER = "[聊天记录检索结果]"
@@ -24,12 +24,15 @@ _TIME_FORMATS = (
     "%Y-%m-%d %H:%M",
     "%Y-%m-%d",
 )
-_QQ_PLATFORM_NAMES = {
-    "aiocqhttp",
-    "onebot",
-    "napcat",
-    "lagrange",
-}
+#: 兼容层未覆盖时的平台名兜底集合（只放宽、不收紧判定）。
+_QQ_PLATFORM_NAMES = frozenset(
+    {
+        "aiocqhttp",
+        "onebot",
+        "napcat",
+        "lagrange",
+    }
+)
 
 
 class ChatHistoryError(ValueError):
@@ -587,12 +590,11 @@ class ChatHistoryService:
         for _index in range(settings.max_backfill_pages):
             try:
                 response = await asyncio.wait_for(
-                    call_onebot(
+                    get_group_msg_history(
                         bot,
-                        "get_group_msg_history",
                         group_id=int(scope.group_id),
                         message_seq=cursor,
-                        reverseOrder=True,
+                        reverse=True,
                     ),
                     timeout=settings.backfill_timeout_seconds,
                 )
@@ -654,7 +656,7 @@ class ChatHistoryService:
         settings: ChatHistorySettings,
     ) -> HistoryScope | None:
         platform = self._platform_name(event)
-        if platform not in _QQ_PLATFORM_NAMES and "qq" not in platform:
+        if not is_onebot_platform(platform, _QQ_PLATFORM_NAMES) and "qq" not in platform:
             return None
         group_id = self._event_value(event, "get_group_id")
         self_id = self._event_value(event, "get_self_id")
@@ -889,21 +891,44 @@ class ChatHistoryService:
 
     @staticmethod
     def _unwrap_onebot_payload(value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        data = value.get("data")
-        if isinstance(data, dict) and "messages" not in value:
-            return data
-        return value
+        payload = unwrap_payload(value)
+        # 兼容层只解包带 status/retcode 的标准包装；部分协议端会直接返回
+        # {"data": {...}}，这里补上旧的一层解包行为。
+        if isinstance(payload, dict) and "messages" not in payload:
+            data = payload.get("data")
+            if isinstance(data, dict):
+                return data
+        return payload
 
-    @staticmethod
-    def _oldest_sequence(messages: list[Any]) -> int | None:
+    #: 各协议端给历史消息序号用的键名。LLOneBot / NapCat 在部分版本里只给
+    #: ``real_seq``（字符串），go-cqhttp 用 ``message_seq``。
+    _SEQUENCE_KEYS = (
+        "message_seq",
+        "messageSeq",
+        "real_seq",
+        "realSeq",
+        "seq",
+    )
+
+    @classmethod
+    def _message_sequence(cls, item: Any) -> int | None:
+        if not isinstance(item, Mapping):
+            return None
+        for key in cls._SEQUENCE_KEYS:
+            if key not in item:
+                continue
+            value = _as_int(item.get(key))
+            if value is not None and value >= 0:
+                return value
+        return None
+
+    @classmethod
+    def _oldest_sequence(cls, messages: list[Any]) -> int | None:
         values = [
-            _as_int(item.get("message_seq") or item.get("seq"))
+            value
             for item in messages
-            if isinstance(item, dict)
+            if (value := cls._message_sequence(item)) is not None
         ]
-        values = [value for value in values if value is not None and value >= 0]
         return min(values) if values else None
 
     @staticmethod

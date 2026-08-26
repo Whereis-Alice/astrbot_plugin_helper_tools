@@ -7,6 +7,12 @@
         "type": "bool",
         "description": "启用插件",
         "default": true
+      },
+      "onebot_platform_names": {
+        "type": "list",
+        "description": "额外的 OneBot v11 协议端平台名（适配器 ID）",
+        "default": [],
+        "hint": "内置已识别 aiocqhttp / llonebot / napcat / lagrange / go-cqhttp 等；若你的适配器用了自定义名称，在这里补上。留空即只使用内置名单。"
       }
     }
   },
@@ -2197,7 +2203,8 @@
         "type": "list",
         "description": "存图指令",
         "default": [
-          "存图"
+          "存图",
+          "/存图"
         ],
         "hint": "可直接用「存图 图库名」，也可使用「当前 AstrBot 唤醒词缀 + 存图 图库名」。旧配置里带 / 的写法也会兼容。"
       },
@@ -2205,7 +2212,8 @@
         "type": "list",
         "description": "删图指令",
         "default": [
-          "删图"
+          "删图",
+          "/删图"
         ],
         "hint": "可直接用「删图」，也可使用「当前 AstrBot 唤醒词缀 + 删图」。旧配置里带 / 的写法也会兼容。"
       },
@@ -2662,6 +2670,18 @@
         "description": "自定义素材图片目录",
         "default": "",
         "hint": "可选。目录中的图片文件名应为素材库的 id，例如 test-pig.png；找不到时会回退到内置图片。相对路径以插件数据目录为基准。"
+      },
+      "font_bold_file": {
+        "type": "string",
+        "description": "今日小猪图片的粗体字体文件路径",
+        "default": "",
+        "hint": "可选。留空则依次尝试 rollpig_assets/font/ 内置字体、系统字体、PIL 默认字体。支持 .otf/.ttf/.ttc/.otc；相对路径以插件数据目录为基准。"
+      },
+      "font_regular_file": {
+        "type": "string",
+        "description": "今日小猪图片的常规字重字体文件路径",
+        "default": "",
+        "hint": "可选。留空则依次尝试 rollpig_assets/font/ 内置字体、系统字体、PIL 默认字体。支持 .otf/.ttf/.ttc/.otc；相对路径以插件数据目录为基准。"
       }
     }
   },

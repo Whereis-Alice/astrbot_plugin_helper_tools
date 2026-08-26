@@ -5,10 +5,9 @@ import re
 from collections import Counter
 from typing import Any
 
-from mcp.types import CallToolResult, ImageContent, TextContent
-
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
+from mcp.types import CallToolResult, ImageContent, TextContent
 
 from .helper_utils import (
     cfg,
@@ -23,7 +22,7 @@ from .helper_utils import (
     read_list,
     truncate,
 )
-
+from .onebot_compat import call_onebot, is_onebot_event
 
 QQ_AVATAR_TOOL_NAME = "get_qq_avatar"
 QQ_GROUP_MEMBER_TOOL_NAME = "get_qq_group_member_info"
@@ -152,35 +151,23 @@ def extract_at_ids(event: Any) -> list[str]:
     return ids
 
 
-async def call_onebot(bot: Any, action: str, **params: Any) -> Any:
-    method = getattr(bot, action, None)
-    if callable(method):
-        try:
-            return await method(**params)
-        except TypeError:
-            if "no_cache" in params:
-                fallback = dict(params)
-                fallback.pop("no_cache", None)
-                return await method(**fallback)
-            raise
-    call_action = getattr(bot, "call_action", None)
-    if callable(call_action):
-        try:
-            return await call_action(action, **params)
-        except TypeError:
-            if "no_cache" in params:
-                fallback = dict(params)
-                fallback.pop("no_cache", None)
-                return await call_action(action, **fallback)
-            raise
-    raise RuntimeError("当前事件没有可用的 OneBot 调用入口。")
-
-
 def require_onebot(event: Any) -> Any:
+    """取出事件上的 OneBot 调用入口。
+
+    判定条件仍然只是 ``event.bot`` 是否存在（不额外收紧），但在平台名
+    明显不属于 OneBot v11 系时给出更精确的提示，方便用户排查。
+    """
+
     bot = getattr(event, "bot", None)
-    if bot is None:
-        raise RuntimeError("当前平台不支持 OneBot/AIOCQHTTP 接口。")
-    return bot
+    if bot is not None:
+        return bot
+    if not is_onebot_event(event):
+        raise RuntimeError(
+            "当前平台不是 OneBot v11 协议端"
+            "（AIOCQHTTP / LLOneBot / NapCat / Lagrange / go-cqhttp），"
+            "无法使用该功能。"
+        )
+    raise RuntimeError("当前平台不支持 OneBot/AIOCQHTTP 接口。")
 
 
 def _format_role(value: Any) -> str:

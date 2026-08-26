@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -27,7 +28,13 @@ from .helper_utils import (
     read_list,
     section,
 )
-from .qq_features import call_onebot
+from .onebot_compat import (
+    extract_file_references,
+    resolve_file,
+    retry_including_timeout,
+    unwrap_payload,
+)
+from .onebot_compat import get_msg as onebot_get_msg
 
 
 DEFAULT_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".gif"]
@@ -271,8 +278,11 @@ class WallpaperService:
         files = [path for path in pattern_iter if path.is_file() and path.suffix.lower() in allowed]
         return sorted(files)
 
+    async def image_files_async(self, library: WallpaperLibrary) -> list[Path]:
+        return await asyncio.to_thread(self.image_files, library)
+
     async def send_random_wallpaper(self, event: Any, library: WallpaperLibrary) -> str:
-        files = self.image_files(library)
+        files = await self.image_files_async(library)
         if not files:
             return f"壁纸库「{library.name}」里还没有可用图片。"
         image_path = random.choice(files)
@@ -310,7 +320,7 @@ class WallpaperService:
     ) -> None:
         message_id = await self._send_chain_onebot(event, chain)
         if message_id and image_path is not None:
-            self.record_sent_image(str(message_id), image_path, library.name)
+            await self.record_sent_image_async(str(message_id), image_path, library.name)
             return
         if message_id:
             return
@@ -356,6 +366,15 @@ class WallpaperService:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.registry_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    async def load_registry_async(self) -> dict[str, dict[str, str]]:
+        return await asyncio.to_thread(self.load_registry)
+
+    async def save_registry_async(self, payload: dict[str, dict[str, str]]) -> None:
+        await asyncio.to_thread(self.save_registry, payload)
+
+    async def record_sent_image_async(self, message_id: str, image_path: Path, library_name: str) -> None:
+        await asyncio.to_thread(self.record_sent_image, message_id, image_path, library_name)
+
     def record_sent_image(self, message_id: str, image_path: Path, library_name: str) -> None:
         if not message_id:
             return
@@ -386,7 +405,7 @@ class WallpaperService:
                 return f"壁纸库「{library_name}」不存在。请先在配置里添加这个图库，或开启自动新建图库。"
             library = self.create_library(library_name)
             created_library = True
-        library.path.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(library.path.mkdir, parents=True, exist_ok=True)
         saved: list[Path] = []
         skipped = 0
         errors: list[str] = []
@@ -395,14 +414,14 @@ class WallpaperService:
                 data, ext = await self.read_image_ref(event, ref)
                 if ext.lower() not in self.allowed_extensions():
                     ext = ".jpg"
-                duplicate = self.find_duplicate(library, data) if self.deduplicate_on_add() else None
+                duplicate = await self.find_duplicate_async(library, data) if self.deduplicate_on_add() else None
                 if duplicate:
                     skipped += 1
                     continue
                 digest = _sha256_bytes(data)
                 filename = f"{_safe_filename_part(library.name)}_{int(time.time())}_{digest[:12]}{ext}"
                 target = library.path / filename
-                target.write_bytes(data)
+                await asyncio.to_thread(target.write_bytes, data)
                 saved.append(target)
             except Exception as exc:
                 errors.append(str(exc))
@@ -467,7 +486,10 @@ class WallpaperService:
             try:
                 saver()
             except Exception:
-                pass
+                logger.warning("[HelperTools/Wallpaper] save wallpaper config failed", exc_info=True)
+
+    async def find_duplicate_async(self, library: WallpaperLibrary, data: bytes) -> Path | None:
+        return await asyncio.to_thread(self.find_duplicate, library, data)
 
     def find_duplicate(self, library: WallpaperLibrary, data: bytes) -> Path | None:
         digest = _sha256_bytes(data)
@@ -483,7 +505,7 @@ class WallpaperService:
         if not self._can_mutate(event):
             return "只有管理员可以删除壁纸。"
         reply_ids = self.extract_reply_ids(event)
-        registry = self.load_registry()
+        registry = await self.load_registry_async()
         candidates: list[Path] = []
         for reply_id in reply_ids:
             item = registry.get(reply_id)
@@ -497,14 +519,14 @@ class WallpaperService:
                 continue
             if not resolved.exists() or not resolved.is_file():
                 self.remove_registry_path(registry, resolved)
-                self.save_registry(registry)
+                await self.save_registry_async(registry)
                 return "这张壁纸文件已经不存在，已清理记录。"
             try:
-                resolved.unlink()
+                await asyncio.to_thread(resolved.unlink)
             except OSError as exc:
                 return f"删除失败: {exc}"
             self.remove_registry_path(registry, resolved)
-            self.save_registry(registry)
+            await self.save_registry_async(registry)
             return f"已删除壁纸文件: {resolved.name}"
         return "没有找到可删除的壁纸。请引用本插件刚发出的壁纸图片再使用删图指令。"
 
@@ -583,9 +605,10 @@ class WallpaperService:
         bot = getattr(event, "bot", None)
         if bot is None or not message_id:
             return []
+        # LLOneBot 的消息缓存默认 120 秒，查不到会直接抛异常，这里静默降级。
         try:
-            payload = await call_onebot(bot, "get_msg", message_id=int(message_id))
-        except Exception:
+            payload = unwrap_payload(await onebot_get_msg(bot, message_id))
+        except Exception:  # noqa: BLE001 - 各实现抛出的异常类型不一致
             return []
         segments = payload.get("message", []) if isinstance(payload, dict) else []
         if not isinstance(segments, list):
@@ -646,7 +669,7 @@ class WallpaperService:
         for raw in (ref.path, ref.file):
             path = self.path_from_ref(raw)
             if path is not None and path.exists() and path.is_file():
-                data = path.read_bytes()
+                data = await asyncio.to_thread(path.read_bytes)
                 if len(data) > self.max_add_bytes():
                     raise ValueError("图片超过最大保存大小。")
                 return data, _guess_extension(str(path))
@@ -663,17 +686,27 @@ class WallpaperService:
 
         bot = getattr(event, "bot", None)
         if bot is not None and ref.file:
+            # action 与参数键名交给兼容层：LLOneBot 的 get_image 返回
+            # file / url / file_size / file_name，没有 go-cqhttp 的 filename / size。
             try:
-                payload = await call_onebot(bot, "get_image", file=ref.file)
-            except Exception as exc:
-                raise ValueError(f"无法通过 OneBot 读取图片: {exc}") from exc
-            if isinstance(payload, dict):
-                next_ref = ImageRef(
-                    url=clean_text(payload.get("url")),
-                    file=clean_text(payload.get("file")),
-                    path=clean_text(payload.get("path")),
-                    source="onebot_get_image",
+                payload = await resolve_file(
+                    bot,
+                    ref.file,
+                    retry_on=retry_including_timeout,
                 )
-                if next_ref.url or next_ref.path or (next_ref.file and next_ref.file != ref.file):
+            except Exception as exc:  # 各实现抛出的异常类型不一致
+                raise ValueError(f"无法通过 OneBot 读取图片: {exc}") from exc
+            for reference in extract_file_references(payload):
+                value = clean_text(reference)
+                if not value or value == ref.file:
+                    continue
+                next_ref = ImageRef(source="onebot_get_image")
+                if _is_url(value) or value.startswith("base64://"):
+                    next_ref.url = value
+                else:
+                    next_ref.path = value
+                try:
                     return await self.read_image_ref(event, next_ref)
+                except (OSError, ValueError):
+                    continue
         raise ValueError("无法读取图片原图。")

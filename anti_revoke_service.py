@@ -29,7 +29,15 @@ from .helper_utils import (
     read_int,
     read_list,
 )
-from .qq_features import call_onebot
+from .onebot_compat import (
+    call_onebot,
+    extract_file_references,
+    onebot_error_info,
+    resolve_file,
+    retry_including_timeout,
+    unwrap_payload,
+)
+from .onebot_compat import get_msg as onebot_get_msg
 
 _IMAGE_SEGMENT_TYPES = {"image", "flash", "mface"}
 _IMAGE_CACHE_MAX_BYTES = 12 * 1024 * 1024
@@ -444,16 +452,31 @@ def _image_id_candidates(data: Mapping[str, Any]) -> list[str]:
 
 
 def _resolved_image_references(response: Any) -> list[str]:
+    """把 get_image / get_file 的响应整理成可下载的引用列表。
+
+    键名交给兼容层统一提取：LLOneBot 的 get_image 返回
+    file / url / file_size / file_name，没有 go-cqhttp 的 filename / size，
+    硬编码单一键名会在部分实现上直接读不到图。
+    本地路径排在 http 地址前面，避免多一次不必要的网络请求。
+    """
+
     resolved = unwrap_onebot_payload(response)
     references: list[str] = []
-    for key in ("base64", "path", "file", "url"):
-        reference = clean_text(resolved.get(key))
-        if not reference:
+    embedded = clean_text(resolved.get("base64"))
+    if embedded:
+        if not embedded.startswith(("base64://", "data:image/")):
+            embedded = f"base64://{embedded}"
+        references.append(embedded)
+    remote: list[str] = []
+    for candidate in extract_file_references(resolved):
+        reference = clean_text(candidate)
+        if not reference or reference in references or reference in remote:
             continue
-        if key == "base64" and not reference.startswith(("base64://", "data:image/")):
-            reference = f"base64://{reference}"
-        if reference not in references:
+        if reference.casefold().startswith(("http://", "https://")):
+            remote.append(reference)
+        else:
             references.append(reference)
+    references.extend(remote)
     return references
 
 
@@ -893,47 +916,35 @@ class AntiRevokeService:
         if bot is None or not candidates:
             raise ValueError("image has no OneBot-resolvable file identifier")
 
-        actions: list[tuple[str, dict[str, Any]]] = []
-        for candidate in candidates:
-            actions.extend(
-                (
-                    ("get_image", {"file": candidate}),
-                    ("get_image", {"file_id": candidate}),
-                    ("get_image", {"id": candidate}),
-                    ("get_image", {"image": candidate}),
-                    ("get_file", {"file_id": candidate}),
-                    ("get_file", {"file": candidate}),
-                )
-            )
         try:
             group_id = clean_text(getattr(event, "get_group_id", lambda: "")())
         except Exception:  # noqa: BLE001 - notice events vary by adapter
             group_id = ""
+        group_value: int | str | None = None
         if group_id:
-            group_value: int | str = int(group_id) if group_id.isdigit() else group_id
-            actions.extend(
-                (
-                    "get_group_file_url",
-                    {"group_id": group_value, "file_id": candidate},
-                )
-                for candidate in candidates
-            )
+            group_value = int(group_id) if group_id.isdigit() else group_id
 
-        deadline = asyncio.get_running_loop().time() + _IMAGE_FETCH_TIMEOUT_SECONDS
+        # 候选 action 与参数键名由兼容层维护（get_image / get_file，群聊再补
+        # get_group_file_url）。单次 1.5 秒、整体 _IMAGE_FETCH_TIMEOUT_SECONDS
+        # 的预算沿用旧逻辑；超时同样算"这个候选不行"，继续试下一个引用。
+        deadline = time.monotonic() + _IMAGE_FETCH_TIMEOUT_SECONDS
         errors: list[str] = []
         seen_references: set[str] = set(candidates)
-        for action, params in actions:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
+        for candidate in candidates:
+            if deadline - time.monotonic() <= 0:
                 errors.append("OneBot image resolution timed out")
                 break
             try:
-                response = await asyncio.wait_for(
-                    call_onebot(bot, action, **params),
-                    timeout=min(1.5, remaining),
+                response = await resolve_file(
+                    bot,
+                    candidate,
+                    group_id=group_value,
+                    timeout=1.5,
+                    deadline=deadline,
+                    retry_on=retry_including_timeout,
                 )
             except Exception as exc:  # noqa: BLE001 - adapters expose varying errors
-                errors.append(f"{action}: {_safe_image_error(exc)}")
+                errors.append(f"resolve_file: {_safe_image_error(exc)}")
                 continue
             for reference in _resolved_image_references(response):
                 if reference in seen_references:
@@ -942,7 +953,7 @@ class AntiRevokeService:
                 try:
                     return await self._read_image_reference(reference, allow_local=True)
                 except (OSError, ValueError) as exc:
-                    errors.append(f"{action} result: {_safe_image_error(exc)}")
+                    errors.append(f"resolve_file result: {_safe_image_error(exc)}")
         detail = "; ".join(errors[-4:]) or "OneBot returned no downloadable image"
         raise ValueError(detail)
 
@@ -991,43 +1002,30 @@ class AntiRevokeService:
         bot = getattr(event, "bot", None)
         if bot is None or not message_id:
             return {}
-        lookup_values: list[int | str] = [message_id]
-        if message_id.isdigit():
-            lookup_values.insert(0, int(message_id))
-        attempts: list[dict[str, Any]] = []
-        for value in lookup_values:
-            attempts.extend(({"message_id": value}, {"id": value}))
-
         timeout = read_int(
             cfg(self.config, "anti_revoke", "lookup_timeout_seconds", 3),
             3,
             minimum=1,
             maximum=15,
         )
-        deadline = asyncio.get_running_loop().time() + timeout
-        last_error: BaseException | None = None
-        for params in attempts:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                break
-            try:
-                response = await asyncio.wait_for(
-                    call_onebot(bot, "get_msg", **params),
-                    timeout=min(1.5, remaining),
-                )
-            except Exception as exc:  # noqa: BLE001 - adapters expose varying errors
-                last_error = exc
-                continue
-            payload = unwrap_onebot_payload(response)
-            if payload:
-                return payload
-        if last_error is not None:
+        # message_id 的键名与 int/str 取值差异由兼容层处理；LLOneBot 的消息
+        # 缓存默认只有 120 秒，查不到属于常态，静默降级即可。
+        try:
+            response = await onebot_get_msg(
+                bot,
+                message_id,
+                timeout=min(1.5, float(timeout)),
+                deadline=time.monotonic() + timeout,
+                retry_on=retry_including_timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 - adapters expose varying errors
             logger.debug(
                 "[HelperTools/AntiRevoke] get_msg lookup failed message=%s error=%s",
                 message_id,
-                _safe_image_error(last_error),
+                _safe_image_error(exc),
             )
-        return {}
+            return {}
+        return unwrap_onebot_payload(response)
 
     def _cached_image_path(self, filename_value: Any) -> Path | None:
         filename = clean_text(filename_value)
@@ -1630,28 +1628,46 @@ class AntiRevokeService:
         sender_name = sender_id or "未知用户"
         operator_name = operator_id or ""
         try:
-            info = await call_onebot(bot, "get_group_info", group_id=int(group_id))
-            info = unwrap_onebot_payload(info)
+            info = unwrap_onebot_payload(
+                unwrap_payload(
+                    await call_onebot(bot, "get_group_info", group_id=int(group_id))
+                )
+            )
             group_name = clean_text(info.get("group_name"), group_name)
         except Exception as exc:  # noqa: BLE001 - name lookup is best effort
+            retcode, detail = onebot_error_info(exc)
             logger.debug(
-                "[HelperTools/AntiRevoke] group name lookup failed group=%s error=%r",
+                "[HelperTools/AntiRevoke] group name lookup failed group=%s retcode=%s error=%s",
                 group_id,
-                exc,
+                retcode,
+                detail,
             )
         for user_id, fallback in ((sender_id, sender_name), (operator_id, operator_name)):
             if not user_id:
                 continue
             try:
-                info = await call_onebot(
-                    bot,
-                    "get_group_member_info",
-                    group_id=int(group_id),
-                    user_id=int(user_id),
+                # LLOneBot 查不到成员时直接抛异常，这里保持"取不到就用兜底名"。
+                info = unwrap_onebot_payload(
+                    unwrap_payload(
+                        await call_onebot(
+                            bot,
+                            "get_group_member_info",
+                            group_id=int(group_id),
+                            user_id=int(user_id),
+                        )
+                    )
                 )
-                info = unwrap_onebot_payload(info)
                 name = clean_text(info.get("card")) or clean_text(info.get("nickname")) or fallback
-            except Exception:  # noqa: BLE001 - name lookup is best effort
+            except Exception as exc:  # noqa: BLE001 - name lookup is best effort
+                retcode, detail = onebot_error_info(exc)
+                logger.debug(
+                    "[HelperTools/AntiRevoke] member name lookup failed group=%s user=%s "
+                    "retcode=%s error=%s",
+                    group_id,
+                    user_id,
+                    retcode,
+                    detail,
+                )
                 name = fallback
             if user_id == sender_id:
                 sender_name = name
@@ -1794,10 +1810,26 @@ class AntiRevokeService:
 
     @staticmethod
     async def _call_send(bot: Any, action: str, params: dict[str, Any], message: Any) -> None:
-        result = await call_onebot(bot, action, message=message, **params)
+        try:
+            result = await call_onebot(bot, action, message=message, **params)
+        except Exception as exc:  # 各实现抛出的异常类型不一致
+            retcode, detail = onebot_error_info(exc)
+            code = "unknown" if retcode is None else retcode
+            raise RuntimeError(
+                f"OneBot {action} failed retcode={code} error={detail}"
+            ) from exc
         if not isinstance(result, Mapping):
             return
+        # 部分实现不抛异常，只在返回体里写 status=failed / retcode!=0。
         status = clean_text(result.get("status")).casefold()
         retcode = result.get("retcode")
         if status in {"failed", "error"} or retcode not in (None, 0, "0"):
-            raise RuntimeError(f"OneBot {action} returned status={status or 'unknown'} retcode={retcode}")
+            detail = (
+                clean_text(result.get("wording"))
+                or clean_text(result.get("message"))
+                or clean_text(result.get("msg"))
+            )
+            suffix = f" error={detail}" if detail else ""
+            raise RuntimeError(
+                f"OneBot {action} returned status={status or 'unknown'} retcode={retcode}{suffix}"
+            )

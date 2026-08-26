@@ -13,10 +13,35 @@ from astrbot_plugin_helper_tools.anti_revoke_service import (
     is_group_recall,
     sanitize_recall_message,
 )
+from astrbot_plugin_helper_tools.onebot_compat import (
+    call_onebot,
+    reset_compat_caches,
+)
 
 TINY_PNG_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+
+
+class FakeActionFailed(Exception):
+    """模拟 aiocqhttp.exceptions.ActionFailed（LLOneBot 失败时抛出的异常）。"""
+
+    def __init__(self, retcode: int, message: str) -> None:
+        super().__init__(f"retcode={retcode} message={message}")
+        self.retcode = retcode
+        self.result = {
+            "status": "failed",
+            "retcode": retcode,
+            "message": message,
+            "wording": message,
+        }
+
+
+LLONEBOT_VERSION_INFO = {
+    "status": "ok",
+    "retcode": 0,
+    "data": {"app_name": "LLOneBot", "app_version": "8.1.9"},
+}
 
 
 class FakeBot:
@@ -109,6 +134,128 @@ class AlternateImageParamBot(FakeBot):
         return {"data": {"base64": TINY_PNG_BASE64}}
 
 
+class LLOneBotImageBot(FakeBot):
+    """LLOneBot：get_image 只认 file_id，返回 file/url/file_size/file_name。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.image_calls: list[dict[str, object]] = []
+
+    async def get_version_info(self) -> dict[str, object]:
+        return LLONEBOT_VERSION_INFO
+
+    async def get_msg(self, **_params: object) -> dict[str, object]:
+        raise FakeActionFailed(1200, "消息不存在")
+
+    async def get_image(self, **params: object) -> dict[str, object]:
+        self.image_calls.append(dict(params))
+        if not params.get("file_id"):
+            raise FakeActionFailed(1400, "缺少参数 file_id")
+        return {
+            "status": "ok",
+            "retcode": 0,
+            "data": {
+                "file": "/llonebot/cache/nonexistent-original.png",
+                "url": "https://gchat.qpic.cn/llonebot-image",
+                "file_size": 68,
+                "file_name": "llonebot-image.png",
+            },
+        }
+
+    async def get_file(self, **_params: object) -> dict[str, object]:
+        raise FakeActionFailed(1404, "get_file API 不存在")
+
+
+class LLOneBotGroupFileBot(FakeBot):
+    """LLOneBot：get_image / get_file 都不可用，只能靠 get_group_file_url。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.group_file_calls: list[dict[str, object]] = []
+
+    async def get_version_info(self) -> dict[str, object]:
+        return LLONEBOT_VERSION_INFO
+
+    async def get_msg(self, **_params: object) -> dict[str, object]:
+        raise FakeActionFailed(1200, "消息不存在")
+
+    async def get_image(self, **_params: object) -> dict[str, object]:
+        raise FakeActionFailed(1404, "get_image API 不存在")
+
+    async def get_file(self, **_params: object) -> dict[str, object]:
+        raise FakeActionFailed(1404, "get_file API 不存在")
+
+    async def get_group_file_url(self, **params: object) -> dict[str, object]:
+        self.group_file_calls.append(dict(params))
+        return {
+            "status": "ok",
+            "retcode": 0,
+            "data": {"url": "https://gchat.qpic.cn/llonebot-group-file"},
+        }
+
+
+class ExpiredCacheBot(FakeBot):
+    """LLOneBot 的 msgCacheExpire 默认 120 秒，过期后 get_msg 直接抛异常。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.get_msg_calls = 0
+
+    async def get_version_info(self) -> dict[str, object]:
+        return LLONEBOT_VERSION_INFO
+
+    async def get_msg(self, **_params: object) -> dict[str, object]:
+        self.get_msg_calls += 1
+        raise FakeActionFailed(1200, "消息不存在或已过期")
+
+
+class CallActionOnlyBot:
+    """只暴露 call_action 的适配器（没有 delete_msg / get_msg 属性）。"""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, dict[str, object]]] = []
+        self.deleted: list[int] = []
+        self.actions: list[str] = []
+
+    async def call_action(self, action: str, **params: object) -> dict[str, object]:
+        self.actions.append(action)
+        if action == "get_version_info":
+            return LLONEBOT_VERSION_INFO
+        if action == "get_msg":
+            message_id = params.get("message_id") or params.get("id")
+            if str(message_id) != "456":
+                raise FakeActionFailed(1200, "消息不存在")
+            return {
+                "status": "ok",
+                "retcode": 0,
+                "data": {
+                    "message_id": 456,
+                    "group_id": 123,
+                    "user_id": 10001,
+                    "time": 1700000000,
+                    "sender": {"user_id": 10001, "card": "机器人"},
+                    "message": [
+                        {"type": "text", "data": {"text": "马上被撤回的图片"}},
+                        {
+                            "type": "image",
+                            "data": {"file": f"base64://{TINY_PNG_BASE64}"},
+                        },
+                    ],
+                },
+            }
+        if action == "delete_msg":
+            self.deleted.append(int(str(params.get("message_id"))))
+            return {"status": "ok", "retcode": 0}
+        if action == "get_group_info":
+            return {"status": "ok", "retcode": 0, "data": {"group_name": "测试群"}}
+        if action == "get_group_member_info":
+            return {"status": "ok", "retcode": 0, "data": {"card": "机器人"}}
+        if action in {"send_group_msg", "send_private_msg"}:
+            self.sent.append((action, dict(params)))
+            return {"status": "ok", "retcode": 0}
+        raise FakeActionFailed(1404, f"{action} API 不存在")
+
+
 class FakeImageComponent:
     type = SimpleNamespace(name="Image")
 
@@ -143,6 +290,13 @@ class FakeEvent:
 
 
 class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        # 清空实现探测与变体命中缓存，避免用例之间互相串味。
+        reset_compat_caches()
+
+    def tearDown(self) -> None:
+        reset_compat_caches()
+
     def test_sanitize_recall_message_replaces_active_reply_segments(self) -> None:
         message = [
             {"type": "reply", "data": {"id": "12345"}},
@@ -619,6 +773,200 @@ class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(bot.sent, [])
+
+    async def test_llonebot_get_image_shape_is_resolved_through_compat_layer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = LLOneBotImageBot()
+            service = AntiRevokeService(
+                {"anti_revoke": {"enabled": True}},
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "message": [
+                    {"type": "image", "data": {"file": "opaque-llonebot-id"}}
+                ],
+            }
+            image_bytes = base64.b64decode(TINY_PNG_BASE64)
+            fetch = AsyncMock(return_value=(image_bytes, "image/png"))
+
+            with patch(
+                "astrbot_plugin_helper_tools.anti_revoke_service.fetch_bytes",
+                fetch,
+            ):
+                await service.handle_event(FakeEvent(original, bot))
+
+            # file 参数被拒绝（1400）后兼容层自动换到 file_id。
+            self.assertEqual(
+                bot.image_calls,
+                [{"file": "opaque-llonebot-id"}, {"file_id": "opaque-llonebot-id"}],
+            )
+            # LLOneBot 只返回 file/url/file_size/file_name，必须能取到 url。
+            self.assertEqual(
+                fetch.await_args.args[0], "https://gchat.qpic.cn/llonebot-image"
+            )
+            record = service._records["123:456"]
+            self.assertEqual(set(record.image_cache_files), {"0"})
+            self.assertTrue((service.cache_dir / record.image_cache_files["0"]).is_file())
+
+    async def test_unsupported_actions_fall_back_to_group_file_url(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = LLOneBotGroupFileBot()
+            service = AntiRevokeService(
+                {"anti_revoke": {"enabled": True}},
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "message": [
+                    {"type": "image", "data": {"file": "group-opaque-id"}}
+                ],
+            }
+            image_bytes = base64.b64decode(TINY_PNG_BASE64)
+            fetch = AsyncMock(return_value=(image_bytes, "image/png"))
+
+            with patch(
+                "astrbot_plugin_helper_tools.anti_revoke_service.fetch_bytes",
+                fetch,
+            ):
+                await service.handle_event(FakeEvent(original, bot))
+
+            self.assertEqual(
+                bot.group_file_calls,
+                [{"group_id": 123, "file_id": "group-opaque-id"}],
+            )
+            self.assertEqual(
+                fetch.await_args.args[0], "https://gchat.qpic.cn/llonebot-group-file"
+            )
+            record = service._records["123:456"]
+            self.assertEqual(set(record.image_cache_files), {"0"})
+
+    async def test_expired_message_lookup_degrades_without_user_visible_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = ExpiredCacheBot()
+            service = AntiRevokeService(
+                {
+                    "anti_revoke": {
+                        "enabled": True,
+                        "target_groups": ["999"],
+                    }
+                },
+                Path(temp_dir),
+            )
+            original = {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "message": "缓存已过期的文本",
+            }
+            event = FakeEvent(original, bot)
+
+            # get_msg 抛异常（LLOneBot 查不到消息就是抛异常）时静默返回空字典。
+            self.assertEqual(await service._lookup_onebot_message(event, "456"), {})
+            self.assertGreaterEqual(bot.get_msg_calls, 1)
+
+            with patch(
+                "astrbot_plugin_helper_tools.anti_revoke_service.logger.error"
+            ) as error:
+                await service.handle_event(event)
+                await service.handle_event(
+                    FakeEvent(
+                        {
+                            "post_type": "notice",
+                            "notice_type": "group_recall",
+                            "group_id": 123,
+                            "message_id": 456,
+                            "user_id": 789,
+                            "operator_id": 789,
+                        },
+                        bot,
+                    )
+                )
+
+            error.assert_not_called()
+            self.assertEqual(len(bot.sent), 1)
+            self.assertIn("缓存已过期的文本", str(bot.sent[0][1]["message"]))
+
+    async def test_delete_msg_interception_covers_compat_attribute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = PreDeleteCaptureBot()
+            service = AntiRevokeService(
+                {
+                    "anti_revoke": {
+                        "enabled": True,
+                        "target_groups": ["999"],
+                    }
+                },
+                Path(temp_dir),
+            )
+            await service.handle_event(
+                FakeEvent(
+                    {
+                        "post_type": "message",
+                        "message_type": "group",
+                        "group_id": 123,
+                        "message_id": 1,
+                        "user_id": 10001,
+                        "message": "install hook",
+                    },
+                    bot,
+                )
+            )
+
+            # call_onebot 的"属性优先"路径拿到的必须是被包装过的 delete_msg。
+            result = await call_onebot(bot, "delete_msg", message_id=456)
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(bot.deleted, [456])
+            record = service._records["123:456"]
+            self.assertEqual(record.sender_name, "机器人")
+            self.assertEqual(set(record.image_cache_files), {"1"})
+
+    async def test_delete_msg_interception_covers_call_action_only_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bot = CallActionOnlyBot()
+            service = AntiRevokeService(
+                {
+                    "anti_revoke": {
+                        "enabled": True,
+                        "target_groups": ["999"],
+                    }
+                },
+                Path(temp_dir),
+            )
+            await service.handle_event(
+                FakeEvent(
+                    {
+                        "post_type": "message",
+                        "message_type": "group",
+                        "group_id": 123,
+                        "message_id": 1,
+                        "user_id": 10001,
+                        "message": "install hook",
+                    },
+                    bot,
+                )
+            )
+
+            # 没有 delete_msg 属性时 call_onebot 会回退到 call_action，拦截同样生效。
+            result = await call_onebot(bot, "delete_msg", message_id=456)
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(bot.deleted, [456])
+            self.assertIn("get_msg", bot.actions)
+            record = service._records["123:456"]
+            self.assertEqual(record.sender_name, "机器人")
+            self.assertEqual(set(record.image_cache_files), {"1"})
 
 
 if __name__ == "__main__":

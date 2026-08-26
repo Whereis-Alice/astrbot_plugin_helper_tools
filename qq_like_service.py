@@ -8,10 +8,29 @@ from typing import Any
 from astrbot.api import logger
 
 from .helper_utils import cfg, clean_text, read_bool, read_int, read_list
-from .qq_features import call_onebot, extract_at_ids, normalize_qq_id
+from .onebot_compat import (
+    call_onebot,
+    is_onebot_event,
+    is_unsupported_action_error,
+    onebot_error_info,
+    payload_failure,
+    send_like,
+    unwrap_payload,
+)
+from .qq_features import extract_at_ids, normalize_qq_id
 
 QQ_LIKE_PERSONA_CONTEXT_PREFIX = "[HelperTools QQ profile-like result]"
 _QQ_MENTION_RE = re.compile(r"@(\d{5,12})")
+
+#: 兼容层未覆盖的平台名兜底集合（只放宽、不收紧判定）。
+_QQ_PLATFORM_NAMES = frozenset(
+    {
+        "aiocqhttp",
+        "onebot",
+        "onebot11",
+        "onebot_v11",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -138,14 +157,9 @@ class QQProfileLikeService:
         return True
 
     def _is_qq_event(self, event: Any) -> bool:
-        getter = getattr(event, "get_platform_name", None)
-        platform_name = clean_text(getter() if callable(getter) else "").casefold()
-        return not platform_name or platform_name in {
-            "aiocqhttp",
-            "onebot",
-            "onebot11",
-            "onebot_v11",
-        }
+        # 兼容层已覆盖 LLOneBot / NapCat / Lagrange / go-cqhttp 等平台名，
+        # 原有集合作为兜底继续保留。
+        return is_onebot_event(event, _QQ_PLATFORM_NAMES)
 
     def _is_message_allowed(self, event: Any) -> bool:
         group_id = self._group_id(event)
@@ -224,8 +238,9 @@ class QQProfileLikeService:
 
         friend_ids: set[str] | None = None
         try:
+            # LLOneBot 的 get_friend_list 没有任何参数，这里不再传 no_cache。
             data = await call_onebot(bot, "get_friend_list")
-            raw_list = data.get("data") if isinstance(data, dict) and "data" in data else data
+            raw_list = unwrap_payload(data)
             if isinstance(raw_list, list):
                 friend_ids = {
                     qq_id
@@ -256,18 +271,16 @@ class QQProfileLikeService:
         times: int,
     ) -> _TargetLikeResult:
         try:
-            response = await call_onebot(
-                bot,
-                "send_like",
-                user_id=int(target_id),
-                times=times,
-            )
+            response = await send_like(bot, user_id=int(target_id), times=times)
         except Exception as exc:  # noqa: BLE001 - OneBot adapters use varied errors
+            # aiocqhttp 的 ActionFailed 的 str() 里没有 wording/message，
+            # 交给兼容层提取才能拿到协议端返回的真实原因。
+            _retcode, detail = onebot_error_info(exc)
             return _TargetLikeResult(
                 target_id,
                 is_sender,
                 relation,
-                self._classify_failure(clean_text(exc)),
+                self._classify_failure(clean_text(detail) or clean_text(exc), exc),
             )
 
         failure = self._response_failure(response)
@@ -393,39 +406,38 @@ class QQProfileLikeService:
 
     @staticmethod
     def _response_failure(response: Any) -> str:
-        if not isinstance(response, dict):
-            return ""
-        status = clean_text(response.get("status")).casefold()
-        retcode = response.get("retcode")
-        failed = status in {"failed", "fail", "error"}
-        if QQProfileLikeService._is_nonzero_retcode(retcode):
-            failed = True
-        if not failed:
-            return ""
-        return clean_text(
-            response.get("wording")
-            or response.get("message")
-            or response.get("msg")
-            or "OneBot action failed"
-        )
+        """返回体表示失败时给出可读原因，成功时返回空串。"""
+
+        return payload_failure(response)[1]
 
     @staticmethod
-    def _is_nonzero_retcode(value: Any) -> bool:
-        if isinstance(value, bool) or value is None:
-            return False
-        if isinstance(value, int):
-            return value != 0
-        try:
-            return int(clean_text(value)) != 0
-        except (TypeError, ValueError):
-            return False
+    def _response_retcode(response: Any) -> int | None:
+        """返回体表示失败时给出 retcode，供失败分类使用。"""
+
+        return payload_failure(response)[0]
 
     @staticmethod
-    def _classify_failure(message: str) -> str:
+    def _classify_failure(message: str, exc: BaseException | None = None) -> str:
         normalized = message.casefold()
+        # 未知 action：LLOneBot 反向 WS 会返回 retcode=1404 与 "<action> API 不存在"，
+        # 兼容层在所有候选都不可用时抛 "当前 OneBot 实现不支持 ..."。
+        if exc is not None and is_unsupported_action_error(exc):
+            return "unsupported"
         if any(
             token in normalized
-            for token in ("unsupported", "not support", "不支持", "unknown action")
+            for token in (
+                "unsupported",
+                "not support",
+                "not implemented",
+                "不支持",
+                "未实现",
+                "unknown action",
+                "api 不存在",
+                "不存在的 api",
+                "不存在的api",
+                "no such api",
+                "当前 onebot 实现不支持",
+            )
         ):
             return "unsupported"
         if any(

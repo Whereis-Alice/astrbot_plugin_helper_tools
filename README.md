@@ -515,7 +515,7 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 
 开启 `rollpig.allow_mentioned_user` 后，可在群里使用 `/今日小猪 @某人` 查看对方当天的结果。该功能直接读取 QQ 的真实 @ 消息段，因此不会再出现上游插件“明明 @ 了人却还是查自己”的问题。`mention_target_in_group` 控制回复时是否 @ 目标，`protect_admins` 可阻止查看管理员的结果。
 
-素材、图片和字体已随插件本地打包，生成的卡片会短暂缓存到插件数据目录。`card_cache_days` 控制保留天数。需要自定义时，上传 `custom_catalog_file` JSON，格式为对象列表，每项包含 `id`、`name`、`description`、`analysis`；图片目录可在 `custom_image_dir` 指定，图片名称使用对应 `id`，例如 `test-pig.png`。找不到自定义图片时会回退到内置图片。
+素材、图片和字体已随插件本地打包，生成的卡片会短暂缓存到插件数据目录。`card_cache_days` 控制保留天数。需要换字体时填 `rollpig.font_bold_file` 和 `rollpig.font_regular_file`；留空则依次在插件的 `rollpig_assets/font/`、系统字体目录中查找，都找不到才回退 Pillow 默认字体，并只告警一次。需要自定义时，上传 `custom_catalog_file` JSON，格式为对象列表，每项包含 `id`、`name`、`description`、`analysis`；图片目录可在 `custom_image_dir` 指定，图片名称使用对应 `id`，例如 `test-pig.png`。找不到自定义图片时会回退到内置图片。
 
 图片渲染会把所有尺寸、字体字号和坐标转换成整数，因此已修复上游在部分环境中报出的 `'float' object cannot be interpreted as an integer`。渲染失败时会自动降级为原图和文字说明，不会中断命令处理。
 
@@ -623,7 +623,7 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 
 | 分组 | 内容 |
 | --- | --- |
-| `general` | 插件总开关 |
+| `general` | 插件总开关、额外的 OneBot 平台名 `onebot_platform_names` |
 | `perception` | 当前时间、节假日、农历、平台、真实 QQ 身份和 Bot 自己的群身份感知 |
 | `chat_history` | 当前 QQ 群历史检索、本地保留、OneBot 回填和可选 T2I 卡片 |
 | `bilibili_video` | B 站分析模式、触发方式、下载限制、Cookie、默认模型和 Gemini 子配置 |
@@ -640,9 +640,50 @@ AstrBot 会先去掉全局唤醒词缀再把文本交给插件，本插件会同
 | `payqr` / `anime1` / `voice` / `steam` | 各辅助工具独立配置 |
 | `bot_profile` | Bot QQ 资料管理和高风险工具开关 |
 
+## OneBot 协议端兼容性
+
+QQ 资料、群成员、自动换头像、名片点赞、戳一戳、群历史回填、防撤回、引用图片识别和存图删图这些能力都要经过 OneBot v11 协议端。不同实现的动作名、参数名和返回字段并不一致，插件内置 `onebot_compat` 兼容层统一处理这些差异：
+
+- **统一调用入口**：同时支持把动作暴露成方法的适配器和只提供 `call_action` 的适配器。
+- **自动识别协议端**：首次调用时读取 `get_version_info`，识别 LLOneBot、NapCat、Lagrange、go-cqhttp、Shamrock，结果带 TTL 缓存。
+- **多候选动作回退**：同一个功能准备多个候选动作和参数写法，按协议端跳过明显不支持的组合，逐个尝试并缓存成功的那个，后续调用不再重复试错。
+- **错误分级**：区分“动作不存在”“参数不对”“执行失败”，只对第一类做回退，其余直接把可读原因和 `retcode` 返回给用户。
+- **兼容两种失败形式**：反向 WS 下动作失败会抛异常，HTTP 接入时协议端只在返回体里写 `status: failed`。两种情况都会被识别成同一类失败，回退和错误提示表现一致。
+
+### 兼容矩阵
+
+下表中的 LLOneBot 列基于 [LuckyLilliaBot](https://github.com/LLOneBot/LuckyLilliaBot) 实测；NapCat、Lagrange、go-cqhttp 列标注为“自动探测回退”的项表示兼容层会在运行时逐个尝试候选动作，不预设结论。
+
+| 功能 | LLOneBot（LuckyLilliaBot） | NapCat | Lagrange | go-cqhttp |
+| --- | --- | --- | --- | --- |
+| 发送戳一戳 | `group_poke` / `friend_poke` / `send_poke` | 自动探测回退 | 自动探测回退 | 自动探测回退 |
+| 接收戳一戳事件 | 支持（`notice` + `notify` + `poke`） | 支持 | 支持 | 支持 |
+| 设置 Bot 昵称 | `set_qq_profile.nickname` | 自动探测回退 | 自动探测回退 | `set_qq_profile` |
+| 设置 Bot 签名 | `set_qq_profile.personal_note` | 自动探测回退 | 自动探测回退 | 自动探测回退 |
+| 设置在线状态 | `set_online_status`（三参数必填） | 自动探测回退 | 自动探测回退 | 多为不支持，会提示 |
+| 设置 Bot 头像 | `set_qq_avatar` | 自动探测回退 | 自动探测回退 | 自动探测回退 |
+| 名片点赞 | `send_like` | 支持 | 自动探测回退 | 支持 |
+| 群历史消息回填 | `get_group_msg_history`（`reverseOrder`） | 自动探测回退 | 自动探测回退 | 自动探测回退 |
+| 按 `message_id` 取消息 | `get_msg`（受消息缓存时效限制） | 支持 | 支持 | 支持 |
+| 图片/文件解析 | `get_image` / `get_file`（返回 `file`/`url`/`file_size`/`file_name`/`base64`） | 自动探测回退 | 自动探测回退 | `get_image`（`file`/`size`/`filename`/`url`） |
+
+不被支持的动作不会抛裸异常，指令会返回中文原因，例如“设置 Bot 签名失败：当前 OneBot 协议端（LLOneBot / NapCat / Lagrange / go-cqhttp 等）没有提供可用的接口。”，参数或执行类失败会附带 `retcode`。
+
+### 搭配 LLOneBot / LuckyLilliaBot
+
+- AstrBot 侧平台适配器选 `aiocqhttp`，用反向 WebSocket 接入，LLOneBot 默认地址是 `ws://127.0.0.1:6199/ws`。
+- 消息上报格式使用 `array`（LLOneBot 默认值），不要改成 `string`。
+- LLOneBot 的消息缓存 `msgCacheExpire` 默认 120 秒。超过这个时间的 `message_id` 查不到属于正常现象，防撤回、引用识别和存图都会静默降级，不会报错。
+- 语音和视频相关能力需要 LLOneBot 侧可用的 ffmpeg。
+- LLOneBot 缺少 `set_self_longnick`、`set_diy_online_status` 和裸 `poke` 这几个动作，兼容层已改走等价接口，无需额外配置。
+
+### 协议端注册成了别的平台名
+
+插件默认识别 `aiocqhttp`、`onebot`、`onebot_v11`、`llonebot`、`llbot`、`luckylilliabot`、`napcat`、`lagrange`、`gocqhttp`、`go-cqhttp`、`shamrock` 这些平台名。如果你在 AstrBot 里把协议端注册成了别的名字，把它填进 `general.onebot_platform_names`（列表，默认空），QQ 相关功能就会对它生效。这个配置支持热重载，改完重载插件即可。
+
 ## 平台与依赖
 
-QQ 资料、群成员、自动换头像、名片点赞、戳一戳和部分壁纸删除能力依赖 OneBot/AIOCQHTTP/NapCat 一类适配器。不同实现返回的资料字段或动作支持可能不同，插件会输出已知字段，并按配置附加可用的其它字段。
+QQ 资料、群成员、自动换头像、名片点赞、戳一戳和部分壁纸删除能力依赖 OneBot v11 协议端，详见上一节的兼容矩阵。不同实现返回的资料字段可能不同，插件会输出已知字段，并按配置附加可用的其它字段。
 
 B 站模块依赖：
 
@@ -653,6 +694,8 @@ B 站模块依赖：
 - `beautifulsoup4`：解析自建 Nitter 返回的公开页面。
 - `chinese-calendar`：中国法定节假日和调休判断。
 - `lunar-python`：农历、节气和可选黄历信息。
+
+`mcp`、`pydantic`、`quart`、`yarl` 没有写进 `requirements.txt`，它们由 AstrBot 运行时提供，不需要单独安装。
 
 ## 故障排查
 
@@ -694,6 +737,13 @@ Cookie 只会发送给 `bilibili.com` 的网页/API 与下载请求，不会发�
 - 只想检查 Nitter 时选择“仅 Nitter”。若还是失败，先在 AstrBot 同一环境执行 `curl http://127.0.0.1:8585` 或访问你实际配置的 URL，确认网络路径。
 - Nitter 的图片会先由插件下载。若日志提示媒体下载失败，检查 Nitter 的 `/pic/` 代理路径和服务器到上游媒体的网络。
 - 如果日志出现 `Nitter HTTP 404 for http://127.0.0.1:8585/pic`，通常不是 Nitter 没启动，而是把 Nitter 的图片代理地址误当成了账号地址；新版会拒绝这类参数，不再请求 `/pic`。
+
+### QQ 相关指令提示“不支持”或“没有可用接口”
+
+- 先确认 AstrBot 的平台适配器是 `aiocqhttp` 或已填进 `general.onebot_platform_names`，否则插件会判定当前平台不是 OneBot v11 协议端。
+- 提示里带 `retcode=1404`（或 “API 不存在”）说明你的协议端确实没有这个动作，属于协议端能力差异，换协议端或改用等价功能。
+- 提示里带 `retcode=1400` 说明参数被协议端拒绝，通常是协议端版本较旧，升级后重试。
+- 防撤回、引用识图或存图提示找不到消息，多数是协议端的消息缓存已过期（LLOneBot 默认 120 秒），不是插件故障。
 
 ## 参考与致谢
 

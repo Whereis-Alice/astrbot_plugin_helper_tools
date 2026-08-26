@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -124,6 +125,55 @@ class RollPigServiceTests(unittest.IsolatedAsyncioTestCase):
             with Image.open(rendered) as image:
                 self.assertEqual(image.width, 480)
                 self.assertIsInstance(image.height, int)
+
+    async def test_state_file_io_runs_in_a_worker_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            service = RollPigService({}, root / "data", assets_dir=self._assets(root))
+            main_thread = threading.get_ident()
+            thread_ids: list[int] = []
+            original_save = service._save_today_state
+
+            def tracking_save(state: dict[str, object]) -> None:
+                thread_ids.append(threading.get_ident())
+                original_save(state)
+
+            service._save_today_state = tracking_save  # type: ignore[method-assign]
+            pig, error = await service.select_pig("20001", "2026-07-27")
+
+            self.assertEqual(error, "")
+            self.assertIsNotNone(pig)
+            self.assertEqual(len(thread_ids), 1)
+            self.assertNotEqual(thread_ids[0], main_thread)
+            self.assertTrue(service.state_path.is_file())
+
+    async def test_font_falls_back_to_pillow_default_without_raising(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            service = RollPigService({}, root / "data", assets_dir=self._assets(root))
+            warnings: list[str] = []
+
+            service._bundled_font_paths = lambda kind: []  # type: ignore[method-assign]
+            service._system_font_paths = lambda kind: iter(())  # type: ignore[method-assign]
+            service._warn_font_fallback = lambda: warnings.append("warned")  # type: ignore[method-assign]
+
+            font = service._font("bold", 32)
+
+            self.assertIsNotNone(font)
+            self.assertEqual(warnings, ["warned"])
+            self.assertIsNone(service._resolve_font_path("bold"))
+
+    async def test_bundled_font_is_discovered_from_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            assets = self._assets(root)
+            bundled = assets / "font" / "bundled-sample.ttf"
+            bundled.write_bytes(b"not-a-real-font")
+            service = RollPigService({}, root / "data", assets_dir=assets)
+
+            self.assertEqual(service._resolve_font_path("regular"), bundled)
+            # An unreadable bundled font must degrade to the Pillow default, not raise.
+            self.assertIsNotNone(service._font("regular", 28))
 
 
 if __name__ == "__main__":

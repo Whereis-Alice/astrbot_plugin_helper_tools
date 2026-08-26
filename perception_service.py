@@ -9,8 +9,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import astrbot.api.message_components as Comp
 
-from .helper_utils import cfg, clean_text, format_timestamp, read_bool, read_int, truncate
-from .qq_features import call_onebot
+from .helper_utils import (
+    cfg,
+    clean_text,
+    format_timestamp,
+    read_bool,
+    read_int,
+    truncate,
+)
+from .onebot_compat import call_onebot, is_onebot_platform
 
 try:
     import chinese_calendar
@@ -46,6 +53,16 @@ _HOLIDAY_NAMES = {
 }
 _PLATFORM_NAMES = {
     "aiocqhttp": "QQ",
+    "onebot": "QQ",
+    "onebot_v11": "QQ",
+    "llonebot": "QQ",
+    "llbot": "QQ",
+    "luckylilliabot": "QQ",
+    "napcat": "QQ",
+    "lagrange": "QQ",
+    "gocqhttp": "QQ",
+    "go-cqhttp": "QQ",
+    "shamrock": "QQ",
     "qqofficial": "QQ 官方机器人",
     "qq_official": "QQ 官方机器人",
     "telegram": "Telegram",
@@ -630,7 +647,12 @@ class EnvironmentPerceptionService:
 
     @staticmethod
     def _is_qq_platform(platform: str) -> bool:
-        return platform in _QQ_PLATFORM_NAMES or "qq" in platform
+        return (
+            platform in _QQ_PLATFORM_NAMES
+            or "qq" in platform
+            # is_onebot_platform() accepts an empty name, so keep the bool() guard.
+            or (bool(platform) and is_onebot_platform(platform))
+        )
 
     @classmethod
     def _current_bot_qq(cls, event: Any) -> str:

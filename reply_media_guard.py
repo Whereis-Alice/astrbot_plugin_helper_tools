@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import re
 import time
 from dataclasses import dataclass
@@ -10,7 +9,7 @@ from astrbot.api import logger
 import astrbot.api.message_components as Comp
 
 from .helper_utils import cfg, clean_text, read_bool, read_int
-from .qq_features import call_onebot
+from .onebot_compat import get_msg as onebot_get_msg
 
 BOT_REPLY_IMAGE_MARKER = (
     "[图片来源说明：这是你先前发出，或者自带插件自动发出的图，"
@@ -153,11 +152,15 @@ class ReplyMediaGuard:
         if cached is not None:
             return cached
 
+        # 键名与 int/str 取值差异交给兼容层；LLOneBot 的消息缓存默认 120 秒，
+        # 查不到旧消息是常态，这里静默降级，不向用户报错。
+        timeout = float(self._lookup_timeout_seconds())
         try:
-            lookup_id: int | str = int(message_id) if message_id.isdigit() else message_id
-            response = await asyncio.wait_for(
-                call_onebot(bot, "get_msg", message_id=lookup_id),
-                timeout=self._lookup_timeout_seconds(),
+            response = await onebot_get_msg(
+                bot,
+                message_id,
+                timeout=timeout,
+                deadline=time.monotonic() + timeout,
             )
         except Exception as exc:  # noqa: BLE001 - OneBot adapters expose implementation-specific errors
             logger.debug(

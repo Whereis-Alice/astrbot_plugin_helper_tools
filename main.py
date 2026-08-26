@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections.abc import Awaitable
 from typing import Any
 
 import astrbot.api.message_components as Comp
@@ -42,7 +43,12 @@ from .chat_history_service import (
     ChatHistorySearchResult,
     ChatHistoryService,
 )
-from .helper_utils import cfg, clean_text, core_wake_prefixes, read_bool
+from .helper_utils import cfg, clean_text, core_wake_prefixes, read_bool, read_list
+from .onebot_compat import (
+    is_unsupported_action_error,
+    onebot_error_info,
+    register_extra_platform_names,
+)
 from .payqr_service import PAYQR_TOOL_NAME, PayQRService
 from .perception_service import (
     PERCEPTION_LOG_FULL,
@@ -147,6 +153,33 @@ def _module_commands_enabled(config: Any, module: str, default: bool = True) -> 
         cfg(config, module, "commands_enabled", default),
         default,
     )
+
+
+_ONEBOT_UNSUPPORTED_HINT = (
+    "当前 OneBot 协议端（LLOneBot / NapCat / Lagrange / go-cqhttp 等）没有提供可用的接口"
+)
+
+
+def _friendly_onebot_error(label: str, exc: BaseException) -> str:
+    """把 OneBot 相关调用的裸异常转成中文提示，避免异常堆栈直接暴露给用户。"""
+
+    retcode, message = onebot_error_info(exc)
+    detail = clean_text(message) or clean_text(str(exc)) or exc.__class__.__name__
+    if is_unsupported_action_error(exc):
+        return f"{label}失败：{_ONEBOT_UNSUPPORTED_HINT}。（{detail}）"
+    if retcode is not None:
+        return f"{label}失败：{detail}（retcode={retcode}）"
+    return f"{label}失败：{detail}"
+
+
+async def _guarded_text(label: str, awaitable: Awaitable[str]) -> str:
+    """等待服务层返回文本，并把意外异常转成友好提示而不是裸堆栈。"""
+
+    try:
+        return await awaitable
+    except Exception as exc:  # noqa: BLE001 - 各协议端异常类型不统一
+        logger.warning("[%s] %s 失败: %r", PLUGIN_ID, label, exc)
+        return _friendly_onebot_error(label, exc)
 
 
 def _record_dashboard_activity(
@@ -1212,6 +1245,7 @@ class HelperToolsPlugin(Star):
         super().__init__(context, config)
         self.config = config or {}
         self.data_dir = StarTools.get_data_dir(PLUGIN_ID)
+        self._sync_onebot_platform_names()
 
         self.qq = QQService(self.config)
         self.qq_like = QQProfileLikeService(self.config)
@@ -1253,6 +1287,7 @@ class HelperToolsPlugin(Star):
         self.context.add_llm_tools(*self._registered_llm_tools)
 
     async def initialize(self) -> None:
+        self._sync_onebot_platform_names()
         await self.anime1.start()
         if self.enabled():
             await self.avatar_rotation.start()
@@ -1290,6 +1325,23 @@ class HelperToolsPlugin(Star):
 
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "general", "enabled", True), True)
+
+    def onebot_platform_names(self) -> list[str]:
+        """额外的 OneBot v11 协议端平台名（适配器 ID），来自 general 配置段。"""
+
+        return read_list(cfg(self.config, "general", "onebot_platform_names", []), [])
+
+    def _sync_onebot_platform_names(self) -> frozenset[str]:
+        """把配置里的额外平台名注册进 onebot_compat，配置热重载后可直接重放。"""
+
+        names = register_extra_platform_names(self.onebot_platform_names())
+        if names:
+            logger.info(
+                "[%s] extra OneBot platform names: %s",
+                PLUGIN_ID,
+                ", ".join(sorted(names)),
+            )
+        return names
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100001)
     async def anti_revoke_event_handler(self, event: AstrMessageEvent) -> None:
@@ -2299,7 +2351,12 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("QQ 头像随机更换手动命令当前未启用。")
             event.stop_event()
             return
-        yield event.plain_result(await self.avatar_rotation.change_once(event, reason="manual"))
+        yield event.plain_result(
+            await _guarded_text(
+                "随机更换 Bot 头像",
+                self.avatar_rotation.change_once(event, reason="manual"),
+            )
+        )
         event.stop_event()
 
     @filter.command("戳", alias={"戳我", "戳全体成员"})
@@ -2405,10 +2462,13 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("QQ群成员信息命令当前未启用。")
             event.stop_event()
             return
-        result = await self.qq.get_group_member_result(
-            event=event,
-            qq_id=clean_text(qq_id),
-            group_id=clean_text(group_id),
+        result = await _guarded_text(
+            "查询群成员信息",
+            self.qq.get_group_member_result(
+                event=event,
+                qq_id=clean_text(qq_id),
+                group_id=clean_text(group_id),
+            ),
         )
         yield event.plain_result(result)
         event.stop_event()
@@ -2430,13 +2490,19 @@ class HelperToolsPlugin(Star):
             event.stop_event()
             return
         assert resolved_qq_id is not None
-        result = await self.qq.get_profile_result(
-            event=event,
-            qq_id=resolved_qq_id,
-            group_id=clean_text(group_id),
-            include_avatar=False,
-            return_image=False,
-        )
+        try:
+            result = await self.qq.get_profile_result(
+                event=event,
+                qq_id=resolved_qq_id,
+                group_id=clean_text(group_id),
+                include_avatar=False,
+                return_image=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - 各协议端异常类型不统一
+            logger.warning("[%s] 查询 QQ 资料失败: %r", PLUGIN_ID, exc)
+            yield event.plain_result(_friendly_onebot_error("查询 QQ 资料", exc))
+            event.stop_event()
+            return
         if not isinstance(result, str):
             yield event.plain_result("QQ 资料结果格式异常。")
             event.stop_event()
@@ -2531,7 +2597,12 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
             event.stop_event()
             return
-        yield event.plain_result(await self.bot_profile.set_avatar(event, clean_text(image_url)))
+        yield event.plain_result(
+            await _guarded_text(
+                "设置 Bot 头像",
+                self.bot_profile.set_avatar(event, clean_text(image_url)),
+            )
+        )
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -2541,7 +2612,12 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
             event.stop_event()
             return
-        yield event.plain_result(await self.bot_profile.set_nickname(event, clean_text(nickname)))
+        yield event.plain_result(
+            await _guarded_text(
+                "设置 Bot 昵称",
+                self.bot_profile.set_nickname(event, clean_text(nickname)),
+            )
+        )
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -2551,7 +2627,12 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
             event.stop_event()
             return
-        yield event.plain_result(await self.bot_profile.set_signature(event, clean_text(signature)))
+        yield event.plain_result(
+            await _guarded_text(
+                "设置 Bot 签名",
+                self.bot_profile.set_signature(event, clean_text(signature)),
+            )
+        )
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -2561,7 +2642,12 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
             event.stop_event()
             return
-        yield event.plain_result(await self.bot_profile.set_status(event, clean_text(status_name)))
+        yield event.plain_result(
+            await _guarded_text(
+                "设置 Bot 在线状态",
+                self.bot_profile.set_status(event, clean_text(status_name)),
+            )
+        )
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -2571,7 +2657,12 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
             event.stop_event()
             return
-        yield event.plain_result(await self.bot_profile.switch_persona(event, clean_text(persona_id)))
+        yield event.plain_result(
+            await _guarded_text(
+                "切换人格",
+                self.bot_profile.switch_persona(event, clean_text(persona_id)),
+            )
+        )
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -2581,7 +2672,12 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
             event.stop_event()
             return
-        yield event.plain_result(await self.bot_profile.sync_with_persona(event, clean_text(persona_id)))
+        yield event.plain_result(
+            await _guarded_text(
+                "同步人格资料",
+                self.bot_profile.sync_with_persona(event, clean_text(persona_id)),
+            )
+        )
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)

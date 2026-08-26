@@ -11,8 +11,12 @@ from typing import Any
 from astrbot.api import logger
 
 from .helper_utils import cfg, clean_text, read_bool, read_list
-from .qq_features import call_onebot
-
+from .onebot_compat import (
+    is_onebot_event,
+    is_onebot_platform,
+    onebot_error_info,
+    set_bot_avatar,
+)
 
 DEFAULT_AVATAR_POOL_DIR = "avatar_pool"
 DEFAULT_CRON_EXPRESSION = "0 8 * * *"
@@ -59,6 +63,7 @@ class AvatarRotationService:
         self.state_path = self.data_dir / STATE_FILENAME
         self._cron_job_id = ""
         self._lock = asyncio.Lock()
+        self._startup_task: asyncio.Task[None] | None = None
 
     def _config(self) -> dict[str, Any]:
         value = cfg(self.config, "qq_avatar", "auto_change", {})
@@ -111,12 +116,34 @@ class AvatarRotationService:
     async def start(self) -> None:
         if not self.enabled():
             return
-        self.image_dir().mkdir(parents=True, exist_ok=True)
+        image_dir = self.image_dir()
+        await asyncio.to_thread(image_dir.mkdir, parents=True, exist_ok=True)
         await self._register_cron_job()
         if self.run_on_start():
-            asyncio.create_task(self._run_scheduled_rotation(reason="startup"))
+            # Keep a reference so the task is not garbage collected mid-flight.
+            self._startup_task = asyncio.create_task(
+                self._run_scheduled_rotation(reason="startup")
+            )
+            self._startup_task.add_done_callback(self._on_startup_task_done)
+
+    def _on_startup_task_done(self, task: asyncio.Task[None]) -> None:
+        if self._startup_task is task:
+            self._startup_task = None
 
     async def stop(self) -> None:
+        task = self._startup_task
+        self._startup_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001 - best effort teardown
+                logger.warning(
+                    "[HelperTools] avatar rotation startup task failed during stop: %r",
+                    exc,
+                )
         cron_mgr = getattr(self.context, "cron_manager", None)
         if cron_mgr is None or not self._cron_job_id:
             self._cron_job_id = ""
@@ -132,15 +159,21 @@ class AvatarRotationService:
         if not self.enabled():
             return "QQ 头像自动更换未启用。"
         async with self._lock:
-            images = self.image_files()
+            images = await self.image_files_async()
             if not images:
                 return f"头像池里没有可用图片：{self.image_dir()}"
-            image_path = self.pick_image(images)
+            image_path = await self.pick_image_async(images)
             bot = self._resolve_bot(event)
             if bot is None:
                 return "没有找到可用的 OneBot/AIOCQHTTP bot，无法设置 QQ 头像。"
-            await call_onebot(bot, "set_qq_avatar", file=str(image_path))
-            self.save_state(
+            try:
+                await set_bot_avatar(bot, str(image_path))
+            except Exception as exc:  # noqa: BLE001 - 汇总为可读提示返回给调用方
+                logger.warning(
+                    "[HelperTools] set bot avatar failed (%s): %r", reason, exc
+                )
+                return self._failure_message(exc)
+            await self.save_state_async(
                 {
                     "last_path": str(image_path),
                     "last_changed_at": int(time.time()),
@@ -148,6 +181,14 @@ class AvatarRotationService:
                 }
             )
             return f"已随机更换 bot QQ 头像：{image_path.name}"
+
+    @staticmethod
+    def _failure_message(exc: Exception) -> str:
+        retcode, message = onebot_error_info(exc)
+        detail = message or repr(exc)
+        if retcode is not None:
+            detail = f"{detail}（retcode={retcode}）"
+        return f"设置 QQ 头像失败：{detail}"
 
     async def _run_scheduled_rotation(self, reason: str = "schedule") -> None:
         try:
@@ -217,13 +258,21 @@ class AvatarRotationService:
         allowed = self.allowed_extensions()
         return sorted(path.resolve(strict=False) for path in iterator if path.is_file() and path.suffix.lower() in allowed)
 
-    def pick_image(self, images: list[Path]) -> Path:
+    async def image_files_async(self) -> list[Path]:
+        return await asyncio.to_thread(self.image_files)
+
+    def pick_image(self, images: list[Path], state: dict[str, Any] | None = None) -> Path:
         candidates = list(images)
-        state = self.load_state()
+        if state is None:
+            state = self.load_state()
         last_path = clean_text(state.get("last_path"))
         if self.avoid_repeat() and last_path and len(candidates) > 1:
             candidates = [path for path in candidates if str(path) != last_path] or candidates
         return random.choice(candidates)
+
+    async def pick_image_async(self, images: list[Path]) -> Path:
+        state = await self.load_state_async()
+        return self.pick_image(images, state)
 
     def load_state(self) -> dict[str, Any]:
         try:
@@ -232,12 +281,18 @@ class AvatarRotationService:
             return {}
         return payload if isinstance(payload, dict) else {}
 
+    async def load_state_async(self) -> dict[str, Any]:
+        return await asyncio.to_thread(self.load_state)
+
     def save_state(self, payload: dict[str, Any]) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    async def save_state_async(self, payload: dict[str, Any]) -> None:
+        await asyncio.to_thread(self.save_state, payload)
+
     def _resolve_bot(self, event: Any | None = None) -> Any | None:
-        if event is not None:
+        if event is not None and is_onebot_event(event):
             bot = getattr(event, "bot", None)
             if bot is not None:
                 return bot
@@ -254,7 +309,7 @@ class AvatarRotationService:
             if configured_platform_id:
                 if configured_platform_id not in {platform_id, name}:
                     continue
-            elif name != "aiocqhttp":
+            elif not is_onebot_platform(name):
                 continue
             bot = getattr(platform, "bot", None)
             if bot is None:

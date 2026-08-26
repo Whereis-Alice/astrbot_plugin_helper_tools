@@ -25,7 +25,11 @@ from .helper_utils import (
     read_int,
     resolve_existing_path,
 )
-from .qq_features import call_onebot
+from .onebot_compat import (
+    call_onebot,
+    is_onebot_platform,
+)
+from .onebot_compat import send_poke as onebot_send_poke
 
 POKE_TOOL_NAME = "poke_qq_user"
 POKE_SYNTHETIC_COMMAND_EXTRA = "helper_tools_poke_synthetic_command"
@@ -117,16 +121,28 @@ class PokeNotice:
             return None
         if clean_text(raw.get("post_type")).lower() != "notice":
             return None
-        if clean_text(raw.get("notice_type")).lower() != "notify":
+
+        notice_type = clean_text(raw.get("notice_type")).lower()
+        sub_type = clean_text(raw.get("sub_type")).lower()
+        # 主流实现（LLOneBot / NapCat / go-cqhttp）上报 notify + poke；
+        # 少数实现把 poke 直接放在 notice_type 上，因此两种都接受。
+        if notice_type not in {"notify", "poke"}:
             return None
-        if clean_text(raw.get("sub_type")).lower() != "poke":
+        if sub_type != "poke" and not (notice_type == "poke" and not sub_type):
+            # 例如 LLOneBot 的 poke_recall 子类型必须被忽略。
             return None
 
-        self_id = _numeric_id(raw.get("self_id") or _event_value(event, "get_self_id"))
+        self_id = (
+            _numeric_id(raw.get("self_id"))
+            or _numeric_id(getattr(message_obj, "self_id", None))
+            or _numeric_id(_event_value(event, "get_self_id"))
+        )
         user_id = _numeric_id(raw.get("user_id"))
-        target_id = _numeric_id(raw.get("target_id"))
         group_id = _numeric_id(raw.get("group_id"))
-        if not self_id or not user_id or not target_id:
+        # 私聊戳一戳在部分实现（含 LLOneBot）上不带 target_id，
+        # 这种通知只会推给被戳的一方，因此缺失时按"戳的是自己"处理。
+        target_id = _numeric_id(raw.get("target_id")) or self_id
+        if not user_id or not target_id:
             return None
         return cls(
             self_id=self_id,
@@ -287,6 +303,7 @@ class PokeService:
         if not self._cooldown_allows(notice):
             return PokeResponse(handled=True, action="cooldown")
 
+        await self._prefetch_media()
         action = self.choose_action(notice)
         if not action:
             logger.warning("[HelperTools/Poke] no usable response action has a positive weight")
@@ -607,19 +624,11 @@ class PokeService:
             for _ in range(actual_times):
                 operation_index += 1
                 try:
-                    if group_id:
-                        await call_onebot(
-                            bot,
-                            "group_poke",
-                            group_id=int(group_id),
-                            user_id=int(target_id),
-                        )
-                    else:
-                        await call_onebot(
-                            bot,
-                            "friend_poke",
-                            user_id=int(target_id),
-                        )
+                    await onebot_send_poke(
+                        bot,
+                        user_id=int(target_id),
+                        group_id=int(group_id) if group_id else None,
+                    )
                     succeeded += 1
                 except Exception as exc:  # noqa: BLE001
                     failed += 1
@@ -972,6 +981,26 @@ class PokeService:
         self._media_cache[section_name] = (now, signature, result)
         return result
 
+    async def _prefetch_media(self) -> None:
+        """在线程池里预热媒体目录扫描结果。
+
+        ``choose_action`` / ``perform_action`` 是同步取用 ``_media_files`` 的，
+        这里先把 30 秒缓存填好，避免用户配置了大目录时阻塞事件循环。
+        """
+
+        for section_name, extensions in (
+            ("image_reply", _IMAGE_EXTENSIONS),
+            ("voice_reply", _AUDIO_EXTENSIONS),
+        ):
+            try:
+                await asyncio.to_thread(self._media_files, section_name, extensions)
+            except Exception as exc:  # noqa: BLE001 - 预热失败不影响后续同步扫描
+                logger.debug(
+                    "[HelperTools/Poke] media prefetch failed section=%s: %r",
+                    section_name,
+                    exc,
+                )
+
     def _mention_ids(self, event: Any) -> tuple[str, ...]:
         getter = getattr(event, "get_messages", None)
         messages = getter() if callable(getter) else getattr(
@@ -1124,7 +1153,7 @@ class PokeService:
             if configured_id:
                 if configured_id not in {name, platform_id}:
                     continue
-            elif name != "aiocqhttp":
+            elif not is_onebot_platform(name):
                 continue
             bot = getattr(platform, "bot", None)
             if bot is None:

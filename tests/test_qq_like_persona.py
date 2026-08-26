@@ -6,16 +6,26 @@ from types import SimpleNamespace
 from astrbot.core.agent.message import Message, TextPart, dump_messages_with_checkpoints
 
 from astrbot_plugin_helper_tools.main import HelperToolsPlugin
+from astrbot_plugin_helper_tools.onebot_compat import reset_compat_caches
 from astrbot_plugin_helper_tools.qq_like_service import QQProfileLikeService
 
 
 class FakeBot:
+    """模拟 LLOneBot：get_friend_list 无参数，send_like 只认 user_id / times。"""
+
+    async def get_version_info(self):
+        return {
+            "status": "ok",
+            "retcode": 0,
+            "data": {"app_name": "LLOneBot", "app_version": "8.1.9"},
+        }
+
     async def get_friend_list(self):
-        return [{"user_id": "20001"}]
+        return {"status": "ok", "retcode": 0, "data": [{"user_id": "20001"}]}
 
     async def send_like(self, *, user_id: int, times: int):
         assert (user_id, times) == (20001, 10)
-        return {}
+        return {"status": "ok", "retcode": 0, "data": None}
 
 
 class FakeEvent:
@@ -63,6 +73,9 @@ class FakeEvent:
 
 
 class QQProfileLikePersonaTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        reset_compat_caches()
+
     async def test_persona_mode_forces_default_pipeline_and_keeps_fact_temporary(self) -> None:
         config = {
             "qq_like": {

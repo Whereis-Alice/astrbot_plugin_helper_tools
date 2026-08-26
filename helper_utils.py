@@ -8,7 +8,7 @@ import urllib.parse
 import urllib.request
 from collections import deque
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -192,7 +192,8 @@ def format_timestamp(value: Any) -> str:
     if timestamp <= 0:
         return ""
     try:
-        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+        moment = datetime.fromtimestamp(timestamp, tz=timezone.utc).astimezone()
+        return moment.strftime("%Y-%m-%d %H:%M:%S")
     except (OSError, ValueError):
         return ""
 

@@ -13,6 +13,10 @@ from astrbot_plugin_helper_tools.main import (
     HelperToolsPlugin,
     _mark_temporary_tool_results,
 )
+from astrbot_plugin_helper_tools.onebot_compat import (
+    is_onebot_platform,
+    register_extra_platform_names,
+)
 from astrbot_plugin_helper_tools.reply_media_guard import (
     BOT_REPLY_IMAGE_MARKER,
     ReplyMediaGuard,
@@ -44,6 +48,17 @@ class ReplyEvent:
 
     def get_platform_id(self) -> str:
         return "qq-test"
+
+
+class GuardEvent:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def plain_result(self, text: str):
+        return ("plain", text)
+
+    def stop_event(self) -> None:
+        self.stopped = True
 
 
 class MainContextGuardTests(unittest.IsolatedAsyncioTestCase):
@@ -107,6 +122,89 @@ class MainContextGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(marked, 1)
         self.assertTrue(getattr(message.content[0], "_no_save", False))
         self.assertTrue(getattr(message, "_no_save", False))
+
+
+class BotProfileCommandGuardTests(unittest.IsolatedAsyncioTestCase):
+    """非 OneBot 平台上服务层仍会抛异常，指令层必须给出中文提示。"""
+
+    @staticmethod
+    def _plugin(failure: BaseException) -> SimpleNamespace:
+        async def raise_failure(*_args: object, **_kwargs: object) -> str:
+            raise failure
+
+        return SimpleNamespace(
+            config={"bot_profile": {"enabled": True, "commands_enabled": True}},
+            enabled=lambda: True,
+            bot_profile=SimpleNamespace(
+                set_nickname=raise_failure,
+                set_signature=raise_failure,
+                set_status=raise_failure,
+                set_avatar=raise_failure,
+            ),
+        )
+
+    async def _run(self, handler, plugin: SimpleNamespace) -> str:
+        event = GuardEvent()
+        results = [result async for result in handler(plugin, event)]
+        self.assertTrue(event.stopped)
+        self.assertEqual(len(results), 1)
+        kind, text = results[0]
+        self.assertEqual(kind, "plain")
+        return text
+
+    async def test_each_bot_profile_command_returns_a_friendly_message(self) -> None:
+        cases = (
+            (HelperToolsPlugin.set_bot_nickname_command, "设置 Bot 昵称失败"),
+            (HelperToolsPlugin.set_bot_signature_command, "设置 Bot 签名失败"),
+            (HelperToolsPlugin.set_bot_status_command, "设置 Bot 在线状态失败"),
+            (HelperToolsPlugin.set_bot_avatar_command, "设置 Bot 头像失败"),
+        )
+        failure = RuntimeError("当前平台不是 OneBot v11 协议端，无法使用该功能。")
+        for handler, prefix in cases:
+            with self.subTest(handler=handler.__name__):
+                text = await self._run(handler, self._plugin(failure))
+                self.assertTrue(text.startswith(prefix), text)
+                self.assertIn("当前平台不是 OneBot v11 协议端", text)
+                self.assertNotIn("Traceback", text)
+
+    async def test_unsupported_action_failure_mentions_the_protocol_side(self) -> None:
+        failure = RuntimeError("API 不存在: set_qq_profile")
+        text = await self._run(
+            HelperToolsPlugin.set_bot_nickname_command, self._plugin(failure)
+        )
+        self.assertIn("没有提供可用的接口", text)
+
+
+class ExtraOneBotPlatformNameTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.addCleanup(register_extra_platform_names, None)
+
+    @staticmethod
+    def _plugin(general: dict[str, object]) -> SimpleNamespace:
+        plugin = SimpleNamespace(config={"general": general})
+        plugin.onebot_platform_names = lambda: HelperToolsPlugin.onebot_platform_names(
+            plugin
+        )
+        return plugin
+
+    def test_general_config_names_are_registered(self) -> None:
+        plugin = self._plugin({"onebot_platform_names": ["My-Adapter", " napcat2 "]})
+
+        names = HelperToolsPlugin._sync_onebot_platform_names(plugin)
+
+        self.assertEqual(names, frozenset({"my-adapter", "napcat2"}))
+        self.assertTrue(is_onebot_platform("My-Adapter"))
+        self.assertTrue(is_onebot_platform("napcat2"))
+        self.assertFalse(is_onebot_platform("telegram"))
+
+    def test_empty_config_clears_previous_registration(self) -> None:
+        register_extra_platform_names(["stale-adapter"])
+        plugin = self._plugin({})
+
+        names = HelperToolsPlugin._sync_onebot_platform_names(plugin)
+
+        self.assertEqual(names, frozenset())
+        self.assertFalse(is_onebot_platform("stale-adapter"))
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import random
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,38 @@ except ImportError:  # pragma: no cover - requirements.txt installs Pillow
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+FONT_SUFFIXES = (".otf", ".ttf", ".ttc", ".otc")
+SYSTEM_FONT_DIRS = (
+    "C:/Windows/Fonts",
+    "~/AppData/Local/Microsoft/Windows/Fonts",
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    "~/.local/share/fonts",
+    "~/.fonts",
+    "/System/Library/Fonts",
+    "/Library/Fonts",
+    "~/Library/Fonts",
+)
+SYSTEM_FONT_FILES = {
+    "bold": (
+        "msyhbd.ttc",
+        "NotoSansCJK-Bold.ttc",
+        "NotoSansCJKsc-Bold.otf",
+        "SourceHanSansSC-Bold.otf",
+        "wqy-zenhei.ttc",
+        "PingFang.ttc",
+        "DejaVuSans-Bold.ttf",
+    ),
+    "regular": (
+        "msyh.ttc",
+        "NotoSansCJK-Regular.ttc",
+        "NotoSansCJKsc-Regular.otf",
+        "SourceHanSansSC-Regular.otf",
+        "wqy-zenhei.ttc",
+        "PingFang.ttc",
+        "DejaVuSans.ttf",
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +128,8 @@ class RollPigService:
         self.cards_dir = self.storage_dir / "cards"
         self._state_lock = asyncio.Lock()
         self._font_cache: dict[tuple[str, int], Any] = {}
+        self._font_path_cache: dict[str, Path | None] = {}
+        self._font_fallback_warned = False
 
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "rollpig", "enabled", True), True)
@@ -300,7 +335,7 @@ class RollPigService:
         resolved_date = date_key or self.today_key()
 
         async with self._state_lock:
-            state = self._load_today_state(resolved_date)
+            state = await asyncio.to_thread(self._load_today_state, resolved_date)
             records = state["records"]
             existing_id = self._record_pig_id(records.get(user_id))
             existing = pigs_by_id.get(existing_id)
@@ -309,7 +344,7 @@ class RollPigService:
 
             selected = random.choice(pigs)
             records[user_id] = selected.pig_id
-            self._save_today_state(state)
+            await asyncio.to_thread(self._save_today_state, state)
             return selected, ""
 
     def _image_directories(self) -> list[Path]:
@@ -337,6 +372,104 @@ class RollPigService:
                     return candidate
         return None
 
+    def _configured_font_path(self, kind: str) -> Path | None:
+        raw = extract_file_config_value(
+            cfg(self.config, "rollpig", f"font_{kind}_file", [])
+        )
+        path = resolve_existing_path(
+            raw, self.storage_dir, self.assets_dir, self.assets_dir / "font"
+        )
+        return path if path and path.is_file() else None
+
+    def _bundled_font_paths(self, kind: str) -> list[Path]:
+        font_dir = self.assets_dir / "font"
+        preferred = "荆南麦圆体.otf" if kind == "bold" else "可爱字体.ttf"
+        paths = [font_dir / preferred]
+        try:
+            bundled = sorted(
+                item
+                for item in font_dir.iterdir()
+                if item.is_file() and item.suffix.lower() in FONT_SUFFIXES
+            )
+        except OSError:
+            bundled = []
+        for item in bundled:
+            if item not in paths:
+                paths.append(item)
+        return paths
+
+    def _system_font_paths(self, kind: str) -> Iterator[Path]:
+        names = SYSTEM_FONT_FILES.get(kind, SYSTEM_FONT_FILES["regular"])
+        for raw_dir in SYSTEM_FONT_DIRS:
+            try:
+                directory = Path(raw_dir).expanduser()
+                if not directory.is_dir():
+                    continue
+            except OSError:
+                continue
+            for name in names:
+                direct = directory / name
+                try:
+                    if direct.is_file():
+                        yield direct
+                        continue
+                    nested = next(iter(directory.rglob(name)), None)
+                except OSError:
+                    continue
+                if nested is not None:
+                    yield nested
+
+    def _font_candidates(self, kind: str) -> Iterator[Path]:
+        """Yield candidates lazily so system font trees are only scanned when needed."""
+
+        seen: set[Path] = set()
+        configured = self._configured_font_path(kind)
+        sources = (
+            [configured] if configured else [],
+            self._bundled_font_paths(kind),
+        )
+        for source in sources:
+            for candidate in source:
+                if candidate not in seen:
+                    seen.add(candidate)
+                    yield candidate
+        for candidate in self._system_font_paths(kind):
+            if candidate not in seen:
+                seen.add(candidate)
+                yield candidate
+
+    def _resolve_font_path(self, kind: str) -> Path | None:
+        if kind in self._font_path_cache:
+            return self._font_path_cache[kind]
+        resolved: Path | None = None
+        for candidate in self._font_candidates(kind):
+            try:
+                if candidate.is_file():
+                    resolved = candidate
+                    break
+            except OSError:
+                continue
+        if resolved is None:
+            self._warn_font_fallback()
+        self._font_path_cache[kind] = resolved
+        return resolved
+
+    def _warn_font_fallback(self) -> None:
+        if self._font_fallback_warned:
+            return
+        self._font_fallback_warned = True
+        logger.warning(
+            "[HelperTools/RollPig] no usable font file found in %s or the system font "
+            "directories; falling back to the Pillow default font",
+            self.assets_dir / "font",
+        )
+
+    def _default_font(self, size: int) -> Any:
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:  # Pillow < 10 does not accept the size keyword
+            return ImageFont.load_default()
+
     def _font(self, kind: str, size: Any) -> Any:
         if ImageFont is None:
             return None
@@ -346,29 +479,17 @@ class RollPigService:
         if cached is not None:
             return cached
 
-        filename = "荆南麦圆体.otf" if kind == "bold" else "可爱字体.ttf"
-        candidates = [
-            self.assets_dir / "font" / filename,
-            "C:/Windows/Fonts/msyhbd.ttc"
-            if kind == "bold"
-            else "C:/Windows/Fonts/msyh.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-            if kind == "bold"
-            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/System/Library/Fonts/PingFang.ttc",
-        ]
-        for candidate in candidates:
+        font: Any = None
+        path = self._resolve_font_path(kind)
+        if path is not None:
             try:
-                if Path(candidate).is_file():
-                    font = ImageFont.truetype(str(candidate), normalized_size)
-                    self._font_cache[key] = font
-                    return font
+                font = ImageFont.truetype(str(path), normalized_size)
             except OSError:
-                continue
-        try:
-            font = ImageFont.load_default(size=normalized_size)
-        except TypeError:  # Pillow < 10 does not accept the size keyword
-            font = ImageFont.load_default()
+                self._font_path_cache[kind] = None
+                self._warn_font_fallback()
+                font = None
+        if font is None:
+            font = self._default_font(normalized_size)
         self._font_cache[key] = font
         return font
 
