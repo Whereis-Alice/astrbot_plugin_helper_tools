@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"
+     role="img" aria-label="辅助工具合集">
+<!-- ============================================================
+     astrbot_plugin_helper_tools / 辅助工具合集
+     AstrBot 插件卡片图标的矢量源文件。
+     用途：AstrBot 只认插件根目录下的 logo.png（星标管理器里
+     logo_fname 硬编码为该名字），本文件是那张 PNG 的来源，
+     改图标时改这里再重新导出，不要直接编辑 PNG。
+     渲染尺寸：控制台以 <img> 64x64（窄屏 52x52）、border-radius 10px、
+     object-fit: cover 呈现，所以这里做满幅方形、不烘焙圆角，
+     圆角交给卡片自己裁，避免出现描边毛边。
+     标识本体与 pages/helper-tools/logo-mark.svg 完全同几何：
+     45° 两用扳手，右上梅花头（六角套筒）+ 左下开口头。
+     PNG 是静态的，无法跟随控制台明暗主题，所以固定用深色瓦片 +
+     亮色标识，这在浅色和深色主题下都成立（同 App 图标的做法）。
+     ============================================================ -->
+  <defs>
+    <linearGradient id="hta-bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#082521"/>
+      <stop offset=".55" stop-color="#08202c"/>
+      <stop offset="1" stop-color="#12142c"/>
+    </linearGradient>
+    <radialGradient id="hta-glow" cx="352" cy="150" r="290" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34e0b0" stop-opacity=".22"/>
+      <stop offset=".6" stop-color="#6ee7ff" stop-opacity=".07"/>
+      <stop offset="1" stop-color="#6ee7ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hta-grad" x1="41" y1="6" x2="4" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34e0b0"/>
+      <stop offset=".55" stop-color="#6ee7ff"/>
+      <stop offset="1" stop-color="#9a8ef8"/>
+    </linearGradient>
+    <!-- 形状遮罩：外形（环头 + 柄 + 开口头）为白，套筒与开口为黑。
+         用 mask 而不是 fill-rule 挖孔，是因为柄与两个头相互重叠，
+         奇偶/非零填充都会在重叠处产生意外空洞。
+         坐标系是下方 <g transform> 之后的 48 单位局部空间。 -->
+    <mask id="hta-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="48" height="48">
+      <rect x="0" y="0" width="48" height="48" fill="#000"/>
+      <g fill="#fff">
+        <circle cx="32.2" cy="15.8" r="11.6"/>
+        <circle cx="13.1" cy="34.9" r="8.6"/>
+        <path d="M29.8 22.73 13.24 39.28 8.72 34.76 25.27 18.2Z"/>
+      </g>
+      <g fill="#000" stroke="#000" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+        <path d="M30.7 21.4 36.3 19.9 37.8 14.3 33.7 10.2 28.1 11.7 26.6 17.3Z"/>
+        <path d="M13.95 38.29 6.74 45.51 2.49 41.26 9.71 34.05Z"/>
+      </g>
+    </mask>
+  </defs>
+  <path d="M0 0h512v512H0Z" fill="url(#hta-bg)"/>
+  <path d="M0 0h512v512H0Z" fill="url(#hta-glow)"/>
+  <!-- 48 单位标识放大到瓦片中央，标识实际外形约占瓦片 64% -->
+  <g transform="translate(53.14 55.66) scale(8.4)">
+    <path d="M0 0h48v48H0Z" fill="url(#hta-grad)" mask="url(#hta-cut)"/>
+  </g>
+</svg>
