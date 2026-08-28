@@ -1,81 +1,62 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48"
      role="img" aria-label="辅助工具合集">
-  <!-- ============================================================
-       astrbot_plugin_helper_tools / 辅助工具合集
-       配色（与 WebUI 深色主题一致）：
-         panel-a  #071614   深青画布起点
-         panel-b  #0a1220   深靛画布终点
-         mint     #34e0b0   主强调色
-         cyan     #6ee7ff   次强调色
-         violet   #a78bfa   点缀（只出现在描边渐变尾端 / 拉丁行的斜杠）
-         fg       #e8f5f2   前景文字
-         hairline rgba(126,199,189,0.16)  描边线
-       ============================================================ -->
+<!-- ============================================================
+     astrbot_plugin_helper_tools / 辅助工具合集
+     标识：45° 两用扳手 —— 右上梅花头（六角套筒）+ 左下开口头。
+     一笔成形、无容器背板，16px 仍可辨识。
+     配色（取自 WebUI 主题）：
+       mint    #34e0b0   主强调
+       cyan    #6ee7ff   次强调
+       iris    #9a8ef8   尾端点缀
+       深色变体用上面三色；浅色变体换成 #06614d / #0a5069 / #453a96，
+       在 #fff 与 #eff5f3 上对比度均 > 4.5:1。
+     ============================================================ -->
   <!-- 用法：
-       · 默认渲染 = 深色底变体；深色面板压在浅色背景上同样成立（已实测）。
-       · 内联进 HTML 后，给根 <svg> 加 class="ht-light" 即切到浅色面板变体，
-         或在自己的雪碧图里 <use href="#ht-mark-light"/>。
-       · 注意：Chrome 不支持跨文件 <use href="logo-mark.svg#id">（实测渲染空白），
-         需要浅色变体时必须把本文件内联进 DOM。
-       · 不用 currentColor / CSS 变量做主色：刻意取舍——GitHub、Markdown、PIL
-         转图等环境不会注入外部样式，写死颜色才能到处一致。 -->
+       · 直接当 <img src="logo-mark.svg"> 用：跟随系统 prefers-color-scheme 自动切深/浅。
+       · 内联进 HTML 后，给根 <svg> 或任一祖先加 class="ht-light" / "ht-dark" 强制变体。
+       · 不支持 CSS 的渲染器（resvg / cairosvg / 部分图床）会忽略 <style>，
+         落到 fill 表现属性上，即深色变体，仍然可用。
+       · 注意：Chromium 不渲染跨文件 <use href="logo-mark.svg#id">，
+         页面里需要变体切换时必须把本文件内联进 DOM。 -->
   <style>
-    .ht-v-light { display: none; }
-    svg.ht-light .ht-v-dark { display: none; }
-    svg.ht-light .ht-v-light { display: inline; }
+    .ht-art { fill: url(#ht-grad); }
+    .ht-light .ht-art, svg.ht-light .ht-art { fill: url(#ht-grad-light); }
+    @media (prefers-color-scheme: light) {
+      .ht-art { fill: url(#ht-grad-light); }
+      .ht-dark .ht-art, svg.ht-dark .ht-art { fill: url(#ht-grad); }
+    }
   </style>
   <defs>
-    <!-- 深色底：面板渐变 深青→深靛 -->
-    <linearGradient id="ht-panel" x1="6" y1="4" x2="42" y2="46" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#071614"/>
-      <stop offset="1" stop-color="#0a1220"/>
-    </linearGradient>
-    <!-- 深色底：面板描边 mint→cyan，尾端收一点 violet -->
-    <linearGradient id="ht-edge" x1="7" y1="5" x2="43" y2="45" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#34e0b0" stop-opacity=".92"/>
-      <stop offset=".55" stop-color="#6ee7ff" stop-opacity=".62"/>
-      <stop offset="1" stop-color="#a78bfa" stop-opacity=".55"/>
-    </linearGradient>
-    <!-- 深色底：「工」字符填充 mint→cyan（对角，覆盖整个字符包围盒） -->
-    <linearGradient id="ht-glyph" x1="12.2" y1="13.4" x2="35.8" y2="34.6" gradientUnits="userSpaceOnUse">
+    <linearGradient id="ht-grad" x1="41" y1="6" x2="4" y2="46" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#34e0b0"/>
-      <stop offset="1" stop-color="#6ee7ff"/>
+      <stop offset=".55" stop-color="#6ee7ff"/>
+      <stop offset="1" stop-color="#9a8ef8"/>
     </linearGradient>
-    <!-- 浅色底变体：浅青面板 + 深青字符（对比度 > 4:1） -->
-    <linearGradient id="ht-panelLight" x1="6" y1="4" x2="42" y2="46" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#eef8f5"/>
-      <stop offset="1" stop-color="#dbe9ed"/>
-    </linearGradient>
-    <linearGradient id="ht-glyphLight" x1="12.2" y1="13.4" x2="35.8" y2="34.6" gradientUnits="userSpaceOnUse">
+    <linearGradient id="ht-grad-light" x1="41" y1="6" x2="4" y2="46" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#06614d"/>
-      <stop offset="1" stop-color="#0a5069"/>
+      <stop offset=".55" stop-color="#0a5069"/>
+      <stop offset="1" stop-color="#453a96"/>
     </linearGradient>
-    <symbol id="ht-mark-dark" viewBox="0 0 48 48">
-      <!-- 容器：圆角面板 = 控制台 / 仪器面板 -->
-      <rect x="2.75" y="2.75" width="42.5" height="42.5" rx="12.4"
-            fill="url(#ht-panel)" stroke="url(#ht-edge)" stroke-width="1.5"/>
-      <!-- 内部：几何化「工」= 工具，同时是工字梁（承重的辅助结构）；三笔，没有第四层细节 -->
-      <g fill="url(#ht-glyph)">
-        <rect x="13.6" y="13.4" width="20.8" height="4.4" rx="1.1"/>
-        <rect x="21.4" y="17.8" width="5.2" height="12.4" rx="1"/>
-        <rect x="12.2" y="30.2" width="23.6" height="4.4" rx="1.1"/>
+    <!-- 形状遮罩：外形（环头 + 柄 + 开口头）为白，套筒与开口为黑。
+         用 mask 而不是 fill-rule 挖孔，是因为柄与两个头相互重叠，
+         奇偶/非零填充都会在重叠处产生意外空洞。 -->
+    <mask id="ht-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="48" height="48">
+      <rect x="0" y="0" width="48" height="48" fill="#000"/>
+      <g fill="#fff">
+        <!-- 梅花头（右上） -->
+        <circle cx="32.2" cy="15.8" r="11.6"/>
+        <!-- 开口头（左下） -->
+        <circle cx="13.1" cy="34.9" r="8.6"/>
+        <!-- 柄：沿 45° 轴连接两头，两端埋进头部内部，接缝不可见 -->
+        <path d="M29.8 22.73 13.24 39.28 8.72 34.76 25.27 18.2Z"/>
       </g>
-    </symbol>
-    <symbol id="ht-mark-light" viewBox="0 0 48 48">
-      <!-- 容器：圆角面板 = 控制台 / 仪器面板 -->
-      <rect x="2.75" y="2.75" width="42.5" height="42.5" rx="12.4"
-            fill="url(#ht-panelLight)" stroke="rgba(8,72,64,0.36)" stroke-width="1.5"/>
-      <!-- 内部：几何化「工」= 工具，同时是工字梁（承重的辅助结构）；三笔，没有第四层细节 -->
-      <g fill="url(#ht-glyphLight)">
-        <rect x="13.6" y="13.4" width="20.8" height="4.4" rx="1.1"/>
-        <rect x="21.4" y="17.8" width="5.2" height="12.4" rx="1"/>
-        <rect x="12.2" y="30.2" width="23.6" height="4.4" rx="1.1"/>
+      <g fill="#000" stroke="#000" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+        <!-- 六角套筒；描边只为把尖角磨圆 -->
+        <path d="M30.7 21.4 36.3 19.9 37.8 14.3 33.7 10.2 28.1 11.7 26.6 17.3Z"/>
+        <!-- 开口：矩形故意越过头部轮廓，越界部分落在遮罩黑底上，无副作用 -->
+        <path d="M13.95 38.29 6.74 45.51 2.49 41.26 9.71 34.05Z"/>
       </g>
-    </symbol>
+    </mask>
   </defs>
-  <use class="ht-v-dark" href="#ht-mark-dark" width="48" height="48"/>
-  <!-- display="none" 是给不支持 CSS 的渲染器（resvg / cairosvg / 部分图床）兜底：
-       它们会直接忽略上面的 <style>，只画深色变体；支持 CSS 的环境里
-       类选择器优先级高于表现属性，class="ht-light" 依然能切换。 -->
-  <use class="ht-v-light" href="#ht-mark-light" width="48" height="48" display="none"/>
+  <path class="ht-art" d="M0 0h48v48H0Z" fill="url(#ht-grad)" mask="url(#ht-cut)"/>
 </svg>

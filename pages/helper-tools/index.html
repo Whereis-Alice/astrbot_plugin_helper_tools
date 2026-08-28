@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
     <title>辅助工具控制台</title>
-    <link rel="stylesheet" href="./style.css?v=1.0.0" />
+    <link rel="icon" type="image/svg+xml" href="./logo-mark.svg?v=1.0.1" />
+    <link rel="stylesheet" href="./style.css?v=1.0.1" />
   </head>
   <body data-theme="dark">
     <div class="app-shell">
@@ -14,20 +15,20 @@
           <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 48 48" role="img" aria-label="辅助工具">
           <defs>
-            <linearGradient id="ht-panel" x1="6" y1="4" x2="42" y2="46" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#071614"/><stop offset="1" stop-color="#0a1220"/></linearGradient>
-            <linearGradient id="ht-edge" x1="7" y1="5" x2="43" y2="45" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#34e0b0" stop-opacity=".92"/><stop offset=".55" stop-color="#6ee7ff" stop-opacity=".62"/><stop offset="1" stop-color="#a78bfa" stop-opacity=".55"/></linearGradient>
-            <linearGradient id="ht-glyph" x1="12.2" y1="13.4" x2="35.8" y2="34.6" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#34e0b0"/><stop offset="1" stop-color="#6ee7ff"/></linearGradient>
-            <linearGradient id="ht-panel-light" x1="6" y1="4" x2="42" y2="46" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#eef8f5"/><stop offset="1" stop-color="#dbe9ed"/></linearGradient>
-            <linearGradient id="ht-glyph-light" x1="12.2" y1="13.4" x2="35.8" y2="34.6" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#06614d"/><stop offset="1" stop-color="#0a5069"/></linearGradient>
+            <linearGradient id="ht-grad" x1="41" y1="6" x2="4" y2="46" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#34e0b0"/><stop offset=".55" stop-color="#6ee7ff"/><stop offset="1" stop-color="#9a8ef8"/></linearGradient>
+            <linearGradient id="ht-grad-light" x1="41" y1="6" x2="4" y2="46" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#06614d"/><stop offset=".55" stop-color="#0a5069"/><stop offset="1" stop-color="#453a96"/></linearGradient>
+            <!-- 形状遮罩：外形（梅花头 + 柄 + 开口头）为白，六角套筒与卡口为黑。
+                 用 mask 而不是 fill-rule 挖孔：柄与两个头相互重叠，奇偶／非零填充都会在重叠处挖出意外空洞。 -->
+            <mask id="ht-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="48" height="48">
+              <rect x="0" y="0" width="48" height="48" fill="#000"/>
+              <g fill="#fff"><circle cx="32.2" cy="15.8" r="11.6"/><circle cx="13.1" cy="34.9" r="8.6"/><path d="M29.8 22.73 13.24 39.28 8.72 34.76 25.27 18.2Z"/></g>
+              <g fill="#000" stroke="#000" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><path d="M30.7 21.4 36.3 19.9 37.8 14.3 33.7 10.2 28.1 11.7 26.6 17.3Z"/><path d="M13.95 38.29 6.74 45.51 2.49 41.26 9.71 34.05Z"/></g>
+            </mask>
           </defs>
-          <g class="ht-v-dark">
-            <rect x="2.75" y="2.75" width="42.5" height="42.5" rx="12.4" fill="url(#ht-panel)" stroke="url(#ht-edge)" stroke-width="1.5"/>
-            <g fill="url(#ht-glyph)"><rect x="13.6" y="13.4" width="20.8" height="4.4" rx="1.1"/><rect x="21.4" y="17.8" width="5.2" height="12.4" rx="1"/><rect x="12.2" y="30.2" width="23.6" height="4.4" rx="1.1"/></g>
-          </g>
-          <g class="ht-v-light">
-            <rect x="2.75" y="2.75" width="42.5" height="42.5" rx="12.4" fill="url(#ht-panel-light)" stroke="rgba(8,72,64,0.36)" stroke-width="1.5"/>
-            <g fill="url(#ht-glyph-light)"><rect x="13.6" y="13.4" width="20.8" height="4.4" rx="1.1"/><rect x="21.4" y="17.8" width="5.2" height="12.4" rx="1"/><rect x="12.2" y="30.2" width="23.6" height="4.4" rx="1.1"/></g>
-          </g>
+          <!-- 45° 两用扳手，与 logo-mark.svg 同一几何。这里不能写 <style>（会泄漏到整页），
+               深浅变体交给 style.css 的 .brand-mark + body[data-theme] 规则控制。 -->
+          <g class="ht-v-dark"><path d="M0 0h48v48H0Z" fill="url(#ht-grad)" mask="url(#ht-cut)"/></g>
+          <g class="ht-v-light"><path d="M0 0h48v48H0Z" fill="url(#ht-grad-light)" mask="url(#ht-cut)"/></g>
         </svg>
           </span>
           <div class="brand-copy">
@@ -278,6 +279,6 @@
       </form>
     </dialog>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=1.0.0"></script>
+    <script type="module" src="./app.js?v=1.0.1"></script>
   </body>
 </html>

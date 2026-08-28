@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -14,8 +15,6 @@ class DashboardAssetTests(unittest.TestCase):
 
         self.assertIn('id="confirm-action-dialog"', markup)
         self.assertIn('id="confirm-action-form"', markup)
-        self.assertIn('style.css?v=1.0.0', markup)
-        self.assertIn('app.js?v=1.0.0', markup)
         self.assertIn("async function deleteWallpaperImage(image)", script)
         self.assertIn("await confirmAction(`删除图片", script)
         self.assertIn("await confirmAction(`删除图库", script)
@@ -72,15 +71,50 @@ class DashboardAssetTests(unittest.TestCase):
         logo = (WEBUI_ROOT / "logo.svg").read_text(encoding="utf-8")
         mark = (WEBUI_ROOT / "logo-mark.svg").read_text(encoding="utf-8")
         markup = (WEBUI_ROOT / "index.html").read_text(encoding="utf-8")
+        stylesheet = (WEBUI_ROOT / "style.css").read_text(encoding="utf-8")
 
         self.assertTrue(logo.lstrip().startswith("<svg"))
         self.assertTrue(mark.lstrip().startswith("<svg"))
         self.assertIn('viewBox="0 0 48 48"', mark)
+        self.assertIn('viewBox="0 0 158 48"', logo)
+
+        # v1.0.1 起标识是 45° 两用扳手，挖孔必须用 <mask>：柄和两个头相互重叠，
+        # 换成 fill-rule 会在重叠处挖出空洞，别改回去。
+        self.assertIn('mask="url(#ht-cut)"', mark)
+        self.assertIn('mask="url(#htl-cut)"', logo)
+        self.assertIn("url(#ht-grad-light)", mark)
+        self.assertIn("url(#htl-grad-light)", logo)
+        for svg, art in ((mark, "ht-art"), (logo, "htl-art")):
+            with self.subTest(art=art):
+                self.assertIn("prefers-color-scheme: light", svg)
+                self.assertIn(f".ht-light .{art}", svg)
+                self.assertIn(f".ht-dark .{art}", svg)
+
+        # 旧的「圆角面板 + 工字」标识连同两个 <symbol> 已删除，防止半新半旧混用。
+        for stale in ("ht-panel", "ht-edge", "ht-glyph", "ht-mark-dark", "ht-mark-light"):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, mark)
+                self.assertNotIn(stale, logo)
+                self.assertNotIn(stale, markup)
+
         # Chromium 不渲染跨文件 <use href="x.svg#id">，顶栏必须内联 SVG。
         self.assertIn('class="brand-mark"', markup)
-        self.assertIn('class="ht-v-dark"', markup)
-        self.assertIn('class="ht-v-light"', markup)
         self.assertNotIn("logo-mark.svg#", markup)
+        brand = markup.split('class="brand-mark"', 1)[1].split("</span>", 1)[0]
+        self.assertIn('class="ht-v-dark"', brand)
+        self.assertIn('class="ht-v-light"', brand)
+        self.assertIn('mask="url(#ht-cut)"', brand)
+        self.assertIn("url(#ht-grad)", brand)
+        self.assertIn("url(#ht-grad-light)", brand)
+        # 内联 SVG 里不能出现 style 元素，否则规则会泄漏到整个控制台页面（注释里提到不算）。
+        self.assertNotIn("<style", re.sub(r"<!--.*?-->", "", brand, flags=re.DOTALL))
+        # 顶栏的深浅变体靠 style.css 的 body[data-theme] 规则切换。
+        self.assertIn('body[data-theme="light"] .brand-mark .ht-v-dark', stylesheet)
+        self.assertIn('body[data-theme="light"] .brand-mark .ht-v-light', stylesheet)
+
+        # 控制台自己的 favicon 用紧凑版标识，相对路径交给 AstrBot 重写。
+        self.assertIn('rel="icon"', markup)
+        self.assertIn('href="./logo-mark.svg?v=', markup)
 
 
 if __name__ == "__main__":

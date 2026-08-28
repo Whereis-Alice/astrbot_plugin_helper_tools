@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+WEBUI_ROOT = ROOT / "pages" / "helper-tools"
 
 
 def _main_version() -> str:
@@ -37,6 +38,15 @@ class PluginVersionConsistencyTests(unittest.TestCase):
 
     def test_version_looks_like_semver(self) -> None:
         self.assertRegex(_metadata_version(), r"^\d+\.\d+\.\d+$")
+
+    def test_dashboard_cachebusters_match_metadata(self) -> None:
+        """控制台静态资源的 ?v= 直接用插件版本号；漏改会让浏览器继续吃旧缓存。"""
+        markup = (WEBUI_ROOT / "index.html").read_text(encoding="utf-8")
+        version = _metadata_version()
+
+        for asset in ("style.css", "app.js", "logo-mark.svg"):
+            self.assertIn(f"{asset}?v={version}", markup)
+        self.assertEqual(set(re.findall(r"\?v=([^\"'&]+)", markup)), {version})
 
 
 if __name__ == "__main__":
