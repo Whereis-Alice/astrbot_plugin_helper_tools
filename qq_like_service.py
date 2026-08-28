@@ -184,15 +184,9 @@ class QQProfileLikeService:
             return []
         normalized = re.sub(r"\s+", "", text)
         sender_id = self._sender_id(event)
-        phrases = read_list(
-            cfg(
-                self.config,
-                "qq_like",
-                "trigger_phrases",
-                ["赞我", "给我点赞", "赞一下我"],
-            ),
-            ["赞我", "给我点赞", "赞一下我"],
-        )
+        # 触发短语的 fallback 必须是空列表：read_list 会把空列表回落到默认值，
+        # 这里写内置短语的话，用户在 WebUI 里清空也清不掉。
+        phrases = read_list(cfg(self.config, "qq_like", "trigger_phrases", []), [])
         normalized_phrases = {
             re.sub(r"\s+", "", clean_text(phrase))
             for phrase in phrases
@@ -201,11 +195,13 @@ class QQProfileLikeService:
         if normalized in normalized_phrases:
             return [sender_id] if sender_id else []
 
+        # @ 点赞开头的 fallback 必须是空列表：read_list 会把空列表回落到默认值，
+        # 这里写内置开头的话，用户在 WebUI 里清空也清不掉；清空后下面直接返回空目标。
         prefixes = [
             re.sub(r"\s+", "", prefix)
             for prefix in read_list(
-                cfg(self.config, "qq_like", "mention_trigger_prefixes", ["赞"]),
-                ["赞"],
+                cfg(self.config, "qq_like", "mention_trigger_prefixes", []),
+                [],
             )
             if clean_text(prefix)
         ]

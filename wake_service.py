@@ -257,7 +257,9 @@ class WakeService:
         return read_list(cfg(self.config, "wake", "wake_words", []), [])
 
     def admin_wake_words(self) -> list[str]:
-        return read_list(cfg(self.config, "wake", "admin_wake_words", ["宝贝", "宝宝"]), ["宝贝", "宝宝"])
+        # 管理员专属唤醒词默认为空：read_list 会把空列表回落到默认值，
+        # 如果这里写了内置词，用户在 WebUI 里清空也清不掉。
+        return read_list(cfg(self.config, "wake", "admin_wake_words", []), [])
 
     def trigger_modes(self) -> set[str]:
         raw = read_list(cfg(self.config, "wake", "trigger_modes", ["自由触发"]), ["自由触发"])

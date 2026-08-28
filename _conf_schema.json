@@ -628,7 +628,8 @@
           "tool ls",
           "key",
           "websearch"
-        ]
+        ],
+        "hint": "AstrBot 自带指令名清单，供上面的自带指令屏蔽开关识别。留空会使用内置默认清单。"
       },
       "block_builtin_commands": {
         "type": "bool",
@@ -689,7 +690,7 @@
           "at",
           "reply"
         ],
-        "hint": "normal: 普通消息；at: @bot；reply: 引用 bot；command: 指令。"
+        "hint": "normal: 普通消息；at: @bot；reply: 引用 bot；command: 指令。留空会使用内置默认值 normal、at、reply。"
       },
       "at_wake_enabled": {
         "type": "bool",
@@ -722,10 +723,8 @@
       "admin_wake_words": {
         "type": "list",
         "description": "管理员专属唤醒词",
-        "default": [
-          "宝贝",
-          "宝宝"
-        ]
+        "default": [],
+        "hint": "只有 AstrBot 管理员命中这里的词才会唤醒 LLM，普通成员命中不生效。默认为空，留空表示不启用管理员专属唤醒词。命中方式跟随“唤醒词触发方式”：默认的自由触发只要消息里包含该词就算命中，因此不建议填“宝贝”“在吗”这类日常高频词。"
       },
       "trigger_modes": {
         "type": "list",
@@ -738,7 +737,7 @@
         "default": [
           "自由触发"
         ],
-        "hint": "自由触发：消息包含唤醒词即可；前缀触发：消息以唤醒词开头；后缀触发：消息以唤醒词结尾。可多选。"
+        "hint": "自由触发：消息包含唤醒词即可；前缀触发：消息以唤醒词开头；后缀触发：消息以唤醒词结尾。可多选。留空会回落到自由触发。"
       },
       "strip_prefix_suffix_wake_word": {
         "type": "bool",
@@ -1160,7 +1159,8 @@
               "ai-zh",
               "en-US",
               "en"
-            ]
+            ],
+            "hint": "按填写顺序挑选字幕轨道。留空会使用内置默认顺序。"
           },
           "bcut_fallback_enabled": {
             "type": "bool",
@@ -1452,7 +1452,7 @@
         "type": "string",
         "description": "可选 HTTP 代理地址",
         "default": "",
-        "hint": "例如 http://127.0.0.1:7890。会用于 Nitter、FxTwitter 和媒体下载；本机 Nitter 不需要代理时请留空。"
+        "hint": "例如 http://127.0.0.1:7890。会用于 Nitter、FxTwitter 和媒体下载；本机 Nitter 不需要代理时请留空。这里不是密钥字段，控制台会原样回显，请不要把账号密码写进 URL（http://user:pass@host）；需要认证的代理请在系统或容器层面配置。"
       },
       "request_timeout_seconds": {
         "type": "int",
@@ -1880,7 +1880,8 @@
               ".jpeg",
               ".png",
               ".webp"
-            ]
+            ],
+            "hint": "留空会使用内置默认后缀。"
           },
           "platform_id": {
             "type": "string",
@@ -2050,20 +2051,14 @@
       "trigger_phrases": {
         "type": "list",
         "description": "给自己点赞的触发词",
-        "default": [
-          "赞我",
-          "给我点赞",
-          "赞一下我"
-        ],
-        "hint": "完全匹配其中任一条时，bot 给当前发言者点赞。"
+        "default": [],
+        "hint": "完全匹配其中任一条时，bot 给当前发言者点赞。默认为空，留空表示不启用该触发方式（不会再响应「赞我」这类消息）。可自行填写「赞我」「给我点赞」「赞一下我」等。"
       },
       "mention_trigger_prefixes": {
         "type": "list",
         "description": "点赞 @ 用户的开头",
-        "default": [
-          "赞"
-        ],
-        "hint": "例如“赞@某人”或“赞一下 @某人”。只处理真正的 @，不会把普通 QQ 号文字当作目标。"
+        "default": [],
+        "hint": "例如“赞@某人”或“赞一下 @某人”。只处理真正的 @，不会把普通 QQ 号文字当作目标。默认为空，留空表示不启用该触发方式（不会再响应「赞@某人」）。可自行填写「赞」等开头。"
       },
       "allow_astrbot_wake_prefix": {
         "type": "bool",
@@ -2206,7 +2201,7 @@
           "存图",
           "/存图"
         ],
-        "hint": "可直接用「存图 图库名」，也可使用「当前 AstrBot 唤醒词缀 + 存图 图库名」。旧配置里带 / 的写法也会兼容。"
+        "hint": "可直接用「存图 图库名」，也可使用「当前 AstrBot 唤醒词缀 + 存图 图库名」。旧配置里带 / 的写法也会兼容。留空会使用内置默认指令「存图」。"
       },
       "delete_commands": {
         "type": "list",
@@ -2215,7 +2210,7 @@
           "删图",
           "/删图"
         ],
-        "hint": "可直接用「删图」，也可使用「当前 AstrBot 唤醒词缀 + 删图」。旧配置里带 / 的写法也会兼容。"
+        "hint": "可直接用「删图」，也可使用「当前 AstrBot 唤醒词缀 + 删图」。旧配置里带 / 的写法也会兼容。留空会使用内置默认指令「删图」。"
       },
       "allowed_extensions": {
         "type": "list",
@@ -2226,7 +2221,8 @@
           ".png",
           ".webp",
           ".gif"
-        ]
+        ],
+        "hint": "留空会使用内置默认扩展名。"
       },
       "max_add_bytes": {
         "type": "int",
@@ -2348,7 +2344,7 @@
           "voice_meme",
           "随机语音"
         ],
-        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /voice_meme 或 !voice_meme。旧配置里带 / 的写法也会兼容。"
+        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /voice_meme 或 !voice_meme。旧配置里带 / 的写法也会兼容。留空会使用内置默认指令名 voice_meme。"
       },
       "auto_trigger_enabled": {
         "type": "bool",
@@ -2358,9 +2354,8 @@
       "trigger_keywords": {
         "type": "list",
         "description": "自动触发关键词",
-        "default": [
-          "哈基米"
-        ]
+        "default": [],
+        "hint": "消息里包含其中任意关键词时随机发送语音。默认为空，留空表示不启用关键词自动触发（只剩指令和 LLM 工具可用）。可自行填写「哈基米」等。"
       },
       "stop_event_after_response": {
         "type": "bool",
@@ -2457,10 +2452,8 @@
       "update_times": {
         "type": "list",
         "description": "每日自动更新时间点（小时 0-23）",
-        "default": [
-          "1"
-        ],
-        "hint": "例如 [\"1\", \"13\", \"22\"] 表示每天 1:00、13:00、22:00 更新。"
+        "default": [],
+        "hint": "例如 [\"1\", \"13\", \"22\"] 表示每天 1:00、13:00、22:00 更新。默认为空，留空表示不定时检查更新（仍可用指令手动查询，或开启「插件启动时立即刷新缓存」）。"
       },
       "timeout_seconds": {
         "type": "int",
@@ -2504,7 +2497,7 @@
           "steam",
           "查找"
         ],
-        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /steam 或 !steam。旧配置里带 / 的写法也会兼容。"
+        "hint": "填写命令名即可，插件会自动使用当前 AstrBot 唤醒词缀触发，例如 /steam 或 !steam。旧配置里带 / 的写法也会兼容。指令名至少要有一个，留空会使用内置默认指令名 steam；想彻底关掉请改用上面的「启用可配置查询指令名」开关。"
       },
       "auto_parse_links": {
         "type": "bool",

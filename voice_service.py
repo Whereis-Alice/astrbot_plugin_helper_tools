@@ -60,7 +60,9 @@ class VoiceService:
         )
 
     def trigger_keywords(self) -> list[str]:
-        return read_list(cfg(self.config, "voice", "trigger_keywords", ["哈基米"]), ["哈基米"])
+        # 自动触发关键词的 fallback 必须是空列表：read_list 会把空列表回落到默认值，
+        # 这里写内置关键词的话，用户在 WebUI 里清空也清不掉。
+        return read_list(cfg(self.config, "voice", "trigger_keywords", []), [])
 
     def auto_trigger_enabled(self) -> bool:
         return read_bool(cfg(self.config, "voice", "auto_trigger_enabled", True), True)

@@ -152,6 +152,10 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
             "enabled": True,
             "likes_per_target": 10,
             "cooldown_seconds": 0,
+            # 触发词/开头默认已改成空列表（用户能真正清空），
+            # 这些行为用例需要显式配置词表才有东西可命中。
+            "trigger_phrases": ["赞我", "给我点赞", "赞一下我"],
+            "mention_trigger_prefixes": ["赞"],
         }
         settings.update(overrides)
         return {"qq_like": settings}

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import random
 import time
 import urllib.parse
@@ -363,8 +364,20 @@ class WallpaperService:
         return payload if isinstance(payload, dict) else {}
 
     def save_registry(self, payload: dict[str, dict[str, str]]) -> None:
+        # 「已发送图片」索引以前直接覆盖写目标文件，写一半失败会留下坏 JSON，
+        # load_registry 只能当成空表，撤回删图指令随之失效。改成先写临时文件
+        # 再 os.replace，保证读到的永远是完整的旧版本或完整的新版本。
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.registry_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        temporary = self.registry_path.with_suffix(".tmp")
+        try:
+            temporary.write_text(payload_text, encoding="utf-8")
+            os.replace(temporary, self.registry_path)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     async def load_registry_async(self) -> dict[str, dict[str, str]]:
         return await asyncio.to_thread(self.load_registry)

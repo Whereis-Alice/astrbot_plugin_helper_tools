@@ -247,6 +247,46 @@ function statusPill(stateName, label) {
   return pill;
 }
 
+function setTabBadge(id, value) {
+  const node = byId(id);
+  if (!node) return;
+  const count = Number(value) || 0;
+  if (count <= 0) {
+    node.hidden = true;
+    node.textContent = "";
+    node.removeAttribute("title");
+    return;
+  }
+  node.hidden = false;
+  node.textContent = count > 99 ? "99+" : String(count);
+  node.title = String(count);
+}
+
+// 顶部标签栏的数字角标：为 0 或缺数据时保持隐藏，避免出现一排「0」。
+function renderTabBadges() {
+  const metrics = state.data?.metrics || {};
+  setTabBadge("tab-badge-config", metrics.modules_enabled);
+  setTabBadge("tab-badge-activity", metrics.activity_today);
+  const libraries = state.wallpaper.libraries || [];
+  setTabBadge(
+    "tab-badge-wallpaper",
+    libraries.reduce((total, item) => total + (Number(item.image_count) || 0), 0),
+  );
+}
+
+function normalizedVersion() {
+  const version = text(state.data?.version).replace(/^v/i, "");
+  return version ? `v${version}` : "";
+}
+
+// 顶栏品牌区与底部状态栏各显示一次版本号，数据来源同 get_state 的 version。
+function renderVersionLabels() {
+  const version = normalizedVersion();
+  const brand = byId("brand-version");
+  if (brand) brand.textContent = version || "v-";
+  const footer = byId("footer-version");
+  if (footer) footer.textContent = version ? `astrbot · ${version}` : "astrbot · 插件控制台";
+}
 function renderOverview() {
   const data = state.data;
   if (!data) return;
@@ -261,6 +301,8 @@ function renderOverview() {
   renderToolList(byId("tool-list"), data.llm_tools || []);
   renderModuleMatrix(data.modules || []);
   renderRecentActivity(data.recent_activities || []);
+  renderTabBadges();
+  renderVersionLabels();
 }
 
 function renderRuntimeList(target, values) {
@@ -1172,6 +1214,7 @@ function renderWallpaperMetrics() {
     metric("图片占用", formatBytes(bytes)),
     metric("待处理目录", attention),
   );
+  renderTabBadges();
 }
 
 function wallpaperActionButton(symbol, label, action, image = null, extraClass = "") {
@@ -1212,7 +1255,7 @@ function renderWallpaperLibraries() {
     edit.dataset.wallpaperLibraryId = String(library.id);
     const remove = wallpaperActionButton("-", "仅删除图库配置", "delete-library");
     remove.dataset.wallpaperLibraryId = String(library.id);
-    const purge = wallpaperActionButton("x", "删除图库配置和磁盘文件", "delete-library-files", null, "danger");
+    const purge = wallpaperActionButton("x", "删除图库配置，并删除目录内的图片文件", "delete-library-files", null, "danger");
     purge.dataset.wallpaperLibraryId = String(library.id);
     actions.append(edit, remove, purge);
     row.append(select, actions);
@@ -1592,7 +1635,7 @@ function openWallpaperLibraryPurge(libraryId) {
   closeWallpaperDialog("wallpaper-library-management-dialog");
   byId("wallpaper-library-purge-id").value = String(library.id);
   byId("wallpaper-library-purge-name").value = "";
-  byId("wallpaper-library-purge-note").textContent = `将删除“${library.name}”的配置，以及 ${library.resolved_path || "对应目录"} 内的全部文件。此操作无法撤销。`;
+  byId("wallpaper-library-purge-note").textContent = `将删除“${library.name}”的配置，以及 ${library.resolved_path || "对应目录"} 内被索引到的图片文件（仅限允许的图片扩展名）。目录内的其它文件会保留，只有变空的目录会被回收。此操作无法撤销。`;
   showWallpaperDialog("wallpaper-library-purge-dialog");
   byId("wallpaper-library-purge-name").focus();
 }

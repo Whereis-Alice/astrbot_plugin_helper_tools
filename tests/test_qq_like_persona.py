@@ -81,6 +81,8 @@ class QQProfileLikePersonaTests(unittest.IsolatedAsyncioTestCase):
             "qq_like": {
                 "enabled": True,
                 "cooldown_seconds": 0,
+                # 触发词默认已改成空列表（用户能真正清空），这里显式配置。
+                "trigger_phrases": ["赞我"],
                 "persona_reply": {"enabled": True},
             }
         }

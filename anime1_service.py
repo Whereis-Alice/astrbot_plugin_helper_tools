@@ -63,7 +63,11 @@ class Anime1Service:
         return read_bool(cfg(self.config, "anime1", "update_on_start", False), False)
 
     def update_times(self) -> list[int]:
-        raw = read_list(cfg(self.config, "anime1", "update_times", ["1"]), ["1"])
+        # 定时更新时间点的 fallback 必须是空列表：read_list 会把空列表回落到默认值，
+        # 这里写内置小时的话，用户在 WebUI 里清空也清不掉。
+        # 空列表表示不做定时检查：_scheduler_loop 里的 `now.hour in []` 恒为 False，
+        # 每轮照旧 sleep 60 秒，不会崩也不会空转成死循环。
+        raw = read_list(cfg(self.config, "anime1", "update_times", []), [])
         hours: list[int] = []
         for item in raw:
             try:
@@ -72,7 +76,7 @@ class Anime1Service:
                 continue
             if 0 <= hour <= 23 and hour not in hours:
                 hours.append(hour)
-        return hours or [1]
+        return hours
 
     def timeout(self) -> int:
         return read_int(cfg(self.config, "anime1", "timeout_seconds", 20), 20, minimum=3, maximum=120)

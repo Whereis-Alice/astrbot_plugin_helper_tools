@@ -132,6 +132,9 @@ class SteamService:
         return clean_text(cfg(self.config, "steam", "country_code", "CN"), "CN")
 
     def command_prefixes(self) -> list[str]:
+        # 这里的 fallback 故意保留「steam」：指令名是结构性必需项，清空后
+        # match_message 里的 parse_dynamic_command 会完全匹配不到任何指令，
+        # 等于把可配置查询指令整体废掉，所以清空时回落到内置默认指令名。
         value = cfg(self.config, "steam", "command_prefixes", ["steam", "查找"])
         if isinstance(value, list):
             return [clean_text(item) for item in value if clean_text(item)] or ["steam"]

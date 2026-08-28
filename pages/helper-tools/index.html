@@ -5,46 +5,56 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
     <title>辅助工具控制台</title>
-    <link rel="stylesheet" href="./style.css?v=0.10.14" />
+    <link rel="stylesheet" href="./style.css?v=0.12.0" />
   </head>
   <body data-theme="dark">
-    <main class="dashboard-shell">
-      <aside class="sidebar" aria-label="辅助工具控制台导航">
+    <div class="app-shell">
+      <header class="app-header">
         <div class="brand-block">
-          <div class="brand-mark" aria-hidden="true"><span>HT</span><i></i></div>
+          <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" role="img" aria-label="辅助工具">
+          <defs>
+            <linearGradient id="ht-panel" x1="6" y1="4" x2="42" y2="46" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#071614"/><stop offset="1" stop-color="#0a1220"/></linearGradient>
+            <linearGradient id="ht-edge" x1="7" y1="5" x2="43" y2="45" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#34e0b0" stop-opacity=".92"/><stop offset=".55" stop-color="#6ee7ff" stop-opacity=".62"/><stop offset="1" stop-color="#a78bfa" stop-opacity=".55"/></linearGradient>
+            <linearGradient id="ht-glyph" x1="12.2" y1="13.4" x2="35.8" y2="34.6" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#34e0b0"/><stop offset="1" stop-color="#6ee7ff"/></linearGradient>
+            <linearGradient id="ht-panel-light" x1="6" y1="4" x2="42" y2="46" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#eef8f5"/><stop offset="1" stop-color="#dbe9ed"/></linearGradient>
+            <linearGradient id="ht-glyph-light" x1="12.2" y1="13.4" x2="35.8" y2="34.6" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#06614d"/><stop offset="1" stop-color="#0a5069"/></linearGradient>
+          </defs>
+          <g class="ht-v-dark">
+            <rect x="2.75" y="2.75" width="42.5" height="42.5" rx="12.4" fill="url(#ht-panel)" stroke="url(#ht-edge)" stroke-width="1.5"/>
+            <g fill="url(#ht-glyph)"><rect x="13.6" y="13.4" width="20.8" height="4.4" rx="1.1"/><rect x="21.4" y="17.8" width="5.2" height="12.4" rx="1"/><rect x="12.2" y="30.2" width="23.6" height="4.4" rx="1.1"/></g>
+          </g>
+          <g class="ht-v-light">
+            <rect x="2.75" y="2.75" width="42.5" height="42.5" rx="12.4" fill="url(#ht-panel-light)" stroke="rgba(8,72,64,0.36)" stroke-width="1.5"/>
+            <g fill="url(#ht-glyph-light)"><rect x="13.6" y="13.4" width="20.8" height="4.4" rx="1.1"/><rect x="21.4" y="17.8" width="5.2" height="12.4" rx="1"/><rect x="12.2" y="30.2" width="23.6" height="4.4" rx="1.1"/></g>
+          </g>
+        </svg>
+          </span>
           <div class="brand-copy">
             <strong>辅助工具</strong>
-            <small>HELPER / TOOLS</small>
+            <small>HELPER<i>·</i>TOOLS<i>·</i><b id="brand-version">v-</b></small>
           </div>
         </div>
-        <div class="sidebar-rule" aria-hidden="true"></div>
-        <nav class="nav-list" aria-label="页面导航">
-          <button class="nav-item active" type="button" data-tab="overview">概览</button>
-          <button class="nav-item" type="button" data-tab="config">模块配置</button>
-          <button class="nav-item" type="button" data-tab="activity">运行记录</button>
-          <button class="nav-item" type="button" data-tab="storage">存储诊断</button>
-          <button class="nav-item" type="button" data-tab="about">说明</button>
-          <button class="nav-item" type="button" data-tab="wallpaper">壁纸库</button>
-        </nav>
-        <div class="sidebar-footer">
-          <div class="sidebar-footer-heading">
-            <div class="theme-label"><span>界面外观</span><i><b></b>已连接</i></div>
-            <button id="reload-button" class="icon-action sidebar-reload-action" type="button" title="重新读取配置与状态" aria-label="重新读取配置与状态">↻</button>
-          </div>
+        <div class="header-actions">
           <div class="theme-switcher" role="group" aria-label="控制台主题">
-            <button class="theme-option" type="button" data-theme="dark" aria-pressed="true">
-              <span class="theme-swatch night" aria-hidden="true"></span>夜间
-            </button>
-            <button class="theme-option" type="button" data-theme="light" aria-pressed="false">
-              <span class="theme-swatch daylight" aria-hidden="true"></span>普通
-            </button>
+            <button class="theme-option" type="button" data-theme="dark" aria-pressed="true"><span class="theme-swatch night" aria-hidden="true"></span><i class="theme-name">夜间</i></button>
+            <button class="theme-option" type="button" data-theme="light" aria-pressed="false"><span class="theme-swatch daylight" aria-hidden="true"></span><i class="theme-name">普通</i></button>
           </div>
-          <button id="save-button" class="primary-action sidebar-save-action" type="button"><span>保存配置</span></button>
-          <p id="sidebar-status" class="sidebar-status">正在连接控制台...</p>
+          <button id="reload-button" class="header-action" type="button" title="重新读取配置与状态"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 9a6.2 6.2 0 1 1-1.95-4.5"/><path d="M15.4 2.6v3.7h-3.7"/></svg><span class="action-label">刷新</span></button>
+          <button id="save-button" class="primary-action" type="button" title="保存当前配置"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 4.6a1.8 1.8 0 0 1 1.8-1.8h6.35l4.25 4.25v6.35a1.8 1.8 0 0 1-1.8 1.8h-8.8a1.8 1.8 0 0 1-1.8-1.8Z"/><path d="M6 2.8v3.9h5.1V2.8"/><path d="M6 15.2v-4.4h6v4.4"/></svg><span>保存配置</span></button>
         </div>
-      </aside>
+      </header>
 
-      <section class="workspace">
+      <nav class="tab-bar" aria-label="页面导航">
+        <button class="nav-item active" type="button" data-tab="overview"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.6" y="2.6" width="5.6" height="5.6" rx="1.3"/><rect x="9.8" y="2.6" width="5.6" height="5.6" rx="1.3"/><rect x="2.6" y="9.8" width="5.6" height="5.6" rx="1.3"/><rect x="9.8" y="9.8" width="5.6" height="5.6" rx="1.3"/></svg><span>概览</span></button>
+        <button class="nav-item" type="button" data-tab="config"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.6 5.4h6.3M13.4 5.4h2M2.6 12.6h2.2M9.1 12.6h6.3"/><circle cx="11.2" cy="5.4" r="2.1"/><circle cx="6.9" cy="12.6" r="2.1"/></svg><span>模块配置</span><i class="nav-badge" id="tab-badge-config" hidden></i></button>
+        <button class="nav-item" type="button" data-tab="activity"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.4 9h2.9l2-5 2.6 10 2-5h3.7"/></svg><span>运行记录</span><i class="nav-badge" id="tab-badge-activity" hidden></i></button>
+        <button class="nav-item" type="button" data-tab="wallpaper"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3.1" width="13" height="11.8" rx="2.1"/><circle cx="6.4" cy="7.1" r="1.35"/><path d="M2.9 12.6 6.5 9.4l3 2.5 2.5-2.6 3.1 3.1"/></svg><span>壁纸库</span><i class="nav-badge" id="tab-badge-wallpaper" hidden></i></button>
+        <button class="nav-item" type="button" data-tab="storage"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="9" cy="4.6" rx="5.9" ry="2.4"/><path d="M3.1 4.6v8.8c0 1.33 2.64 2.4 5.9 2.4s5.9-1.07 5.9-2.4V4.6"/><path d="M3.1 9c0 1.33 2.64 2.4 5.9 2.4S14.9 10.33 14.9 9"/></svg><span>存储诊断</span></button>
+        <button class="nav-item" type="button" data-tab="about"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="9" r="6.4"/><path d="M9 8.2v4.3M9 5.6h.01"/></svg><span>说明</span></button>
+      </nav>
+
+      <main class="app-main">
         <header class="page-header">
           <div>
             <p id="page-kicker" class="page-kicker">HELPER / CONTROL</p>
@@ -193,8 +203,20 @@
             <div id="about-content" class="about-content"></div>
           </section>
         </section>
-      </section>
-    </main>
+      </main>
+
+      <footer class="app-status">
+        <p id="sidebar-status" class="app-status-text">正在连接控制台...</p>
+        <div class="app-status-meta">
+          <button class="status-link" type="button" data-open-tab="config">模块配置</button>
+          <span class="status-sep" aria-hidden="true">·</span>
+          <button class="status-link" type="button" data-open-tab="storage">存储诊断</button>
+          <span class="status-sep" aria-hidden="true">·</span>
+          <button class="status-link" type="button" data-open-tab="about">说明</button>
+          <span class="status-version" id="footer-version">astrbot · v-</span>
+        </div>
+      </footer>
+    </div>
     <dialog id="wallpaper-library-management-dialog" class="wallpaper-dialog wallpaper-library-management-dialog">
       <div class="wallpaper-dialog-form">
         <div class="dialog-heading"><div><p class="eyebrow">LIBRARY MANAGEMENT</p><h2>图库管理</h2></div><button class="dialog-close" type="button" data-close-dialog="wallpaper-library-management-dialog" title="关闭" aria-label="关闭">×</button></div>
@@ -241,11 +263,11 @@
     </dialog>
     <dialog id="wallpaper-library-purge-dialog" class="wallpaper-dialog wallpaper-rename-dialog">
       <form id="wallpaper-library-purge-form" class="wallpaper-dialog-form">
-        <div class="dialog-heading"><div><p class="eyebrow">DELETE LIBRARY FILES</p><h2>删除图库文件</h2></div><button class="dialog-close" type="button" data-close-dialog="wallpaper-library-purge-dialog" title="关闭" aria-label="关闭">×</button></div>
+        <div class="dialog-heading"><div><p class="eyebrow">DELETE LIBRARY IMAGES</p><h2>删除图库图片</h2></div><button class="dialog-close" type="button" data-close-dialog="wallpaper-library-purge-dialog" title="关闭" aria-label="关闭">×</button></div>
         <input id="wallpaper-library-purge-id" type="hidden" />
         <p id="wallpaper-library-purge-note" class="dialog-note"></p>
         <label class="dialog-field"><span>输入图库名称确认</span><input id="wallpaper-library-purge-name" type="text" required maxlength="100" autocomplete="off" /></label>
-        <div class="dialog-actions"><button class="quiet-action" type="button" data-close-dialog="wallpaper-library-purge-dialog">取消</button><button class="danger-action" type="submit">删除配置和文件</button></div>
+        <div class="dialog-actions"><button class="quiet-action" type="button" data-close-dialog="wallpaper-library-purge-dialog">取消</button><button class="danger-action" type="submit">删除配置和图片</button></div>
       </form>
     </dialog>
     <dialog id="confirm-action-dialog" class="wallpaper-dialog confirm-action-dialog">
@@ -256,6 +278,6 @@
       </form>
     </dialog>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=0.10.14"></script>
+    <script type="module" src="./app.js?v=0.12.0"></script>
   </body>
 </html>

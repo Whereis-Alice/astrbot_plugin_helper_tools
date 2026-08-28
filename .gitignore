@@ -1,3 +1,6 @@
+# AstrBot 运行期生成的插件数据目录（配置副本、缓存、图库索引等），不入库。
+data/
+
 __pycache__/
 *.py[cod]
 .venv/

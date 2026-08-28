@@ -1,7 +1,7 @@
 name: astrbot_plugin_helper_tools
 display_name: "辅助工具合集"
 desc: "为 AstrBot 注册 QQ、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等辅助能力。"
-version: v0.11.1
+version: v0.12.0
 author: Huli3
 repo: https://github.com/Whereis-Alice/astrbot_plugin_helper_tools
 astrbot_version: ">=4.16,<5"

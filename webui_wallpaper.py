@@ -13,7 +13,6 @@ import base64
 import hashlib
 import os
 import re
-import shutil
 import uuid
 import warnings
 from contextlib import contextmanager
@@ -440,25 +439,24 @@ class WallpaperLibraryDashboard:
     ) -> dict[str, Any]:
         record = self.get_library(library_id)
         root = record.library.path
-        files_deleted = False
+        root_existed = False
+        removal = self._empty_purge_result()
         if delete_files:
             root = self._library_root(record)
             if clean_text(confirmation_name) != record.library.name:
                 raise WallpaperDashboardError("请输入完全一致的图库名称后再删除磁盘文件。")
             if root.exists():
+                root_existed = True
                 self._assert_library_root_can_be_deleted(record, root)
-                try:
-                    shutil.rmtree(root)
-                except OSError as exc:
-                    raise WallpaperDashboardError(f"删除图库目录失败：{exc}") from exc
+                removal = self._delete_library_images(record, root)
                 self._remove_registry_under_root(root)
-                files_deleted = True
+        files_deleted = removal["deleted"] > 0 or removal["directory_removed"]
         entries = self._libraries_config()
         entries.pop(record.index)
         if delete_files:
             message = (
-                "已删除壁纸库配置和磁盘中的图库目录。"
-                if files_deleted
+                self._purge_message(removal)
+                if root_existed
                 else "图库目录原本不存在，已删除壁纸库配置。"
             )
         else:
@@ -467,6 +465,10 @@ class WallpaperLibraryDashboard:
             "name": record.library.name,
             "resolved_path": str(root),
             "files_deleted": files_deleted,
+            "images_deleted": removal["deleted"],
+            "images_failed": removal["failed"],
+            "kept_files": removal["kept"],
+            "directory_removed": removal["directory_removed"],
             "message": message,
         }
 
@@ -596,6 +598,95 @@ class WallpaperLibraryDashboard:
             raise WallpaperDashboardError(f"无法创建壁纸库目录：{exc}") from exc
         return root
 
+    @staticmethod
+    def _empty_purge_result() -> dict[str, Any]:
+        return {
+            "deleted": 0,
+            "failed": 0,
+            "kept": 0,
+            "directory_removed": False,
+            "truncated": False,
+        }
+
+    def _delete_library_images(
+        self,
+        record: ManagedWallpaperLibrary,
+        root: Path,
+    ) -> dict[str, Any]:
+        """Delete only the indexed image files below root and keep the rest.
+
+        「删除磁盘文件」以前是 shutil.rmtree(root)，一旦图库路径指向混放目录
+        （极端情况下是用户主目录），无关文件会被一起递归删掉且无法恢复。这里
+        改成按索引结果逐个删除受支持扩展名的图片，再回收因此变空的目录，
+        非图片文件一律保留并计数回报给控制台。
+        """
+
+        scan = self._scan(record)
+        allowed = self.wallpaper.allowed_extensions()
+        deleted = 0
+        failed = 0
+        for path in scan.files:
+            try:
+                if path.is_symlink():
+                    continue
+                resolved = path.resolve(strict=False)
+                if not resolved.is_relative_to(root):
+                    continue
+                if resolved.suffix.lower() not in allowed:
+                    continue
+                if not resolved.is_file():
+                    continue
+                resolved.unlink()
+            except OSError:
+                failed += 1
+                continue
+            deleted += 1
+        self._prune_empty_directories(root)
+        return {
+            "deleted": deleted,
+            "failed": failed,
+            "kept": self._count_remaining_files(root),
+            "directory_removed": not root.exists(),
+            "truncated": scan.truncated,
+        }
+
+    @staticmethod
+    def _prune_empty_directories(root: Path) -> None:
+        """Remove the directories a purge emptied, deepest first, root included."""
+
+        for current, _directories, _files in os.walk(root, topdown=False):
+            directory = Path(current)
+            try:
+                if directory.is_symlink():
+                    continue
+                directory.rmdir()
+            except OSError:
+                continue
+
+    @staticmethod
+    def _count_remaining_files(root: Path) -> int:
+        """Count the files a purge deliberately left behind, bounded for safety."""
+
+        total = 0
+        for _current, _directories, files in os.walk(root):
+            total += len(files)
+            if total >= _MAX_LIBRARY_SCAN_ENTRIES:
+                return _MAX_LIBRARY_SCAN_ENTRIES
+        return total
+
+    @staticmethod
+    def _purge_message(removal: dict[str, Any]) -> str:
+        parts = [f"已删除 {removal['deleted']} 张已索引图片"]
+        if removal["failed"]:
+            parts.append(f"{removal['failed']} 张图片删除失败")
+        if removal["kept"]:
+            parts.append(f"保留 {removal['kept']} 个非图片文件")
+        if removal["truncated"]:
+            parts.append("目录过大，只处理了已扫描到的部分")
+        if removal["directory_removed"]:
+            parts.append("已清空的图库目录也已删除")
+        return "，".join(parts) + "。已删除壁纸库配置。"
+
     def _assert_library_root_can_be_deleted(
         self,
         record: ManagedWallpaperLibrary,
@@ -619,6 +710,8 @@ class WallpaperLibraryDashboard:
 
         if root in {data_root, wallpaper_root}:
             raise WallpaperDashboardError("不能删除插件数据目录或 wallpapers 总目录。")
+        if root == self._home_directory():
+            raise WallpaperDashboardError("不能对用户主目录执行磁盘删除。")
 
         for other in self._configured_libraries():
             if other.index == record.index:
@@ -628,6 +721,13 @@ class WallpaperLibraryDashboard:
                 raise WallpaperDashboardError(
                     "该图库目录与另一条壁纸库配置重叠，不能删除磁盘文件。"
                 )
+
+    @staticmethod
+    def _home_directory() -> Path | None:
+        try:
+            return Path.home().resolve(strict=False)
+        except (OSError, RuntimeError):
+            return None
 
     @staticmethod
     def _paths_overlap(first: Path, second: Path) -> bool:
