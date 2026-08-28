@@ -14,8 +14,8 @@ class DashboardAssetTests(unittest.TestCase):
 
         self.assertIn('id="confirm-action-dialog"', markup)
         self.assertIn('id="confirm-action-form"', markup)
-        self.assertIn('style.css?v=0.12.0', markup)
-        self.assertIn('app.js?v=0.12.0', markup)
+        self.assertIn('style.css?v=1.0.0', markup)
+        self.assertIn('app.js?v=1.0.0', markup)
         self.assertIn("async function deleteWallpaperImage(image)", script)
         self.assertIn("await confirmAction(`删除图片", script)
         self.assertIn("await confirmAction(`删除图库", script)
@@ -23,7 +23,7 @@ class DashboardAssetTests(unittest.TestCase):
         self.assertNotIn('window.confirm(`删除图库', script)
 
     def test_dashboard_uses_the_top_tab_bar_shell(self) -> None:
-        """v0.12.0 起控制台改成顶栏 + 横向标签栏，防止回退到旧的侧边栏结构。"""
+        """v1.0.0 起控制台改成顶栏 + 横向标签栏，防止回退到旧的侧边栏结构。"""
         markup = (WEBUI_ROOT / "index.html").read_text(encoding="utf-8")
         stylesheet = (WEBUI_ROOT / "style.css").read_text(encoding="utf-8")
 
