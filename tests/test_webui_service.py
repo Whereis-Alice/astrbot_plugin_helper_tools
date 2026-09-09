@@ -61,8 +61,6 @@ class _Plugin:
             repository=SimpleNamespace(path=str(data_dir / "chat_history.sqlite3"))
         )
         self.avatar_rotation = SimpleNamespace(_cron_job_id="avatar-job")
-        self.bilibili = SimpleNamespace(credentials=None)
-        self.bilibili_qr_login = SimpleNamespace(is_active=lambda: False)
 
     def refresh_llm_tool_states(self, changed_modules: list[str] | None) -> list[str]:
         self.refresh_calls.append(changed_modules)
@@ -127,10 +125,6 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
         self.config = _Config(
             self.data_dir / "config.json",
             {
-                "bilibili_video": {
-                    "cookie": "SESSDATA=top-secret-cookie",
-                    "gemini": {"api_key": "gemini-secret-key"},
-                },
                 "twitter": {
                     "ai_review": {"api_key": "review-secret-key"},
                 },
@@ -256,14 +250,11 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
         state = await self._state()
         rendered = json.dumps(state, ensure_ascii=False)
 
-        self.assertNotIn("top-secret-cookie", rendered)
-        self.assertNotIn("gemini-secret-key", rendered)
         self.assertNotIn("review-secret-key", rendered)
-        self.assertEqual(state["config"]["bilibili_video"]["cookie"], "")
-        self.assertTrue(state["secret_state"]["bilibili_video.cookie"]["configured"])
-        self.assertTrue(
-            state["secret_state"]["bilibili_video.gemini.api_key"]["configured"]
-        )
+        self.assertNotIn("bilibili_video", state["config"])
+        self.assertNotIn("bilibili_article", state["config"])
+        self.assertNotIn("reply_card_reader", state["config"])
+        self.assertTrue(state["secret_state"]["twitter.ai_review.api_key"]["configured"])
         self.assertIn(
             "get_qq_avatar",
             {item["name"] for item in state["llm_tools"]},
@@ -280,16 +271,16 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self._save(config)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            self.config["bilibili_video"]["cookie"],
-            "SESSDATA=top-secret-cookie",
+            self.config["twitter"]["ai_review"]["api_key"],
+            "review-secret-key",
         )
 
-        config["bilibili_video"]["cookie"] = {
+        config["twitter"]["ai_review"]["api_key"] = {
             "__helper_tools_secret_action": "clear"
         }
         response = await self._save(config)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.config["bilibili_video"]["cookie"], "")
+        self.assertEqual(self.config["twitter"]["ai_review"]["api_key"], "")
 
     async def test_save_clamps_numbers_validates_options_and_refreshes_tools(self) -> None:
         state = await self._state()
@@ -539,7 +530,6 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_wallpaper_library_api_returns_current_config_rows(self) -> None:
         response = await self.client.get("/wallpaper-libraries")
         body = await response.get_json()
-
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             body["config_libraries"],
@@ -586,7 +576,6 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
                 "create_directory": True,
             },
         )
-        body = await response.get_json()
         self.assertEqual(response.status_code, 200)
 
         # This is the payload the fixed WebUI builds after replacing its old

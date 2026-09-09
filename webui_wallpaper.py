@@ -787,7 +787,7 @@ class WallpaperLibraryDashboard:
                     format_name = clean_text(image.format, path.suffix.lstrip(".").upper())
                     frames = int(getattr(image, "n_frames", 1) or 1)
                     readable = True
-            except (Image.DecompressionBombError, OSError, UnidentifiedImageError, ValueError) as exc:
+            except (Image.DecompressionBombError, OSError, UnidentifiedImageError, ValueError):
                 error = "图片格式损坏或超出预览安全限制。"
         return {
             "name": path.name,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 from collections.abc import Awaitable
 from typing import Any
@@ -19,21 +18,6 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from .anime1_service import Anime1Service
 from .anti_revoke_service import AntiRevokeService
 from .avatar_rotation_service import AvatarRotationService
-from .bilibili_article_service import (
-    ARTICLE_RESOLVED_ATTR,
-    BILIBILI_ARTICLE_CONTEXT_PREFIX,
-    BILIBILI_ARTICLE_FAILURE_PREFIX,
-    BilibiliArticleContext,
-    BilibiliArticleService,
-    request_has_bilibili_article_context,
-)
-from .bilibili_qr_login import BilibiliQrLoginError, BilibiliQrLoginService
-from .bilibili_service import (
-    BILIBILI_TOOL_NAME,
-    BilibiliVideoService,
-    request_has_bilibili_context,
-)
-from .bilibili_types import BilibiliVideoContext
 from .bot_profile_service import BOT_PROFILE_TOOL_NAME, BotProfileService
 from .chat_history_card import ChatHistoryCardRenderer
 from .chat_history_service import (
@@ -79,7 +63,6 @@ from .qq_features import (
     normalize_avatar_size,
 )
 from .qq_like_service import QQProfileLikeService
-from .reply_card_reader import ReplyCardReader
 from .reply_media_guard import BOT_REPLY_IMAGE_MARKER, ReplyMediaGuard
 from .rollpig_service import RollPigService
 from .steam_service import STEAM_TOOL_NAME, SteamService
@@ -109,20 +92,16 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "1.0.2"
-PLUGIN_DESC = "辅助工具合集：为 AstrBot 注册 QQ、防撤回、戳一戳互动、B站视频与专栏理解、X/Twitter资料检索、网页浏览、环境感知、群聊历史检索、今日小猪、Anime1、收款码、随机语音、Steam、QQ 名片点赞、引用媒体识别、唤醒增强、壁纸图库等工具。"
+PLUGIN_VERSION = "2.0.0"
+PLUGIN_DESC = "QQ / OneBot 辅助工具合集：防撤回、戳一戳、QQ 资料、壁纸、唤醒、网页与 X/Twitter 等能力。B 站与引用卡片解析已拆分为独立插件。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
 ToolResult = str | CallToolResult
-_BILIBILI_TOOL_IMAGE_MARKER = f"[Image from tool '{BILIBILI_TOOL_NAME}'"
 _POKE_SYNTHETIC_CONTEXT_MARKER = "[戳一戳插件内部命令]"
 _TEMPORARY_TOOL_RESULT_MARKERS = (
-    _BILIBILI_TOOL_IMAGE_MARKER,
     EMPTY_WAKE_PROMPT_MARKER,
     WEB_BROWSER_RESULT_MARKER,
     TWITTER_CONTEXT_PREFIX,
-    BILIBILI_ARTICLE_CONTEXT_PREFIX,
-    BILIBILI_ARTICLE_FAILURE_PREFIX,
     CHAT_HISTORY_TOOL_RESULT_MARKER,
     *TWITTER_TOOL_IMAGE_MARKERS,
 )
@@ -236,19 +215,6 @@ def _append_reply_media_marker(request: Any, marker: str) -> None:
     request.prompt = f"{original_prompt}\n\n{marker}".strip()
 
 
-def _bilibili_tool_result(context: BilibiliVideoContext) -> ToolResult:
-    if not context.frames:
-        return context.text
-    content: list[Any] = [TextContent(type="text", text=context.text)]
-    for frame in context.frames:
-        content.append(
-            ImageContent(
-                type="image",
-                data=frame.data_url.partition(",")[2],
-                mimeType=frame.mime_type,
-            )
-        )
-    return CallToolResult(content=content, isError=False)
 
 
 def _web_browser_tool_result(result: WebPageResult) -> ToolResult:
@@ -349,10 +315,6 @@ def _mark_temporary_tool_results(run_context: Any) -> int:
     return marked_messages
 
 
-def _mark_bilibili_tool_frames_temporary(run_context: Any) -> int:
-    """Backward-compatible helper retained for existing integrations and tests."""
-
-    return _mark_temporary_tool_results(run_context)
 
 
 @pydantic_dataclass
@@ -778,39 +740,6 @@ class SteamSearchTool(FunctionTool[AstrAgentContext]):
 
 
 @pydantic_dataclass
-class UnderstandBilibiliVideoTool(FunctionTool[AstrAgentContext]):
-    plugin: Any = Field(default=None, repr=False)
-    name: str = BILIBILI_TOOL_NAME
-    description: str = (
-        "读取并理解哔哩哔哩视频内容。支持 B 站链接、BV号、av号、"
-        "b23.tv 短链及包含这些内容的分享文本；返回视频事实供当前人格自然回答。"
-    )
-    parameters: dict[str, Any] = Field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "video": {
-                    "type": "string",
-                    "description": "B站链接、BV号、av号、b23.tv短链或完整分享文本。",
-                },
-                "force_refresh": {
-                    "type": "boolean",
-                    "description": "忽略已有缓存并重新分析视频。",
-                    "default": False,
-                },
-            },
-            "required": ["video"],
-        }
-    )
-
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> ToolResult:
-        if self.plugin is None:
-            return "B站视频理解工具未绑定插件实例。"
-        result = await self.plugin.bilibili.analyze_input_result(
-            clean_text(kwargs.get("video")),
-            force_refresh=_bool_arg(kwargs.get("force_refresh"), False),
-        )
-        return _bilibili_tool_result(result)
 
 
 @pydantic_dataclass
@@ -1235,7 +1164,11 @@ class SearchCurrentGroupChatHistoryTool(FunctionTool[AstrAgentContext]):
 
 @register(PLUGIN_ID, "Huli3", PLUGIN_DESC, PLUGIN_VERSION, PLUGIN_REPO)
 class HelperToolsPlugin(Star):
-    """LLM-callable helper tools for AstrBot."""
+    """LLM-callable non-media helper tools for AstrBot.
+
+    Bilibili parsing and quoted rich-card hydration live in the standalone
+    ``astrbot_plugin_bilibili_card_parser`` plugin to avoid duplicate hooks.
+    """
 
     def __init__(
         self,
@@ -1243,7 +1176,10 @@ class HelperToolsPlugin(Star):
         config: AstrBotConfig | dict[str, Any] | None = None,
     ) -> None:
         super().__init__(context, config)
-        self.config = config or {}
+        # ``AstrBotConfig`` implements mapping semantics but an empty config is
+        # still a valid object.  Do not replace it with a plain dict: doing so
+        # would make Dashboard saves silently skip AstrBot's persistence hook.
+        self.config = config if config is not None else {}
         self.data_dir = StarTools.get_data_dir(PLUGIN_ID)
         self._sync_onebot_platform_names()
 
@@ -1255,23 +1191,11 @@ class HelperToolsPlugin(Star):
         self.steam = SteamService(self.config, self.context)
         self.bot_profile = BotProfileService(self.config, self.context, self.data_dir)
         self.avatar_rotation = AvatarRotationService(self.config, self.data_dir, self.context)
-        self.bilibili = BilibiliVideoService(self.config, self.data_dir)
-        self.bilibili_qr_login = BilibiliQrLoginService(
-            self.config,
-            self.data_dir,
-            self.bilibili.credentials,
-        )
         self.perception = EnvironmentPerceptionService(self.config)
         self.anti_revoke = AntiRevokeService(self.config, self.data_dir)
         self.chat_history = ChatHistoryService(self.config, self.data_dir)
         self.chat_history_card = ChatHistoryCardRenderer()
         self.reply_media_guard = ReplyMediaGuard(self.config)
-        self.reply_card_reader = ReplyCardReader(self.config)
-        self.bilibili_article = BilibiliArticleService(
-            self.config,
-            self.bilibili,
-            self.reply_card_reader,
-        )
         self.wake = WakeService(self.config, self.context)
         self.wallpaper = WallpaperService(self.config, self.data_dir, self.context)
         self.rollpig = RollPigService(self.config, self.data_dir, self.context)
@@ -1293,8 +1217,6 @@ class HelperToolsPlugin(Star):
             await self.avatar_rotation.start()
             await self.poke.start()
             await self.anti_revoke.start()
-            if _module_enabled(self.config, "bilibili_video"):
-                await self.bilibili.start()
         _record_dashboard_activity(
             self,
             "webui",
@@ -1307,9 +1229,6 @@ class HelperToolsPlugin(Star):
         self.chat_history.close()
         await self.twitter.close()
         await self.web_browser.close()
-        await self.bilibili_qr_login.close()
-        await self.bilibili_article.close()
-        await self.bilibili.close()
         await self.avatar_rotation.stop()
         await self.poke.stop()
         await self.anti_revoke.stop()
@@ -1400,12 +1319,6 @@ class HelperToolsPlugin(Star):
             and self.twitter.commands_enabled()
         )
 
-    def _bilibili_qr_login_commands_enabled(self) -> bool:
-        return (
-            self.enabled()
-            and _module_enabled(self.config, "bilibili_video")
-            and self.bilibili_qr_login.commands_enabled()
-        )
 
     def _build_tools(self) -> list[FunctionTool[AstrAgentContext]]:
         return [
@@ -1420,10 +1333,6 @@ class HelperToolsPlugin(Star):
             Anime1WatchURLTool(plugin=self, active=self._tool_active("anime1")),
             RandomVoiceTool(plugin=self, active=self._tool_active("voice")),
             SteamSearchTool(plugin=self, active=self._tool_active("steam")),
-            UnderstandBilibiliVideoTool(
-                plugin=self,
-                active=self._tool_active("bilibili_video"),
-            ),
             WebBrowserTool(plugin=self, active=self._web_browser_tool_active()),
             FindXAccountTool(plugin=self, active=self._tool_active("twitter", False)),
             GetXPostTool(plugin=self, active=self._tool_active("twitter", False)),
@@ -1459,7 +1368,6 @@ class HelperToolsPlugin(Star):
             "get_anime1_watch_url": ("anime1", True),
             VOICE_TOOL_NAME: ("voice", True),
             STEAM_TOOL_NAME: ("steam", True),
-            BILIBILI_TOOL_NAME: ("bilibili_video", True),
             WEB_BROWSER_TOOL_NAME: ("web_browser", False),
             X_ACCOUNT_TOOL_NAME: ("twitter", False),
             X_POST_TOOL_NAME: ("twitter", False),
@@ -1767,155 +1675,8 @@ class HelperToolsPlugin(Star):
         )
 
     @filter.on_llm_request(priority=21)
-    async def bilibili_article_context_handler(
-        self,
-        event: AstrMessageEvent,
-        request: Any,
-    ) -> None:
-        """Attach a referenced Bilibili column as temporary text and cover evidence."""
-        if (
-            not self.enabled()
-            or not _module_enabled(self.config, "bilibili_article")
-            or request_has_bilibili_article_context(request)
-        ):
-            return
-        is_stopped = getattr(event, "is_stopped", None)
-        if callable(is_stopped) and is_stopped():
-            return
-
-        context_result = getattr(event, "_helper_tools_bilibili_article_context", None)
-        if not isinstance(context_result, BilibiliArticleContext):
-            context_result = await self.bilibili_article.context_for_event_result(event)
-            if not context_result.text:
-                return
-            event._helper_tools_bilibili_article_context = context_result
-
-        parts = getattr(request, "extra_user_content_parts", None)
-        if isinstance(parts, list):
-            parts.append(
-                _mark_content_part_temporary(TextPart(text=context_result.text))
-            )
-            if context_result.cover_data_url:
-                parts.append(
-                    _mark_content_part_temporary(
-                        ImageURLPart(
-                            image_url=ImageURLPart.ImageURL(
-                                url=context_result.cover_data_url,
-                                id="bilibili-article-cover",
-                            )
-                        )
-                    )
-                )
-        else:
-            original_prompt = clean_text(getattr(request, "prompt", ""))
-            fallback_text = context_result.text
-            if context_result.cover_data_url:
-                fallback_text += (
-                    "\n\n专栏封面已读取，但当前 AstrBot 请求不支持附加图片，"
-                    "本轮不会使用封面视觉内容。"
-                )
-            request.prompt = f"{original_prompt}\n\n{fallback_text}".strip()
-        logger.info(
-            "[%s] attached Bilibili article context (session=%s, cover=%s, chars=%d)",
-            PLUGIN_ID,
-            clean_text(getattr(event, "unified_msg_origin", "")),
-            bool(context_result.cover_data_url),
-            len(context_result.text),
-        )
-        article_failed = context_result.text.startswith(BILIBILI_ARTICLE_FAILURE_PREFIX)
-        _record_dashboard_activity(
-            self,
-            "bilibili_article",
-            "注入 B 站专栏上下文",
-            status="warning" if article_failed else "success",
-            detail=(
-                "专栏读取未完整成功，已向模型说明可用边界。"
-                if article_failed
-                else (
-                    f"已附带{'封面图和' if context_result.cover_data_url else ''}"
-                    f"专栏文本资料（约 {len(context_result.text)} 字）。"
-                )
-            ),
-            event=event,
-        )
 
     @filter.on_llm_request(priority=20)
-    async def bilibili_video_context_handler(
-        self,
-        event: AstrMessageEvent,
-        request: Any,
-    ) -> None:
-        """Attach video facts to the current main Agent request."""
-        if (
-            not self.enabled()
-            or not _module_enabled(self.config, "bilibili_video")
-            or self.bilibili.auto_parse_mode() == "off"
-            or request_has_bilibili_context(request)
-            or getattr(event, ARTICLE_RESOLVED_ATTR, False) is True
-        ):
-            return
-        is_stopped = getattr(event, "is_stopped", None)
-        if callable(is_stopped) and is_stopped():
-            return
-
-        context_result = getattr(event, "_helper_tools_bilibili_context_result", None)
-        if not isinstance(context_result, BilibiliVideoContext):
-            context_result = await self.bilibili.context_for_event_result(event)
-            if not context_result.text:
-                return
-            event._helper_tools_bilibili_context_result = context_result
-
-        parts = getattr(request, "extra_user_content_parts", None)
-        if isinstance(parts, list):
-            parts.append(
-                _mark_content_part_temporary(TextPart(text=context_result.text))
-            )
-            for frame in context_result.frames:
-                parts.append(
-                    _mark_content_part_temporary(
-                        ImageURLPart(
-                            image_url=ImageURLPart.ImageURL(
-                                url=frame.data_url,
-                                id=(
-                                    f"bilibili-frame-{frame.index}-"
-                                    f"{frame.timestamp:.3f}"
-                                ),
-                            )
-                        )
-                    )
-                )
-        else:
-            original_prompt = clean_text(getattr(request, "prompt", ""))
-            fallback_text = context_result.text
-            if context_result.frames:
-                fallback_text += (
-                    "\n\n视觉抽帧已生成，但当前 AstrBot 请求不支持附加图片，"
-                    "本轮不会使用这些画面。"
-                )
-            request.prompt = f"{original_prompt}\n\n{fallback_text}".strip()
-        logger.info(
-            "[%s] attached Bilibili video context (session=%s, mode=%s, frames=%d)",
-            PLUGIN_ID,
-            clean_text(getattr(event, "unified_msg_origin", "")),
-            self.bilibili.analysis_mode(),
-            len(context_result.frames),
-        )
-        video_failed = context_result.text.startswith("[B站视频解析失败]")
-        _record_dashboard_activity(
-            self,
-            "bilibili_video",
-            "注入 B 站视频上下文",
-            status="warning" if video_failed else "success",
-            detail=(
-                "视频读取未完整成功，已向模型说明可用边界。"
-                if video_failed
-                else (
-                    f"分析方式：{self.bilibili.analysis_mode()}；"
-                    f"本轮附带 {len(context_result.frames)} 张抽帧。"
-                )
-            ),
-            event=event,
-        )
 
     @filter.on_llm_request(priority=18)
     async def twitter_context_handler(
@@ -2049,41 +1810,13 @@ class HelperToolsPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=-99998)
     async def reply_media_context_handler(self, event: AstrMessageEvent):
-        """Preserve the source and readable content of quoted rich media."""
+        """Prepare references owned by Helper Tools (excluding media cards)."""
+
         if not self.enabled():
             return
-        card_result = self.reply_card_reader.enrich(event)
-        if card_result.card_count:
-            logger.info(
-                "[%s] made %d quoted card(s) readable in %d quote(s)",
-                PLUGIN_ID,
-                card_result.card_count,
-                card_result.enriched_reply_count,
-            )
-            _record_dashboard_activity(
-                self,
-                "reply_card_reader",
-                "读取引用卡片",
-                detail=(
-                    f"已提取 {card_result.enriched_reply_count} 条引用中的 "
-                    f"{card_result.card_count} 张卡片资料。"
-                ),
-                event=event,
-            )
-
-        reference = self.bilibili.prepare_event(event)
-        self.bilibili_article.prepare_event(event)
         twitter_reference = self.twitter.prepare_event(event)
         is_stopped = getattr(event, "is_stopped", None)
         stopped = callable(is_stopped) and is_stopped()
-        if (
-            reference is not None
-            and _module_enabled(self.config, "bilibili_video")
-            and self.bilibili.auto_parse_mode() == "direct"
-            and not stopped
-            and not self.wake.is_llm_request_blocked(event)
-        ):
-            event.should_call_llm(True)
         if (
             twitter_reference is not None
             and _module_enabled(self.config, "twitter", False)
@@ -2092,6 +1825,7 @@ class HelperToolsPlugin(Star):
             and not self.wake.is_llm_request_blocked(event)
         ):
             event.should_call_llm(True)
+
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=-99999)
     async def empty_wake_prompt_handler(self, event: AstrMessageEvent):
@@ -2103,118 +1837,6 @@ class HelperToolsPlugin(Star):
             "[%s] attached temporary prompt for an empty explicit wake (session=%s)",
             PLUGIN_ID,
             clean_text(getattr(event, "unified_msg_origin", "")),
-        )
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command(
-        "helper_bili_login",
-        alias={"助手B站登录", "助手B站扫码登录", "助手哔哩登录"},
-    )
-    async def bilibili_login_command(self, event: AstrMessageEvent):
-        """Send an administrator a Bilibili QR code and persist the resulting cookies."""
-
-        event.stop_event()
-        if not self._bilibili_qr_login_commands_enabled():
-            yield event.plain_result("B 站扫码登录命令当前未启用。")
-            return
-        group_getter = getattr(event, "get_group_id", None)
-        group_id = clean_text(group_getter() if callable(group_getter) else "")
-        if self.bilibili_qr_login.private_chat_only() and group_id:
-            yield event.plain_result(
-                "为避免二维码被群成员看到，请管理员在私聊中执行这个命令。"
-            )
-            return
-        try:
-            started = await self.bilibili_qr_login.start_login()
-        except asyncio.CancelledError:
-            raise
-        except BilibiliQrLoginError as exc:
-            yield event.plain_result(str(exc))
-            return
-        except Exception as exc:  # noqa: BLE001 - keep a login failure out of Agent flow
-            logger.warning("[%s] failed to create Bilibili login QR: %r", PLUGIN_ID, exc)
-            yield event.plain_result("创建 B 站登录二维码失败，请稍后重试。")
-            return
-
-        prompt = (
-            "已有一张 B 站登录二维码正在等待确认，请使用同一张二维码继续扫码。"
-            if started.reused_existing_qr
-            else "请使用哔哩哔哩 App 扫描下方二维码，并在手机上确认登录。"
-        )
-        yield event.chain_result(
-            [
-                Comp.Plain(prompt),
-                Comp.Image.fromFileSystem(str(started.qr_image_path)),
-            ]
-        )
-        try:
-            outcome = await self.bilibili_qr_login.wait_for_login(started)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - task failures are already contained, keep command safe
-            logger.warning("[%s] Bilibili QR login task failed: %r", PLUGIN_ID, exc)
-            yield event.plain_result("B 站扫码登录任务异常，请重新执行登录命令。")
-            return
-
-        if outcome.status != "success":
-            yield event.plain_result(outcome.message)
-            return
-
-        verification = await self.bilibili.verify_cookie()
-        yield event.plain_result(f"{outcome.message}\n{verification.message}")
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command(
-        "helper_bili_login_status",
-        alias={"助手B站登录状态", "助手哔哩登录状态"},
-    )
-    async def bilibili_login_status_command(self, event: AstrMessageEvent):
-        """Check the active Bilibili credentials without exposing their contents."""
-
-        event.stop_event()
-        if not self._bilibili_qr_login_commands_enabled():
-            yield event.plain_result("B 站扫码登录命令当前未启用。")
-            return
-        verification = await self.bilibili.verify_cookie()
-        yield event.plain_result(verification.message)
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command(
-        "helper_bili_login_cancel",
-        alias={"助手取消B站登录", "助手取消哔哩登录"},
-    )
-    async def bilibili_login_cancel_command(self, event: AstrMessageEvent):
-        """Cancel the active QR-login poll without deleting existing credentials."""
-
-        event.stop_event()
-        if not self._bilibili_qr_login_commands_enabled():
-            yield event.plain_result("B 站扫码登录命令当前未启用。")
-            return
-        if await self.bilibili_qr_login.cancel_login():
-            yield event.plain_result("已取消当前 B 站扫码登录。")
-            return
-        yield event.plain_result("当前没有正在等待确认的 B 站登录二维码。")
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command(
-        "helper_bili_logout",
-        alias={"助手B站退出", "助手B站登出", "助手哔哩退出"},
-    )
-    async def bilibili_logout_command(self, event: AstrMessageEvent):
-        """Remove only the credentials obtained through this plugin's QR login."""
-
-        event.stop_event()
-        if not self._bilibili_qr_login_commands_enabled():
-            yield event.plain_result("B 站扫码登录命令当前未启用。")
-            return
-        await self.bilibili_qr_login.cancel_login_and_wait()
-        cleared = await self.bilibili.credentials.clear()
-        await self.bilibili_qr_login.clear_qr_image()
-        if not cleared:
-            yield event.plain_result("清除扫码登录凭据失败，请检查插件数据目录权限。")
-            return
-        yield event.plain_result(
-            "已清除本插件保存的 B 站扫码凭据。配置页中的 Cookie 文本和 cookies.txt 不会被修改。"
         )
 
     @filter.command("helper_x_search", alias={"助手X搜索"})

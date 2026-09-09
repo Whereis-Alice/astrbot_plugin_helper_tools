@@ -46,11 +46,17 @@ _SENSITIVE_KEY_PARTS = (
     "api_key",
     "apikey",
     "cookie",
-    "token",
     "secret",
     "password",
     "authorization",
 )
+_SENSITIVE_EXACT_KEYS = {
+    "token",
+    "access_token",
+    "refresh_token",
+    "auth_token",
+    "bot_token",
+}
 _SAFE_PATH_PART = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$")
 _SAFE_FILE_STEM = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -644,7 +650,14 @@ class HelperToolsDashboard:
         return {
             str(name): value
             for name, value in raw.items()
-            if isinstance(name, str) and isinstance(value, dict)
+            if (
+                isinstance(name, str)
+                and isinstance(value, dict)
+                # The three former Bilibili/card sections remain in the
+                # persisted schema only as a copy-only migration bridge.  Do
+                # not surface them in the Helper dashboard after the split.
+                and not bool(value.get("invisible", False))
+            )
         }
 
     async def _json_body(self) -> dict[str, Any]:
@@ -913,21 +926,6 @@ class HelperToolsDashboard:
         llm_tools: list[dict[str, str]] | None = None,
     ) -> list[dict[str, Any]]:
         config = self._config_mapping()
-        bilibili_credentials = getattr(getattr(self.plugin, "bilibili", None), "credentials", None)
-        has_qr_credentials = False
-        try:
-            has_qr_credentials = bool(
-                callable(getattr(bilibili_credentials, "has_credentials", None))
-                and bilibili_credentials.has_credentials()
-            )
-        except Exception:  # noqa: BLE001 - dashboard must not fail on an unreadable credential file
-            pass
-        has_manual_cookie = self._has_value(cfg(config, "bilibili_video", "cookie", ""))
-        cookies_file = file_state.get("bilibili_video.cookies_file", {}).get("configured", False)
-        qr_service = getattr(self.plugin, "bilibili_qr_login", None)
-        qr_active = bool(
-            callable(getattr(qr_service, "is_active", None)) and qr_service.is_active()
-        )
         history_repository = getattr(getattr(self.plugin, "chat_history", None), "repository", None)
         history_path = getattr(history_repository, "path", None)
         try:
@@ -957,20 +955,6 @@ class HelperToolsDashboard:
                     + (f"，已注册 {registered_count} 项" if registered_count else "")
                 ),
                 "detail": "这里按当前已注册工具实例的 active 状态显示；保存相关模块配置后会立即同步。",
-            },
-            {
-                "key": "bilibili_credentials",
-                "label": "B 站登录凭据",
-                "state": "ready" if (has_qr_credentials or has_manual_cookie or cookies_file) else "empty",
-                "value": "已配置" if (has_qr_credentials or has_manual_cookie or cookies_file) else "未配置",
-                "detail": "扫码凭据、Cookie 文本和 cookies.txt 只显示状态，不会回传内容。",
-            },
-            {
-                "key": "bilibili_qr",
-                "label": "B 站扫码任务",
-                "state": "active" if qr_active else "idle",
-                "value": "正在等待扫码" if qr_active else "当前没有进行中的扫码",
-                "detail": "扫码二维码仍需从 QQ 管理员命令发起。",
             },
             {
                 "key": "twitter_source",
@@ -1072,7 +1056,6 @@ class HelperToolsDashboard:
             "payqr": ("send_payment_qr",),
             "anime1": ("get_anime1_updates", "get_anime1_watch_url"),
             "steam": ("search_steam_game",),
-            "bilibili_video": ("understand_bilibili_video",),
             "chat_history": ("search_current_group_chat_history",),
             "web_browser": ("browse_webpage",),
             "twitter": (
@@ -1465,7 +1448,14 @@ class HelperToolsDashboard:
         if str(schema_entry.get("type", "")) == "file":
             return False
         lowered = key.lower().replace("-", "_")
-        if any(part in lowered for part in _SENSITIVE_KEY_PARTS):
+        if (
+            lowered in _SENSITIVE_EXACT_KEYS
+            or any(
+                lowered.endswith(f"_{part}")
+                for part in ("token", "secret", "password", "key")
+            )
+            or any(part in lowered for part in _SENSITIVE_KEY_PARTS)
+        ):
             return True
         description = clean_text(schema_entry.get("description", "")).lower()
         return "api key" in description or "密钥" in description or "凭据" in description
@@ -1515,7 +1505,6 @@ class HelperToolsDashboard:
     @staticmethod
     def _reload_recommended(changed_modules: list[str]) -> bool:
         needs_restart = {
-            "bilibili_video",
             "web_browser",
             "twitter",
             "qq_avatar",

@@ -2,6 +2,23 @@
 
 本项目按语义化版本记录用户可见变更。
 
+## [v2.0.0] - 2026-09-09
+
+### 破坏性变更
+
+- B 站视频理解、B 站专栏理解、引用小程序/音乐卡片识别以及 B 站扫码登录已从本插件拆分到独立仓库 `astrbot_plugin_bilibili_card_parser`，避免媒体解析 Hook 与 QQ/唤醒模块互相影响。
+- Helper 不再注册 `understand_bilibili_video`、B 站相关命令或引用卡片读取 Hook；旧配置段仍以 invisible 形式保留在配置文件中，仅用于迁移，不会出现在 Helper 控制台。
+
+### 迁移
+
+- 新插件首次启动时会复制旧 Helper 的 B 站配置、扫码凭据和 `cookies.txt` 到自己的数据目录；迁移不会删除或覆盖旧插件数据。
+- Helper 的依赖清单移除了只供 B 站使用的 `Brotli`、`imageio-ffmpeg`、`qrcode` 和 `yt-dlp`；B 站独立插件会单独声明这些依赖。
+
+### 优化
+
+- 修正控制台敏感字段判断，不再把 `max_output_tokens` 这类普通数值误显示为密钥；真正的 API Key、Cookie、Token 和密码仍只显示配置状态。
+- Helper 与独立 B 站插件的运行记录均不保存聊天正文、媒体内容或凭据。
+
 ## [v1.0.2] - 2026-08-29
 
 ### 修复

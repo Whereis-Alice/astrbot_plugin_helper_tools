@@ -751,52 +751,52 @@
     "type": "object",
     "description": "【引用自身图片来源标记】",
     "items": {
-        "enabled": {
-          "type": "bool",
-          "description": "标记引用图片为你先前发出",
-          "default": true,
-          "hint": "用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会正常传给模型识图，同时模型会知道这不是当前用户上传的图片。"
-        },
-        "onebot_lookup_enabled": {
-          "type": "bool",
-          "description": "用 OneBot 原消息核对引用来源",
-          "default": true,
-          "hint": "推荐保持开启。带消息 ID 的引用会调用 get_msg 核对真实发送者和图片段，避免适配器把其它插件发出的图片误归给当前用户；不会下载图片内容。"
-        },
-        "max_onebot_lookups_per_message": {
-          "type": "int",
-          "description": "一条新消息最多回查几个引用",
-          "default": 3,
-          "min": 0,
-          "max": 20
-        },
-        "onebot_lookup_timeout_seconds": {
-          "type": "int",
-          "description": "单次引用回查超时（秒）",
-          "default": 3,
-          "min": 1,
-          "max": 15
-        },
-        "lookup_cache_seconds": {
-          "type": "int",
-          "description": "已回查引用的缓存时长（秒）",
-          "default": 3600,
-          "min": 0,
-          "max": 86400,
-          "hint": "设为 0 表示不缓存。"
-        },
-        "lookup_cache_limit": {
-          "type": "int",
-          "description": "引用回查缓存最多保留条目",
-          "default": 2048,
-          "min": 32,
-          "max": 20000
-        }
+      "enabled": {
+        "type": "bool",
+        "description": "标记引用图片为你先前发出",
+        "default": true,
+        "hint": "用户引用你先前发出，或者自带插件自动发出的图片时，图片仍会正常传给模型识图，同时模型会知道这不是当前用户上传的图片。"
+      },
+      "onebot_lookup_enabled": {
+        "type": "bool",
+        "description": "用 OneBot 原消息核对引用来源",
+        "default": true,
+        "hint": "推荐保持开启。带消息 ID 的引用会调用 get_msg 核对真实发送者和图片段，避免适配器把其它插件发出的图片误归给当前用户；不会下载图片内容。"
+      },
+      "max_onebot_lookups_per_message": {
+        "type": "int",
+        "description": "一条新消息最多回查几个引用",
+        "default": 3,
+        "min": 0,
+        "max": 20
+      },
+      "onebot_lookup_timeout_seconds": {
+        "type": "int",
+        "description": "单次引用回查超时（秒）",
+        "default": 3,
+        "min": 1,
+        "max": 15
+      },
+      "lookup_cache_seconds": {
+        "type": "int",
+        "description": "已回查引用的缓存时长（秒）",
+        "default": 3600,
+        "min": 0,
+        "max": 86400,
+        "hint": "设为 0 表示不缓存。"
+      },
+      "lookup_cache_limit": {
+        "type": "int",
+        "description": "引用回查缓存最多保留条目",
+        "default": 2048,
+        "min": 32,
+        "max": 20000
       }
+    }
   },
   "reply_card_reader": {
     "type": "object",
-    "description": "【引用小程序/音乐卡片识别】",
+    "description": "【旧配置迁移保留（已拆分至独立插件）】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -817,7 +817,8 @@
         "max": 5000,
         "hint": "卡片内容过长时会自动截断，避免占用过多上下文。"
       }
-    }
+    },
+    "invisible": true
   },
   "chat_history": {
     "type": "object",
@@ -957,7 +958,12 @@
       "card_default_skin": {
         "type": "string",
         "description": "历史卡片默认皮肤",
-        "options": ["夜航", "纸笺", "薄荷", "霓虹"],
+        "options": [
+          "夜航",
+          "纸笺",
+          "薄荷",
+          "霓虹"
+        ],
         "default": "夜航"
       },
       "card_max_messages": {
@@ -978,7 +984,7 @@
   },
   "bilibili_video": {
     "type": "object",
-    "description": "【B站视频理解】",
+    "description": "【旧配置迁移保留（已拆分至独立插件）】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1308,11 +1314,12 @@
           }
         }
       }
-    }
+    },
+    "invisible": true
   },
   "bilibili_article": {
     "type": "object",
-    "description": "【B站专栏全文理解】",
+    "description": "【旧配置迁移保留（已拆分至独立插件）】",
     "items": {
       "enabled": {
         "type": "bool",
@@ -1376,7 +1383,8 @@
         "min": 1,
         "max": 256
       }
-    }
+    },
+    "invisible": true
   },
   "twitter": {
     "type": "object",
