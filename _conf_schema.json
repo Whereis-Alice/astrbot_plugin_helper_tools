@@ -2054,7 +2054,13 @@
         "type": "bool",
         "description": "启用自动 QQ 名片点赞",
         "default": false,
-        "hint": "默认关闭。开启后，用户发送下方触发词或“赞@用户”时，插件会直接调用 OneBot 的 send_like；本模块不注册 LLM 工具。"
+        "hint": "默认关闭。开启后，用户发送下方触发词或“赞@用户”时，插件会直接调用 OneBot 的 send_like。可选的 send_qq_profile_like LLM 工具见下方开关。"
+      },
+      "llm_tool_enabled": {
+        "type": "bool",
+        "description": "注册 send_qq_profile_like LLM 工具",
+        "default": false,
+        "hint": "默认关闭。开启后 LLM 可主动调用该工具给指定 QQ 名片点赞（例如命令触发失败时自行补点），需同时开启上方「启用自动 QQ 名片点赞」。"
       },
       "trigger_phrases": {
         "type": "list",

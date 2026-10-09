@@ -62,7 +62,7 @@ from .qq_features import (
     build_qq_avatar_url,
     normalize_avatar_size,
 )
-from .qq_like_service import QQProfileLikeService
+from .qq_like_service import QQ_LIKE_TOOL_NAME, QQProfileLikeService
 from .reply_media_guard import BOT_REPLY_IMAGE_MARKER, ReplyMediaGuard
 from .rollpig_service import RollPigService
 from .steam_service import STEAM_TOOL_NAME, SteamService
@@ -92,7 +92,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "2.0.0"
+PLUGIN_VERSION = "2.1.0"
 PLUGIN_DESC = "QQ / OneBot 辅助工具合集：防撤回、戳一戳、QQ 资料、壁纸、唤醒、网页与 X/Twitter 等能力。B 站与引用卡片解析已拆分为独立插件。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -584,6 +584,45 @@ class PokeQQUserTool(FunctionTool[AstrAgentContext]):
             event,
             kwargs.get("user_id"),
             kwargs.get("times", 1),
+        )
+
+
+@pydantic_dataclass
+class SendQQProfileLikeTool(FunctionTool[AstrAgentContext]):
+    plugin: Any = Field(default=None, repr=False)
+    name: str = QQ_LIKE_TOOL_NAME
+    description: str = (
+        "给指定 QQ 用户的名片点赞。适合在用户表达想被点赞、或命令点赞失败需要补点时主动调用，"
+        "不要重复刷赞或用来骚扰。默认关闭，需在配置中显式启用。"
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "user_id": {
+                    "type": "string",
+                    "description": "要点赞的用户 QQ 号，必须是纯数字。",
+                },
+                "times": {
+                    "type": "integer",
+                    "description": "点赞个数，默认取配置的每目标数量，并受其上限限制。",
+                    "minimum": 1,
+                },
+            },
+            "required": ["user_id"],
+        }
+    )
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs: Any) -> str:
+        if self.plugin is None:
+            return "QQ 名片点赞工具未绑定插件实例。"
+        event = _tool_event(context)
+        if event is None:
+            return _missing_event()
+        return await self.plugin.qq_like.like_from_tool(
+            event,
+            kwargs.get("user_id"),
+            kwargs.get("times"),
         )
 
 
@@ -1328,6 +1367,7 @@ class HelperToolsPlugin(Star):
             QQGroupInfoTool(plugin=self, active=self._tool_active("qq_member")),
             QQProfileTool(plugin=self, active=self._tool_active("qq_profile")),
             PokeQQUserTool(plugin=self, active=self._tool_active("poke", False)),
+            SendQQProfileLikeTool(plugin=self, active=self._tool_active("qq_like", False)),
             PaymentQRTool(plugin=self, active=self._tool_active("payqr")),
             Anime1UpdatesTool(plugin=self, active=self._tool_active("anime1")),
             Anime1WatchURLTool(plugin=self, active=self._tool_active("anime1")),
@@ -1363,6 +1403,7 @@ class HelperToolsPlugin(Star):
             QQ_GROUP_INFO_TOOL_NAME: ("qq_member", True),
             QQ_PROFILE_TOOL_NAME: ("qq_profile", True),
             POKE_TOOL_NAME: ("poke", False),
+            QQ_LIKE_TOOL_NAME: ("qq_like", False),
             PAYQR_TOOL_NAME: ("payqr", True),
             "get_anime1_updates": ("anime1", True),
             "get_anime1_watch_url": ("anime1", True),

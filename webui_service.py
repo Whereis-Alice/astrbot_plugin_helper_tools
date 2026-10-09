@@ -1065,6 +1065,7 @@ class HelperToolsDashboard:
                 "search_x_posts",
             ),
             "poke": ("poke_qq_user",),
+            "qq_like": ("send_qq_profile_like",),
         }
 
     def _module_llm_tools(self, module: str) -> list[str]:

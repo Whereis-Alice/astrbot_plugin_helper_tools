@@ -330,5 +330,57 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
 
+    async def test_tool_requires_tool_switch_enabled(self) -> None:
+        bot = FakeBot(friend_ids=["30001"])
+        event = FakeEvent(text="", bot=bot)
+        service = QQProfileLikeService(self._config())
+
+        result = await service.like_from_tool(event, "30001")
+
+        self.assertIn("未启用", result)
+        self.assertEqual(bot.likes, [])
+
+    async def test_tool_likes_target_and_caps_times(self) -> None:
+        bot = FakeBot(friend_ids=["30001"])
+        event = FakeEvent(text="", bot=bot)
+        service = QQProfileLikeService(
+            self._config(llm_tool_enabled=True, likes_per_target=5)
+        )
+
+        result = await service.like_from_tool(event, "30001", 99)
+
+        self.assertEqual(bot.likes, [(30001, 5)])
+        self.assertIn("QQ 30001", result)
+
+    async def test_tool_defaults_times_to_configured_amount(self) -> None:
+        bot = FakeBot(friend_ids=["30001"])
+        event = FakeEvent(text="", bot=bot)
+        service = QQProfileLikeService(
+            self._config(llm_tool_enabled=True, likes_per_target=7)
+        )
+
+        await service.like_from_tool(event, "30001")
+
+        self.assertEqual(bot.likes, [(30001, 7)])
+
+    async def test_tool_rejects_self_and_non_numeric(self) -> None:
+        bot = FakeBot(friend_ids=[])
+        event = FakeEvent(text="", bot=bot, self_id="10001")
+        service = QQProfileLikeService(self._config(llm_tool_enabled=True))
+
+        self.assertIn("纯数字", await service.like_from_tool(event, "abc"))
+        self.assertIn("机器人自己", await service.like_from_tool(event, "10001"))
+        self.assertEqual(bot.likes, [])
+
+    async def test_tool_reports_stranger_cannot_be_verified(self) -> None:
+        bot = FakeBot(friend_ids=[])
+        event = FakeEvent(text="", bot=bot)
+        service = QQProfileLikeService(self._config(llm_tool_enabled=True))
+
+        result = await service.like_from_tool(event, "30001")
+
+        self.assertIn("无法核验是否到账", result)
+
+
 if __name__ == "__main__":
     unittest.main()

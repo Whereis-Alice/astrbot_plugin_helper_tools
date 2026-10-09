@@ -19,6 +19,7 @@ from .onebot_compat import (
 )
 from .qq_features import extract_at_ids, normalize_qq_id
 
+QQ_LIKE_TOOL_NAME = "send_qq_profile_like"
 QQ_LIKE_PERSONA_CONTEXT_PREFIX = "[HelperTools QQ profile-like result]"
 _QQ_MENTION_RE = re.compile(r"@(\d{5,12})")
 
@@ -59,6 +60,9 @@ class QQProfileLikeService:
 
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "qq_like", "enabled", False), False)
+
+    def tool_enabled(self) -> bool:
+        return read_bool(cfg(self.config, "qq_like", "llm_tool_enabled", False), False)
 
     def allow_wake_prefix(self) -> bool:
         return read_bool(
@@ -138,6 +142,42 @@ class QQProfileLikeService:
             reply=reply,
             persona_context=persona_context,
         )
+
+    async def like_from_tool(self, event: Any, user_id: Any, times: Any = None) -> str:
+        """LLM 工具入口：主动给指定 QQ 名片点赞。
+
+        用于命令触发失败时让 LLM 自行补点。默认关闭，需同时开启模块与工具开关。
+        """
+        if not self.enabled() or not self.tool_enabled():
+            return "QQ 名片点赞 LLM 工具当前未启用。"
+        if not self._is_qq_event(event):
+            return "当前消息平台不支持 QQ 名片点赞。"
+        target_id = normalize_qq_id(user_id)
+        if not target_id:
+            return "点赞失败：user_id 必须是纯数字 QQ 号。"
+        if target_id == self._self_id(event):
+            return "点赞失败：不能给机器人自己点赞。"
+        bot = getattr(event, "bot", None)
+        if bot is None:
+            return "当前消息平台不支持 QQ 名片点赞。"
+        max_times = self._likes_per_target()
+        actual_times = read_int(times, max_times, minimum=1, maximum=max_times)
+        friend_ids = await self._friend_ids(event, bot)
+        relation = (
+            "friend"
+            if friend_ids is not None and target_id in friend_ids
+            else "stranger"
+            if friend_ids is not None
+            else "unknown"
+        )
+        result = await self._like_target(
+            bot,
+            target_id=target_id,
+            is_sender=target_id == self._sender_id(event),
+            relation=relation,
+            times=actual_times,
+        )
+        return self._format_reply([result])
 
     def take_persona_context(self, event: Any) -> str:
         getter = getattr(event, "get_extra", None)
