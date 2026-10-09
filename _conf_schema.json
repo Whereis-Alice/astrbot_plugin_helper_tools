@@ -2324,6 +2324,12 @@
         "description": "存图到不存在的图库时自动新建",
         "default": true,
         "hint": "开启后，带图发送「存图 新图库名」会自动创建图库目录，并把图库条目写入配置。没带图时不会创建。"
+      },
+      "auto_discover_libraries": {
+        "type": "bool",
+        "description": "自动发现 wallpapers 目录下的新图库",
+        "default": true,
+        "hint": "开启后，把图片文件夹放进 wallpapers 子目录即可自动登记为图库并显示，命令名默认取目录名，可随后在壁纸库页改名或删除；只删图库配置但保留图片会在刷新时再次登记，不需要可关闭本开关。"
       }
     }
   },

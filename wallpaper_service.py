@@ -163,6 +163,9 @@ class WallpaperService:
     def auto_create_library_on_add(self) -> bool:
         return read_bool(cfg(self.config, "wallpaper", "auto_create_library_on_add", True), True)
 
+    def auto_discover_libraries(self) -> bool:
+        return read_bool(cfg(self.config, "wallpaper", "auto_discover_libraries", True), True)
+
     def max_add_bytes(self) -> int:
         return read_int(
             cfg(self.config, "wallpaper", "max_add_bytes", 20 * 1024 * 1024),
@@ -500,6 +503,11 @@ class WallpaperService:
                 saver()
             except Exception:
                 logger.warning("[HelperTools/Wallpaper] save wallpaper config failed", exc_info=True)
+
+    def persist_config(self) -> None:
+        """Persist in-memory config edits made by the WebUI dashboard."""
+
+        self._save_config()
 
     async def find_duplicate_async(self, library: WallpaperLibrary, data: bytes) -> Path | None:
         return await asyncio.to_thread(self.find_duplicate, library, data)

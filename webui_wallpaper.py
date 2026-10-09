@@ -13,6 +13,7 @@ import base64
 import hashlib
 import os
 import re
+import threading
 import uuid
 import warnings
 from contextlib import contextmanager
@@ -24,9 +25,15 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 from PIL import Image, ImageOps, UnidentifiedImageError
+from astrbot.api import logger
 
 from .helper_utils import clean_text, read_bool
-from .wallpaper_service import WallpaperLibrary, WallpaperService
+from .wallpaper_service import (
+    DEFAULT_WALLPAPER_CAPTION,
+    DEFAULT_WALLPAPER_SEND_MODE_LABEL,
+    WallpaperLibrary,
+    WallpaperService,
+)
 
 _SAFE_PREVIEW_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
 _FORMAT_EXTENSIONS = {
@@ -45,6 +52,7 @@ _CONTENT_TYPES = {
 _SAFE_LIBRARY_ID = re.compile(r"^[0-9]{1,5}$")
 _INVALID_FILENAME_CHARACTERS = frozenset('\\/:*?"<>|')
 _MAX_LIBRARY_SCAN_ENTRIES = 30_000
+_MAX_DISCOVERED_LIBRARIES = 500
 _MAX_WEBUI_UPLOAD_BYTES = 64 * 1024 * 1024
 _MAX_WEBUI_UPLOAD_TOTAL_BYTES = 128 * 1024 * 1024
 _MAX_UPLOAD_FILES = 24
@@ -93,10 +101,15 @@ class WallpaperLibraryDashboard:
     def __init__(self, wallpaper: WallpaperService, data_dir: Path) -> None:
         self.wallpaper = wallpaper
         self.data_dir = Path(data_dir)
+        self._discover_lock = threading.Lock()
 
     def list_libraries(self) -> dict[str, Any]:
         """Return configured library summaries without exposing image contents."""
 
+        try:
+            self._discover_filesystem_libraries()
+        except Exception:  # noqa: BLE001 - discovery must never break the listing
+            logger.debug("[HelperTools/Wallpaper] filesystem discovery failed", exc_info=True)
         summaries: list[dict[str, Any]] = []
         for record in self._configured_libraries():
             scan = self._scan(record)
@@ -486,6 +499,108 @@ class WallpaperLibraryDashboard:
 
     def upload_max_bytes(self) -> int:
         return min(max(self.wallpaper.max_add_bytes(), 64 * 1024), _MAX_WEBUI_UPLOAD_BYTES)
+
+    def _discover_filesystem_libraries(self) -> int:
+        """Register image folders dropped directly into the wallpapers directory.
+
+        Operators frequently copy a folder of pictures into
+        ``<data_dir>/wallpapers`` over FTP and expect it to show up in the
+        manager.  The dashboard only lists libraries that exist in the plugin
+        configuration, so promote every new top-level directory that holds at
+        least one image into a real configuration entry.  Upload, delete,
+        rename and chat commands then keep working without any special casing.
+        Returns the number of libraries that were added.
+        """
+
+        if not self.wallpaper.auto_discover_libraries():
+            return 0
+        root = self.data_dir / "wallpapers"
+        try:
+            if not root.is_dir():
+                return 0
+        except OSError:
+            return 0
+        with self._discover_lock:
+            existing = self._configured_libraries()
+            names = {record.library.name.casefold() for record in existing}
+            occupied: set[str] = set()
+            for record in existing:
+                try:
+                    occupied.add(str(record.source_path.resolve(strict=False)))
+                except OSError:
+                    continue
+            allowed = self.wallpaper.allowed_extensions()
+            config_rows = self._libraries_config()
+            try:
+                with os.scandir(root) as iterator:
+                    directories = sorted(iterator, key=lambda item: item.name)
+            except OSError:
+                return 0
+            added = 0
+            for entry in directories:
+                if added >= _MAX_DISCOVERED_LIBRARIES:
+                    break
+                name = entry.name
+                if name.startswith("."):
+                    continue
+                try:
+                    if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                if name.casefold() in names:
+                    continue
+                directory = Path(entry.path)
+                try:
+                    resolved = str(directory.resolve(strict=False))
+                except OSError:
+                    continue
+                if resolved in occupied:
+                    continue
+                if not self._directory_has_image(directory, allowed):
+                    continue
+                default_path = self._unresolved_library_path(name, "")
+                try:
+                    use_default = str(default_path.resolve(strict=False)) == resolved
+                except OSError:
+                    use_default = False
+                config_rows.append(
+                    {
+                        "__template_key": "library",
+                        "name": name,
+                        "path": "" if use_default else resolved,
+                        "commands": [name],
+                        "caption": DEFAULT_WALLPAPER_CAPTION,
+                        "send_mode": DEFAULT_WALLPAPER_SEND_MODE_LABEL,
+                        "recursive": False,
+                    }
+                )
+                names.add(name.casefold())
+                occupied.add(resolved)
+                added += 1
+            if added:
+                self.wallpaper.persist_config()
+            return added
+
+    @staticmethod
+    def _directory_has_image(directory: Path, allowed: set[str]) -> bool:
+        scanned = 0
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    scanned += 1
+                    if scanned > _MAX_LIBRARY_SCAN_ENTRIES:
+                        return False
+                    try:
+                        if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                            continue
+                    except OSError:
+                        continue
+                    if os.path.splitext(entry.name)[1].lower() in allowed:
+                        return True
+        except OSError:
+            return False
+        return False
 
     def _configured_libraries(self) -> list[ManagedWallpaperLibrary]:
         records: list[ManagedWallpaperLibrary] = []

@@ -394,5 +394,83 @@ class RegistryAtomicWriteTests(unittest.TestCase):
             self.assertEqual(list(data_dir.glob("*.tmp")), [])
 
 
+class FilesystemDiscoveryTests(_DashboardCase):
+    """把图片文件夹直接放进 wallpapers 目录应被自动登记为图库。"""
+
+    def _wallpapers_dir(self) -> Path:
+        target = self.data_dir / "wallpapers"
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def test_directory_with_image_is_registered_and_persisted(self) -> None:
+        dashboard = self._dashboard([])
+        folder = self._wallpapers_dir() / "爱丽丝的生成头像"
+        folder.mkdir(parents=True)
+        (folder / "a.png").write_bytes(PNG_BYTES)
+
+        config = dashboard.wallpaper.config
+        self.assertEqual(len(config["wallpaper"]["libraries"]), 0)
+
+        payload = dashboard.list_libraries()
+
+        names = [item["name"] for item in payload["libraries"]]
+        self.assertIn("爱丽丝的生成头像", names)
+        rows = config["wallpaper"]["libraries"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "爱丽丝的生成头像")
+        self.assertEqual(rows[0]["commands"], ["爱丽丝的生成头像"])
+        self.assertEqual(rows[0]["path"], "")
+        self.assertGreater(dashboard.wallpaper.config.save_calls, 0)
+        discovered = next(item for item in payload["libraries"] if item["name"] == "爱丽丝的生成头像")
+        self.assertEqual(discovered["image_count"], 1)
+        self.assertEqual(discovered["state"], "ready")
+
+    def test_empty_directory_is_not_registered(self) -> None:
+        dashboard = self._dashboard([])
+        (self._wallpapers_dir() / "空目录").mkdir(parents=True)
+
+        payload = dashboard.list_libraries()
+
+        self.assertEqual(payload["libraries"], [])
+        self.assertEqual(dashboard.wallpaper.config["wallpaper"]["libraries"], [])
+
+    def test_directory_backing_a_configured_library_is_not_duplicated(self) -> None:
+        folder = self._wallpapers_dir() / "已配置"
+        folder.mkdir(parents=True)
+        (folder / "a.png").write_bytes(PNG_BYTES)
+        dashboard = self._dashboard([{"name": "已配置", "path": str(folder)}])
+
+        payload = dashboard.list_libraries()
+
+        names = [item["name"] for item in payload["libraries"]]
+        self.assertEqual(names.count("已配置"), 1)
+        self.assertEqual(len(dashboard.wallpaper.config["wallpaper"]["libraries"]), 1)
+
+    def test_discovery_can_be_disabled(self) -> None:
+        dashboard = self._dashboard([], wallpaper={"auto_discover_libraries": False})
+        folder = self._wallpapers_dir() / "新目录"
+        folder.mkdir(parents=True)
+        (folder / "a.png").write_bytes(PNG_BYTES)
+
+        payload = dashboard.list_libraries()
+
+        self.assertEqual(payload["libraries"], [])
+        self.assertEqual(dashboard.wallpaper.config["wallpaper"]["libraries"], [])
+        self.assertEqual(dashboard.wallpaper.config.save_calls, 0)
+
+    def test_case_insensitive_duplicate_name_is_skipped(self) -> None:
+        folder = self._wallpapers_dir() / "Gallery"
+        folder.mkdir(parents=True)
+        (folder / "a.png").write_bytes(PNG_BYTES)
+        dashboard = self._dashboard([{"name": "gallery", "path": str(self.root / "elsewhere")}])
+
+        payload = dashboard.list_libraries()
+
+        names = [item["name"].casefold() for item in payload["libraries"]]
+        self.assertEqual(names.count("gallery"), 1)
+        self.assertEqual(len(dashboard.wallpaper.config["wallpaper"]["libraries"]), 1)
+
+
+
 if __name__ == "__main__":
     unittest.main()
