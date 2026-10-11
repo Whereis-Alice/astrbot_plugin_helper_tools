@@ -92,7 +92,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "2.2.0"
+PLUGIN_VERSION = "2.2.1"
 PLUGIN_DESC = "QQ / OneBot 辅助工具合集：防撤回、戳一戳、QQ 资料、壁纸、唤醒、网页与 X/Twitter 等能力。B 站与引用卡片解析已拆分为独立插件。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 

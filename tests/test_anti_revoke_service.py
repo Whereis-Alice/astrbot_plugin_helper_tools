@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 from astrbot_plugin_helper_tools.anti_revoke_service import (
     AntiRevokeService,
+    _http_url_is_resolvable,
     extract_event_payload,
     is_group_recall,
     sanitize_recall_message,
@@ -650,6 +651,35 @@ class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
                 await service._read_image_reference("https://gchat.qpic.cn/example")
 
             self.assertEqual(fetch.await_args.kwargs["headers"]["Referer"], "https://qzone.qq.com/")
+
+    def test_http_url_resolvability_guard(self) -> None:
+        self.assertTrue(
+            _http_url_is_resolvable("https://gchat.qpic.cn/download?appid=1&rkey=CAMS&spec=0")
+        )
+        self.assertTrue(_http_url_is_resolvable("https://multimedia.nt.qq.com.cn/download?x=1"))
+        # Query string glued onto the host after the path was dropped.
+        self.assertFalse(
+            _http_url_is_resolvable("https://gchat.qpic.cn&rkey=CAMSQBo1jSunfsr5&spec=0")
+        )
+        # DNS label past the 63-octet limit can never resolve.
+        self.assertFalse(_http_url_is_resolvable("https://" + "a" * 64 + ".example.com/"))
+        self.assertFalse(_http_url_is_resolvable("https:///no-host"))
+
+    async def test_malformed_image_url_is_skipped_before_download(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = AntiRevokeService({}, Path(temp_dir))
+            fetch = AsyncMock()
+            broken = "https://gchat.qpic.cn&rkey=CAMSQBo1jSunfsr5&spec=0"
+
+            with patch(
+                "astrbot_plugin_helper_tools.anti_revoke_service.fetch_bytes",
+                fetch,
+            ):
+                with self.assertRaises(ValueError) as caught:
+                    await service._read_image_reference(broken)
+
+            self.assertEqual(str(caught.exception), "malformed image URL host")
+            fetch.assert_not_awaited()
 
     async def test_failed_image_snapshot_writes_visible_warning(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

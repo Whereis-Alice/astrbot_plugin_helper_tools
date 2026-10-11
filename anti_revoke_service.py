@@ -422,6 +422,29 @@ def _validated_image_extension(data: bytes) -> str:
     return extension
 
 
+def _http_url_is_resolvable(url: str) -> bool:
+    """Reject image URLs whose authority can never resolve.
+
+    Some QQ clients hand out malformed rkey URLs that dropped the path, so the
+    query string ends up glued onto the hostname (for example
+    "https://gchat.qpic.cn&rkey=...&spec=0"). The resulting DNS label blows
+    past the 63-octet limit and only surfaces as a cryptic
+    "UnicodeError: label too long" deep inside the HTTP client. Detect the
+    corruption up front so we skip the doomed download, keep the error log
+    readable and fall back to OneBot resolution without wasting the budget.
+    """
+
+    try:
+        host = urlparse(url).hostname or ""
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if any(character in host for character in "&=? \t\r\n"):
+        return False
+    return all(len(label.encode("utf-8")) <= 63 for label in host.split("."))
+
+
 def _safe_image_error(error: BaseException) -> str:
     text = clean_text(error) or error.__class__.__name__
     text = re.sub(r"(?:base64://|data:image/)[^\s]+", "<embedded-image>", text)
@@ -869,6 +892,8 @@ class AntiRevokeService:
             return data, _validated_image_extension(data)
         if not reference.casefold().startswith(("http://", "https://")):
             raise ValueError("unresolved image reference")
+        if not _http_url_is_resolvable(reference):
+            raise ValueError("malformed image URL host")
         data, _content_type = await fetch_bytes(
             reference,
             timeout_seconds=_IMAGE_FETCH_TIMEOUT_SECONDS,
