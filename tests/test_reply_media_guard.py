@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import tempfile
+import time
 import unittest
 
 import astrbot.api.message_components as Comp
@@ -12,8 +14,9 @@ from astrbot_plugin_helper_tools.reply_media_guard import (
 
 
 class DummyMessage:
-    def __init__(self, chain: list[object]) -> None:
+    def __init__(self, chain: list[object], message_id: str = "") -> None:
         self.message = chain
+        self.message_id = message_id
 
 
 class DummyEvent:
@@ -22,9 +25,14 @@ class DummyEvent:
         chain: list[object],
         self_id: str = "10001",
         bot: object | None = None,
+        sender_id: str | None = None,
+        message_id: str = "",
     ) -> None:
-        self.message_obj = DummyMessage(chain)
+        self.message_obj = DummyMessage(chain, message_id)
         self._self_id = self_id
+        # 默认把事件视为 bot 自己发出的（sender == self），方便自身图片台账用例；
+        # 现有引用用例不读取 get_sender_id，因此不受影响。
+        self._sender_id = sender_id if sender_id is not None else self_id
         self.bot = bot
 
     def get_messages(self) -> list[object]:
@@ -32,6 +40,9 @@ class DummyEvent:
 
     def get_self_id(self) -> str:
         return self._self_id
+
+    def get_sender_id(self) -> str:
+        return self._sender_id
 
     def get_platform_id(self) -> str:
         return "qq-test"
@@ -288,6 +299,117 @@ class ReplyMediaGuardTests(unittest.IsolatedAsyncioTestCase):
                 for item in bare_quote.chain or []
             )
         )
+
+
+    async def test_self_ledger_marks_quote_after_cache_expiry(self) -> None:
+        with tempfile.TemporaryDirectory() as data_dir:
+            config = {"reply_media_guard": {"enabled": True}}
+            guard = ReplyMediaGuard(config, data_dir)
+            # bot 先发出一条含图消息（message_id=900），记入自身图片台账。
+            sent = DummyEvent(
+                [Comp.Image.fromURL("https://example.com/bot.png")],
+                message_id="900",
+            )
+            self.assertEqual(guard.remember_self_authored_images(sent), 1)
+            # 用户稍后引用这张图，此时 LLOneBot 缓存已过期，get_msg 会抛异常，
+            # 但靠台账仍能判定为 bot 自己的图。
+            bare_quote = Comp.Reply(id="900", sender_id=0, chain=[])
+            quote_event = DummyEvent(
+                [bare_quote], bot=ExpiredCacheBot(), sender_id="20002"
+            )
+            result = await guard.mark_bot_reply_images(quote_event)
+            self.assertEqual(result.marked_reply_count, 1)
+            self.assertEqual(result.marked_image_count, 1)
+            self.assertTrue(
+                any(
+                    isinstance(item, Comp.Plain)
+                    and item.text == BOT_REPLY_IMAGE_MARKER
+                    for item in bare_quote.chain or []
+                )
+            )
+
+    async def test_self_ledger_persists_across_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as data_dir:
+            config = {"reply_media_guard": {"enabled": True}}
+            sent = DummyEvent(
+                [Comp.Image.fromURL("https://example.com/bot.png")],
+                message_id="901",
+            )
+            ReplyMediaGuard(config, data_dir).remember_self_authored_images(sent)
+            # 新实例模拟插件重启：从磁盘加载台账后仍能命中。
+            reborn = ReplyMediaGuard(config, data_dir)
+            bare_quote = Comp.Reply(id="901", sender_id=0, chain=[])
+            quote_event = DummyEvent([bare_quote], bot=ExpiredCacheBot())
+            result = await reborn.mark_bot_reply_images(quote_event)
+            self.assertEqual(result.marked_reply_count, 1)
+            self.assertEqual(result.marked_image_count, 1)
+
+    async def test_confirmed_bot_quote_is_written_back_to_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as data_dir:
+            config = {"reply_media_guard": {"enabled": True}}
+            # 第一次：get_msg 成功确认这是 bot 的图（message_id=902）并写回台账。
+            first_quote = Comp.Reply(id="902", sender_id=0, chain=[])
+            first_event = DummyEvent([first_quote], bot=LLOneBotStrictIdBot())
+            first = await ReplyMediaGuard(
+                config, data_dir
+            ).mark_bot_reply_images(first_event)
+            self.assertEqual(first.marked_reply_count, 1)
+            # 第二次：换新实例 + 过期的 bot，仅靠写回的台账也能命中。
+            second_quote = Comp.Reply(id="902", sender_id=0, chain=[])
+            second_event = DummyEvent([second_quote], bot=ExpiredCacheBot())
+            second = await ReplyMediaGuard(
+                config, data_dir
+            ).mark_bot_reply_images(second_event)
+            self.assertEqual(second.marked_reply_count, 1)
+            self.assertEqual(second.marked_image_count, 1)
+
+    async def test_remember_ignores_non_self_events(self) -> None:
+        with tempfile.TemporaryDirectory() as data_dir:
+            guard = ReplyMediaGuard({"reply_media_guard": {"enabled": True}}, data_dir)
+            user_event = DummyEvent(
+                [Comp.Image.fromURL("https://example.com/user.png")],
+                self_id="10001",
+                sender_id="20002",
+                message_id="903",
+            )
+            self.assertEqual(guard.remember_self_authored_images(user_event), 0)
+            bare_quote = Comp.Reply(id="903", sender_id=0, chain=[])
+            quote_event = DummyEvent([bare_quote], bot=ExpiredCacheBot())
+            result = await guard.mark_bot_reply_images(quote_event)
+            self.assertEqual(result.marked_reply_count, 0)
+
+    async def test_self_ledger_can_be_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as data_dir:
+            config = {
+                "reply_media_guard": {"enabled": True, "self_ledger_enabled": False}
+            }
+            guard = ReplyMediaGuard(config, data_dir)
+            sent = DummyEvent(
+                [Comp.Image.fromURL("https://example.com/bot.png")],
+                message_id="904",
+            )
+            self.assertEqual(guard.remember_self_authored_images(sent), 0)
+            bare_quote = Comp.Reply(id="904", sender_id=0, chain=[])
+            quote_event = DummyEvent([bare_quote], bot=ExpiredCacheBot())
+            result = await guard.mark_bot_reply_images(quote_event)
+            self.assertEqual(result.marked_reply_count, 0)
+
+    async def test_expired_self_ledger_entry_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as data_dir:
+            config = {"reply_media_guard": {"enabled": True}}
+            guard = ReplyMediaGuard(config, data_dir)
+            sent = DummyEvent(
+                [Comp.Image.fromURL("https://example.com/bot.png")],
+                message_id="905",
+            )
+            guard.remember_self_authored_images(sent)
+            # 手动把记录时间推到很久以前，使其超过 TTL。
+            key = guard._cache_key(sent, "905")
+            guard._self_image_ledger[key] = (time.time() - 10**6, 1)
+            bare_quote = Comp.Reply(id="905", sender_id=0, chain=[])
+            quote_event = DummyEvent([bare_quote], bot=ExpiredCacheBot())
+            result = await guard.mark_bot_reply_images(quote_event)
+            self.assertEqual(result.marked_reply_count, 0)
 
 
 if __name__ == "__main__":

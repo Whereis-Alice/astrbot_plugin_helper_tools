@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import logger
 import astrbot.api.message_components as Comp
 
-from .helper_utils import cfg, clean_text, read_bool, read_int
+from .helper_utils import cfg, clean_text, read_bool, read_float, read_int
 from .onebot_compat import get_msg as onebot_get_msg
 
 BOT_REPLY_IMAGE_MARKER = (
     "[图片来源说明：这是你先前发出，或者自带插件自动发出的图，"
     "不是当前用户上传的图片。]"
 )
+
+_SELF_IMAGE_LEDGER_FILENAME = "reply_media_self_images.json"
+_SELF_IMAGE_LEDGER_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,9 +37,15 @@ class _QuotedMessageInfo:
 class ReplyMediaGuard:
     """Label quoted self-authored images without removing them from LLM input."""
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: Any, data_dir: Any | None = None) -> None:
         self.config = config
         self._lookup_cache: dict[str, tuple[float, _QuotedMessageInfo]] = {}
+        self._ledger_path: Path | None = (
+            Path(data_dir) / _SELF_IMAGE_LEDGER_FILENAME if data_dir else None
+        )
+        # message_id -> (recorded_epoch, image_count) for images this bot sent.
+        self._self_image_ledger: dict[str, tuple[float, int]] = {}
+        self._load_self_image_ledger()
 
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "reply_media_guard", "enabled", True), True)
@@ -54,14 +65,23 @@ class ReplyMediaGuard:
             if not isinstance(component, Comp.Reply):
                 continue
 
+            message_id = clean_text(getattr(component, "id", ""))
             inline = _QuotedMessageInfo(
                 sender_id=self._reply_sender_id(component),
                 image_count=self._count_images(component),
             )
             quoted = inline
+            # 本地台账优先：bot 自己发出的含图消息会被持久化记录，不受 LLOneBot
+            # 约 120 秒消息缓存限制。命中即判定为“我发出的图”，无需再查 get_msg。
+            ledger_images = self._ledger_image_count(event, message_id)
+            if ledger_images is not None:
+                quoted = _QuotedMessageInfo(
+                    sender_id=bot_id,
+                    image_count=max(inline.image_count, ledger_images, 1),
+                )
             # Some OneBot adapters cannot hydrate quoted messages emitted by other
             # plugins. Querying get_msg restores both the sender and image segments.
-            if (
+            elif (
                 self._onebot_lookup_enabled()
                 and remaining_lookups > 0
                 and self._should_lookup(component)
@@ -76,11 +96,35 @@ class ReplyMediaGuard:
 
             if quoted.sender_id != bot_id or not quoted.image_count:
                 continue
+            # 确认是 bot 自己的图后写回台账，使缓存过期后再次引用仍可命中。
+            self._remember_quoted_bot_image(event, message_id, quoted.image_count)
             self._append_marker(component)
             marked_reply_count += 1
             marked_image_count += quoted.image_count
 
         return ReplyMediaGuardResult(marked_reply_count, marked_image_count)
+
+    def remember_self_authored_images(self, event: Any) -> int:
+        """记录 bot 刚发出的含图消息，让日后引用无需依赖 get_msg 即可离线判定。
+
+        LLOneBot 仅在 msgCacheExpire（默认约 120 秒）内缓存消息，引用旧图时
+        get_msg 查不到，LLM 便会误判为“用户上传”。bot 每次发出含图消息都会作为
+        一次 ALL 事件回流，这里把消息 ID 持久化记录，之后无论过多久被引用都能命中。
+        """
+
+        if not self.enabled() or not self._self_ledger_enabled():
+            return 0
+        bot_id = self._event_self_id(event)
+        if not bot_id or self._event_sender_id(event) != bot_id:
+            return 0
+        message_id = self._event_message_id(event)
+        if not message_id:
+            return 0
+        image_count = self._count_images_in_chain(self._event_messages(event))
+        if image_count <= 0:
+            return 0
+        self._ledger_put(self._cache_key(event, message_id), image_count)
+        return image_count
 
     def _onebot_lookup_enabled(self) -> bool:
         return read_bool(
@@ -128,6 +172,33 @@ class ReplyMediaGuard:
             2048,
             minimum=32,
             maximum=20_000,
+        )
+
+    def _self_ledger_enabled(self) -> bool:
+        return read_bool(
+            cfg(self.config, "reply_media_guard", "self_ledger_enabled", True),
+            True,
+        )
+
+    def _self_ledger_ttl_seconds(self) -> int:
+        return read_int(
+            cfg(
+                self.config,
+                "reply_media_guard",
+                "self_ledger_ttl_seconds",
+                259_200,
+            ),
+            259_200,
+            minimum=60,
+            maximum=2_592_000,
+        )
+
+    def _self_ledger_limit(self) -> int:
+        return read_int(
+            cfg(self.config, "reply_media_guard", "self_ledger_limit", 4096),
+            4096,
+            minimum=64,
+            maximum=50_000,
         )
 
     @staticmethod
@@ -267,12 +338,128 @@ class ReplyMediaGuard:
         for stale_key, _entry in oldest[:overflow]:
             self._lookup_cache.pop(stale_key, None)
 
+    def _ledger_image_count(self, event: Any, message_id: str) -> int | None:
+        """返回某条 bot 自发消息记录的图片数；无记录或已过期则返回 None。"""
+
+        if not message_id or not self._self_ledger_enabled():
+            return None
+        key = self._cache_key(event, message_id)
+        entry = self._self_image_ledger.get(key)
+        if entry is None:
+            return None
+        recorded_at, image_count = entry
+        if recorded_at + self._self_ledger_ttl_seconds() <= time.time():
+            self._self_image_ledger.pop(key, None)
+            return None
+        return image_count
+
+    def _remember_quoted_bot_image(
+        self,
+        event: Any,
+        message_id: str,
+        image_count: int,
+    ) -> None:
+        if not message_id or not self._self_ledger_enabled():
+            return
+        self._ledger_put(self._cache_key(event, message_id), image_count)
+
+    def _ledger_put(self, key: str, image_count: int) -> None:
+        if not key:
+            return
+        self._self_image_ledger[key] = (time.time(), max(int(image_count), 1))
+        overflow = len(self._self_image_ledger) - self._self_ledger_limit()
+        if overflow > 0:
+            oldest = sorted(
+                self._self_image_ledger.items(),
+                key=lambda item: item[1][0],
+            )
+            for stale_key, _entry in oldest[:overflow]:
+                self._self_image_ledger.pop(stale_key, None)
+        self._save_self_image_ledger()
+
+    def _load_self_image_ledger(self) -> None:
+        path = self._ledger_path
+        if path is None:
+            return
+        try:
+            if not path.exists():
+                return
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001 - 台账损坏时静默重建，不影响主流程
+            logger.debug(
+                "[HelperTools/ReplyMedia] load self-image ledger failed: %s", exc
+            )
+            return
+        if not isinstance(raw, dict):
+            return
+        entries = raw.get("entries")
+        if not isinstance(entries, dict):
+            return
+        ttl = self._self_ledger_ttl_seconds()
+        now = time.time()
+        loaded: dict[str, tuple[float, int]] = {}
+        for key, value in entries.items():
+            if not isinstance(key, str) or not isinstance(value, dict):
+                continue
+            recorded_at = read_float(value.get("ts"), 0.0)
+            image_count = read_int(value.get("images"), 0)
+            if recorded_at <= 0.0 or image_count <= 0:
+                continue
+            if recorded_at + ttl <= now:
+                continue
+            loaded[key] = (recorded_at, image_count)
+        self._self_image_ledger = loaded
+
+    def _save_self_image_ledger(self) -> None:
+        path = self._ledger_path
+        if path is None:
+            return
+        ttl = self._self_ledger_ttl_seconds()
+        now = time.time()
+        entries = {
+            key: {"ts": recorded_at, "images": image_count}
+            for key, (recorded_at, image_count) in self._self_image_ledger.items()
+            if recorded_at + ttl > now
+        }
+        payload = {"version": _SELF_IMAGE_LEDGER_VERSION, "entries": entries}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:  # noqa: BLE001 - 落盘失败不影响内存台账与主流程
+            logger.debug(
+                "[HelperTools/ReplyMedia] save self-image ledger failed: %s", exc
+            )
+
     @staticmethod
     def _event_self_id(event: Any) -> str:
         getter = getattr(event, "get_self_id", None)
         return ReplyMediaGuard._normalize_sender_id(
             getter() if callable(getter) else ""
         )
+
+    @staticmethod
+    def _event_sender_id(event: Any) -> str:
+        getter = getattr(event, "get_sender_id", None)
+        return ReplyMediaGuard._normalize_sender_id(
+            getter() if callable(getter) else ""
+        )
+
+    @staticmethod
+    def _event_message_id(event: Any) -> str:
+        message_obj = getattr(event, "message_obj", None)
+        candidates = (
+            getattr(message_obj, "message_id", ""),
+            getattr(message_obj, "id", ""),
+            getattr(getattr(message_obj, "raw_message", None), "message_id", ""),
+        )
+        for candidate in candidates:
+            message_id = clean_text(candidate)
+            if message_id:
+                return message_id
+        return ""
 
     @staticmethod
     def _reply_sender_id(reply: Any) -> str:

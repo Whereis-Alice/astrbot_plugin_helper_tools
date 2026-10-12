@@ -791,6 +791,27 @@
         "default": 2048,
         "min": 32,
         "max": 20000
+      },
+      "self_ledger_enabled": {
+        "type": "bool",
+        "description": "记录你自己发出的图片以便日后引用判定",
+        "default": true,
+        "hint": "推荐保持开启。你每次发出含图片的消息时，插件会把消息 ID 记入本地台账（持久化到数据目录）。用户之后引用这张图时优先查台账，不受 LLOneBot 约 120 秒消息缓存限制，避免旧图被模型误判为用户上传。"
+      },
+      "self_ledger_ttl_seconds": {
+        "type": "int",
+        "description": "自身图片台账保留时长（秒）",
+        "default": 259200,
+        "min": 60,
+        "max": 2592000,
+        "hint": "默认 3 天。超过该时长的记录会被清理，引用更久以前的图将回退到 OneBot 回查。"
+      },
+      "self_ledger_limit": {
+        "type": "int",
+        "description": "自身图片台账最多保留条目",
+        "default": 4096,
+        "min": 64,
+        "max": 50000
       }
     }
   },

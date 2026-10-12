@@ -92,7 +92,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "2.2.1"
+PLUGIN_VERSION = "2.3.0"
 PLUGIN_DESC = "QQ / OneBot 辅助工具合集：防撤回、戳一戳、QQ 资料、壁纸、唤醒、网页与 X/Twitter 等能力。B 站与引用卡片解析已拆分为独立插件。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -1234,7 +1234,7 @@ class HelperToolsPlugin(Star):
         self.anti_revoke = AntiRevokeService(self.config, self.data_dir)
         self.chat_history = ChatHistoryService(self.config, self.data_dir)
         self.chat_history_card = ChatHistoryCardRenderer()
-        self.reply_media_guard = ReplyMediaGuard(self.config)
+        self.reply_media_guard = ReplyMediaGuard(self.config, self.data_dir)
         self.wake = WakeService(self.config, self.context)
         self.wallpaper = WallpaperService(self.config, self.data_dir, self.context)
         self.rollpig = RollPigService(self.config, self.data_dir, self.context)
@@ -1610,6 +1610,7 @@ class HelperToolsPlugin(Star):
 
         if not self.enabled():
             return
+        self.reply_media_guard.remember_self_authored_images(event)
         image_result = await self.reply_media_guard.mark_bot_reply_images(event)
         if not image_result.marked_image_count:
             return
