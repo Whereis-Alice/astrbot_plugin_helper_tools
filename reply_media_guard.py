@@ -71,8 +71,9 @@ class ReplyMediaGuard:
                 image_count=self._count_images(component),
             )
             quoted = inline
-            # 本地台账优先：bot 自己发出的含图消息会被持久化记录，不受 LLOneBot
-            # 约 120 秒消息缓存限制。命中即判定为“我发出的图”，无需再查 get_msg。
+            # 本地台账优先：命中即判定为“我发出的图”，不受 LLOneBot 约 120 秒缓存
+            # 限制，也无需再查 get_msg。台账在 QQ 上主要由下方“确认后写回”建立，
+            # 在会回流自身消息的平台上也会由 remember_self_authored_images 建立。
             ledger_images = self._ledger_image_count(event, message_id)
             if ledger_images is not None:
                 quoted = _QuotedMessageInfo(
@@ -105,11 +106,14 @@ class ReplyMediaGuard:
         return ReplyMediaGuardResult(marked_reply_count, marked_image_count)
 
     def remember_self_authored_images(self, event: Any) -> int:
-        """记录 bot 刚发出的含图消息，让日后引用无需依赖 get_msg 即可离线判定。
+        """在“会把 bot 自身消息作为事件回流”的适配器上，记录 bot 刚发出的含图消息。
 
-        LLOneBot 仅在 msgCacheExpire（默认约 120 秒）内缓存消息，引用旧图时
-        get_msg 查不到，LLM 便会误判为“用户上传”。bot 每次发出含图消息都会作为
-        一次 ALL 事件回流，这里把消息 ID 持久化记录，之后无论过多久被引用都能命中。
+        平台差异：aiocqhttp（QQ / LLOneBot / NapCat / Lagrange）只订阅 on_message
+        group/private，不投递 bot 自身的 message_sent 事件，发送 API 的返回值
+        （含 message_id）也被 AstrBot 丢弃，因此这条路径在 QQ 上通常不会触发——
+        QQ 场景的台账主要由 mark_bot_reply_images 的“确认后写回”建立。要让首次引用
+        旧图也稳定命中，请调大 LLOneBot 的 msgCacheExpire。本方法保留给确实会回流
+        自身消息的平台。
         """
 
         if not self.enabled() or not self._self_ledger_enabled():

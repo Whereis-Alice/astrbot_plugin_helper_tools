@@ -541,6 +541,7 @@ QQ 资料、群成员、自动换头像、名片点赞、戳一戳、群历史�
 - AstrBot 侧平台适配器选 `aiocqhttp`，用反向 WebSocket 接入，LLOneBot 默认地址是 `ws://127.0.0.1:6199/ws`。
 - 消息上报格式使用 `array`（LLOneBot 默认值），不要改成 `string`。
 - LLOneBot 的消息缓存 `msgCacheExpire` 默认 120 秒。超过这个时间的 `message_id` 查不到属于正常现象，防撤回、引用识别和存图都会静默降级，不会报错。
+- 引用你（bot）较早发出的图片时，若已超过 `msgCacheExpire`，`get_msg` 查不到原消息，引用段只剩 `message_id`，模型可能把这张图当成用户新上传。插件会把“已确认是你发出的图”写入本地台账，让同一张图二次引用仍能命中；但首次引用一张超窗口的旧图仍可能漏判——想稳定判对，请把 `msgCacheExpire` 调大。
 - 语音相关能力需要 LLOneBot 侧可用的 ffmpeg。
 - `set_qq_avatar` 传本地路径时由协议端自己去读文件，路径解析发生在 LLOneBot 所在的文件系统上。AstrBot 与 LLOneBot 不在同一台机器或不在同一个容器时，直接传路径必然失败，插件会自动把图片读成 `base64://` 再重试一次，所以头像池放在 AstrBot 侧也能用。
 - LLOneBot 缺少 `set_self_longnick`、`set_diy_online_status` 和裸 `poke` 这几个动作，兼容层已改走等价接口，无需额外配置。
