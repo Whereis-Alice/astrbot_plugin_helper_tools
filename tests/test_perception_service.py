@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import astrbot.api.message_components as Comp
 from astrbot.core.agent.message import TextPart
 
+from astrbot_plugin_helper_tools.helper_utils import format_timestamp
 from astrbot_plugin_helper_tools.main import HelperToolsPlugin
 from astrbot_plugin_helper_tools.perception_service import (
     PERCEPTION_CONTEXT_PREFIX,
@@ -119,7 +120,7 @@ class PerceptionServiceTests(unittest.IsolatedAsyncioTestCase):
                 "role": "admin",
                 "level": "42",
                 "title": "星之群管",
-                "title_expire_time": 1_800_000_000,
+                "title_expire_time": 4_102_444_800,
                 "shut_up_timestamp": 0,
             }
         )
@@ -194,7 +195,7 @@ class PerceptionServiceTests(unittest.IsolatedAsyncioTestCase):
                 "card": "爱丽丝",
                 "level": "7",
                 "title": "群管理小助手",
-                "title_expire_time": 1_800_000_000,
+                "title_expire_time": 4_102_444_800,
             }
         )
         service = EnvironmentPerceptionService(
@@ -229,6 +230,92 @@ class PerceptionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("你的群专属头衔：群主", owner)
         self.assertIn("你在当前群的身份：普通群员", member)
         self.assertIn("你当前没有群专属头衔", member)
+
+    async def test_expired_mute_and_title_timestamps_are_not_shown_as_live(self) -> None:
+        now = datetime(2026, 10, 13, 9, 47, tzinfo=timezone.utc)
+        expired_mute = int(datetime(2026, 5, 22, 8, 1, 57, tzinfo=timezone.utc).timestamp())
+        future_title = int(datetime(2100, 1, 1, 0, 0, tzinfo=timezone.utc).timestamp())
+
+        bot_identity = EnvironmentPerceptionService._format_bot_group_identity(
+            {
+                "role": "member",
+                "level": "2",
+                "shut_up_timestamp": expired_mute,
+            },
+            now=now,
+        )
+        self.assertNotIn("你当前被禁言至", bot_identity)
+        self.assertIn("你在当前群的身份：普通群员", bot_identity)
+
+        sender_profile = EnvironmentPerceptionService._format_sender_group_profile(
+            "123456",
+            {
+                "user_id": 123456,
+                "role": "owner",
+                "title": "过期的头衔",
+                "title_expire_time": expired_mute,
+                "shut_up_timestamp": expired_mute,
+            },
+            now=now,
+        )
+        self.assertNotIn("禁言到期=", sender_profile)
+        self.assertNotIn("过期的头衔", sender_profile)
+        self.assertIn("群头衔=无", sender_profile)
+        self.assertIn("身份校验：QQ=123456", sender_profile)
+
+        active_profile = EnvironmentPerceptionService._format_sender_group_profile(
+            "123456",
+            {
+                "user_id": 123456,
+                "role": "owner",
+                "title": "在任头衔",
+                "title_expire_time": future_title,
+                "shut_up_timestamp": future_title,
+            },
+            now=now,
+        )
+        self.assertIn("禁言到期=", active_profile)
+        self.assertIn(f"禁言到期={format_timestamp(future_title)}", active_profile)
+        self.assertIn("群头衔=在任头衔", active_profile)
+
+        permanent = EnvironmentPerceptionService._format_sender_group_profile(
+            "123456",
+            {"user_id": 123456, "role": "owner", "shut_up_timestamp": -1},
+            now=now,
+        )
+        self.assertNotIn("禁言到期=", permanent)
+
+    async def test_context_hides_expired_mute_end_to_end(self) -> None:
+        expired_mute = int(
+            datetime(2026, 5, 22, 8, 1, 57, tzinfo=timezone.utc).timestamp()
+        )
+        bot = DummyOneBot(
+            {
+                "user_id": 10001,
+                "role": "member",
+                "level": "2",
+                "shut_up_timestamp": expired_mute,
+            }
+        )
+        service = EnvironmentPerceptionService(
+            {
+                "perception": {
+                    "enabled": True,
+                    "include_bot_group_identity": True,
+                    "include_sender_group_profile": True,
+                    "sender_group_profile_cache_seconds": 0,
+                    "bot_group_identity_cache_seconds": 0,
+                }
+            }
+        )
+        context = await service.context_for_event(
+            DummyEvent(bot=bot, sender_id="123456"),
+            now=datetime(2026, 10, 13, 9, 47, tzinfo=ZoneInfo("Asia/Shanghai")),
+        )
+
+        self.assertIn("发送时间：2026-10-13 09:47:00", context)
+        self.assertNotIn("禁言", context)
+        self.assertIn("你在当前群的身份：普通群员", context)
 
     async def test_bot_group_identity_respects_config_and_adapter_support(self) -> None:
         disabled_bot = DummyOneBot({"role": "admin"})

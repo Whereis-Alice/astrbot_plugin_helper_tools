@@ -198,6 +198,29 @@ def format_timestamp(value: Any) -> str:
         return ""
 
 
+def timestamp_in_future(value: Any, *, now: datetime | None = None) -> bool:
+    """Return True only when ``value`` is a unix timestamp still in the future.
+
+    OneBot implementations reuse fields such as ``shut_up_timestamp`` and
+    ``title_expire_time`` for both active and finished states, and the
+    undocumented sentinel ``-1`` may mean "permanent". Comparing against the
+    current moment keeps stale or sentinel values from being shown as live.
+    """
+
+    try:
+        timestamp = int(value)
+    except (TypeError, ValueError):
+        return False
+    if timestamp <= 0:
+        return False
+    current = now if now is not None else datetime.now(tz=timezone.utc)
+    try:
+        moment = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    except (OSError, ValueError, OverflowError):
+        return False
+    return moment > current
+
+
 def json_dumps(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
 
