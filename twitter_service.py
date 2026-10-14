@@ -1561,6 +1561,14 @@ class TwitterService:
                             f"Nitter HTML exceeds {_MAX_NITTER_HTML_BYTES} bytes",
                             user_message="Nitter 返回的页面过大，本次未读取。",
                         )
+                    if content_length is not None and content_length > len(body):
+                        # 上游实例（或其反向代理）会声明完整长度却提前断开，
+                        # 截断的页面解析不出时间线。这里按失败处理，触发备用数据源。
+                        raise TwitterError(
+                            f"Nitter sent a truncated page for {endpoint}: "
+                            f"declared {content_length} bytes but received {len(body)}",
+                            user_message="Nitter 返回的页面被截断，实例或反向代理可能不稳定。",
+                        )
                     if not body:
                         raise TwitterError(
                             f"Nitter returned an empty response for {endpoint}",

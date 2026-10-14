@@ -4,7 +4,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的 QQ / OneBot 辅助能力。插件按模块组织配置，当前包含 X/Twitter 资料检索、网页浏览、环境感知、QQ 防撤回、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体标注、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v2.3.1`
+- 当前版本：`v2.3.2`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -573,6 +573,7 @@ QQ 资料、群成员、自动换头像、名片点赞、戳一戳和部分壁�
 - 只想检查 Nitter 时选择“仅 Nitter”。若还是失败，先在 AstrBot 同一环境执行 `curl http://127.0.0.1:8585` 或访问你实际配置的 URL，确认网络路径。
 - Nitter 的图片会先由插件下载。若日志提示媒体下载失败，检查 Nitter 的 `/pic/` 代理路径和服务器到上游媒体的网络。
 - 如果日志出现 `Nitter HTTP 404 for http://127.0.0.1:8585/pic`，通常不是 Nitter 没启动，而是把 Nitter 的图片代理地址误当成了账号地址；新版会拒绝这类参数，不再请求 `/pic`。
+- 如果日志出现 `Nitter sent a truncated page ... declared N bytes but received M`，说明实例（或它前面的反向代理）声明了完整页面大小却中途断开，只送出前几 KB。插件会把这种情况当作读取失败并回退备用数据源；根治仍需检查该实例的 nginx/反代 `proxy_buffering`、超时设置与上游到 X 的连通性。
 
 ### QQ 相关指令提示“不支持”或“没有可用接口”
 

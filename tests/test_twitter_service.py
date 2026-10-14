@@ -249,6 +249,39 @@ class _ImageSession:
         return _ImageResponse(self.url, self.chunks)
 
 
+class _HtmlContent:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    async def read(self, _size: int) -> bytes:
+        return self._body
+
+
+class _HtmlResponse:
+    def __init__(self, body: bytes, headers: dict[str, str]) -> None:
+        self.status = 200
+        self.headers = headers
+        self.content = _HtmlContent(body)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args) -> None:
+        return None
+
+
+class _HtmlSession:
+    def __init__(self, body: bytes, headers: dict[str, str]) -> None:
+        self.closed = False
+        self._body = body
+        self._headers = headers
+        self.calls = 0
+
+    def get(self, *_args, **_kwargs) -> _HtmlResponse:
+        self.calls += 1
+        return _HtmlResponse(self._body, self._headers)
+
+
 class TwitterServiceTests(unittest.IsolatedAsyncioTestCase):
     def _config(self, **twitter) -> dict:
         return {"twitter": twitter}
@@ -267,6 +300,34 @@ class TwitterServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(service.nitter_requests, 1)
         self.assertEqual(service.fx_requests, 1)
         self.assertEqual(result.posts[0].author.username, "artist")
+
+    async def test_truncated_nitter_html_raises_instead_of_looking_empty(self) -> None:
+        body = b"<!DOCTYPE html><html><head><title>X</title>"
+        session = _HtmlSession(body, {"Content-Length": "64931"})
+        with tempfile.TemporaryDirectory() as temporary:
+            service = TwitterService(
+                self._config(nitter_base_url="http://127.0.0.1:8585"),
+                Path(temporary),
+            )
+            service._session = session
+            with self.assertRaises(TwitterError) as raised:
+                await service._request_nitter_html("X")
+
+        self.assertIn("truncated", str(raised.exception))
+        self.assertEqual(session.calls, 1)
+
+    async def test_complete_nitter_html_is_returned(self) -> None:
+        body = b"<!DOCTYPE html><html><body>ok</body></html>"
+        session = _HtmlSession(body, {"Content-Length": str(len(body))})
+        with tempfile.TemporaryDirectory() as temporary:
+            service = TwitterService(
+                self._config(nitter_base_url="http://127.0.0.1:8585"),
+                Path(temporary),
+            )
+            service._session = session
+            document = await service._request_nitter_html("X")
+
+        self.assertEqual(document, body.decode("utf-8"))
 
     async def test_nitter_only_can_read_a_post_and_its_proxy_url_is_trusted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
