@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -671,12 +673,11 @@ class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
             fetch = AsyncMock()
             broken = "https://gchat.qpic.cn&rkey=CAMSQBo1jSunfsr5&spec=0"
 
-            with patch(
-                "astrbot_plugin_helper_tools.anti_revoke_service.fetch_bytes",
-                fetch,
+            with (
+                patch("astrbot_plugin_helper_tools.anti_revoke_service.fetch_bytes", fetch),
+                self.assertRaises(ValueError) as caught,
             ):
-                with self.assertRaises(ValueError) as caught:
-                    await service._read_image_reference(broken)
+                await service._read_image_reference(broken)
 
             self.assertEqual(str(caught.exception), "malformed image URL host")
             fetch.assert_not_awaited()
@@ -997,6 +998,224 @@ class AntiRevokeServiceTests(unittest.IsolatedAsyncioTestCase):
             record = service._records["123:456"]
             self.assertEqual(record.sender_name, "机器人")
             self.assertEqual(set(record.image_cache_files), {"1"})
+
+
+class AntiRevokePersistenceTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        reset_compat_caches()
+        self.addCleanup(reset_compat_caches)
+        self.temp_dir = self.enterContext(tempfile.TemporaryDirectory())
+        self.now = self.enterContext(
+            patch(
+                "astrbot_plugin_helper_tools.anti_revoke_service.time.time",
+                return_value=1_700_000_000.0,
+            )
+        )
+        self.image_bytes = base64.b64decode(TINY_PNG_BASE64)
+        self.fetch = self.enterContext(
+            patch(
+                "astrbot_plugin_helper_tools.anti_revoke_service.fetch_bytes",
+                new_callable=AsyncMock,
+                return_value=(self.image_bytes, "image/png"),
+            )
+        )
+        self.config = {
+            "anti_revoke": {
+                "enabled": True,
+                "monitor_groups": ["123"],
+                "target_groups": ["999"],
+                "cache_expiration_seconds": 300,
+            }
+        }
+        self.bot = ExpiredCacheBot()
+        self.service = self._new_service()
+
+    def _new_service(self) -> AntiRevokeService:
+        service = AntiRevokeService(self.config, Path(self.temp_dir))
+        self.addAsyncCleanup(service.stop)
+        return service
+
+    def _image_event(self, message_id: int = 456, group_id: int = 123) -> FakeEvent:
+        return FakeEvent(
+            {
+                "post_type": "message",
+                "message_type": "group",
+                "group_id": group_id,
+                "message_id": message_id,
+                "user_id": 789,
+                "sender": {"user_id": 789, "card": "Alice"},
+                "message": [
+                    {"type": "text", "data": {"text": "久后撤回的图片"}},
+                    {
+                        "type": "image",
+                        "data": {
+                            "file": f"https://gchat.qpic.cn/{group_id}/{message_id}.png"
+                        },
+                    },
+                ],
+            },
+            self.bot,
+        )
+
+    def _recall_event(self) -> FakeEvent:
+        return FakeEvent(
+            {
+                "post_type": "notice",
+                "notice_type": "group_recall",
+                "group_id": 123,
+                "message_id": 456,
+                "user_id": 789,
+                "operator_id": 789,
+            },
+            self.bot,
+        )
+
+    async def _cache_image(self, message_id: int = 456) -> tuple[Path, Path]:
+        await self.service.handle_event(self._image_event(message_id))
+        record = self.service._records[f"123:{message_id}"]
+        self.assertEqual(set(record.image_cache_files), {"1"})
+        json_path = self.service.cache_dir / f"cache_123_{message_id}.json"
+        image_path = self.service.cache_dir / record.image_cache_files["1"]
+        self.assertEqual(image_path.read_bytes(), self.image_bytes)
+        persisted = json.loads(json_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["cached_at"], self.now.return_value)
+        self.assertEqual(persisted["image_cache_files"], record.image_cache_files)
+        # Mocked time.time does not change filesystem timestamps used by disk cleanup.
+        for path in (json_path, image_path):
+            os.utime(path, (self.now.return_value, self.now.return_value))
+        return json_path, image_path
+
+    def _assert_restored_image(self) -> None:
+        self.assertEqual(len(self.bot.sent), 1)
+        target_type, params = self.bot.sent[0]
+        self.assertEqual((target_type, params["group_id"]), ("group", 999))
+        message = params["message"]
+        self.assertIsInstance(message, list)
+        assert isinstance(message, list)
+        self.assertEqual(message[1], {"type": "text", "data": {"text": "久后撤回的图片"}})
+        self.assertEqual(len(message), 3)
+        self.assertEqual(message[2]["type"], "image")
+        restored_ref = message[2]["data"]["file"]
+        self.assertTrue(restored_ref.startswith("base64://"))
+        self.assertEqual(
+            base64.b64decode(restored_ref.removeprefix("base64://")),
+            self.image_bytes,
+        )
+        self.fetch.assert_not_awaited()
+        self.assertEqual(self.bot.get_msg_calls, 0)
+
+    async def test_memory_eviction_preserves_disk_image_for_delayed_recall(self) -> None:
+        # The production configuration clamps this limit to at least 100.
+        self.enterContext(patch.object(self.service, "max_cached_messages", return_value=1))
+        original_paths = await self._cache_image()
+        self.now.return_value += 1
+        newer_paths = await self._cache_image(457)
+
+        self.assertEqual(list(self.service._records), ["123:457"])
+        self.assertTrue(
+            all(path.is_file() for path in (*original_paths, *newer_paths)),
+            "Memory eviction must retain unexpired JSON and image snapshots on disk",
+        )
+
+        # Past LLOneBot's 120-second message cache, but within our 300-second TTL.
+        self.now.return_value += 239
+        self.fetch.reset_mock()
+        self.fetch.side_effect = OSError("original image URL has expired")
+        await self.service.handle_event(self._recall_event())
+
+        self._assert_restored_image()
+        self.assertEqual(list(self.service._records), ["123:456"])
+        self.assertTrue(
+            all(path.is_file() for path in (*original_paths, *newer_paths)),
+            "Reloading an older record must only evict the newer record from memory",
+        )
+
+    async def test_unmonitored_group_does_not_download_or_write_cache(self) -> None:
+        with patch.object(self.service, "_write_record", wraps=self.service._write_record) as write:
+            await self.service.handle_event(self._image_event(group_id=321))
+
+        self.fetch.assert_not_awaited()
+        write.assert_not_called()
+        self.assertEqual(self.service._records, {})
+        self.assertEqual(list(self.service.cache_dir.iterdir()), [])
+        self.assertEqual(self.bot.get_msg_calls, 0)
+
+    async def test_unmonitored_group_does_not_displace_monitored_message(self) -> None:
+        self.enterContext(patch.object(self.service, "max_cached_messages", return_value=1))
+        paths = await self._cache_image()
+        snapshots = {path: path.read_bytes() for path in paths}
+        self.fetch.reset_mock()
+
+        await self.service.handle_event(self._image_event(message_id=457, group_id=321))
+
+        self.assertEqual(list(self.service._records), ["123:456"])
+        self.assertEqual(set(self.service.cache_dir.iterdir()), set(paths))
+        self.assertEqual({path: path.read_bytes() for path in paths}, snapshots)
+        self.fetch.assert_not_awaited()
+
+    async def test_restart_within_ttl_restores_image_without_original_reference(self) -> None:
+        cached_at = self.now.return_value
+        paths = await self._cache_image()
+        await self.service.stop()
+        self.assertEqual(self.service._records, {})
+        self.assertTrue(all(path.is_file() for path in paths))
+
+        self.now.return_value += 240
+        restarted = self._new_service()
+        await restarted.start()
+        self.assertEqual(restarted._records, {})
+        self.fetch.reset_mock()
+        self.fetch.side_effect = OSError("original image URL has expired")
+
+        await restarted.handle_event(self._recall_event())
+
+        self._assert_restored_image()
+        self.assertEqual(restarted._records["123:456"].cached_at, cached_at)
+        self.assertTrue(all(path.is_file() for path in paths))
+
+    async def test_memory_ttl_cleanup_removes_json_and_image_but_keeps_fresh_record(self) -> None:
+        cached_at = self.now.return_value
+        expired_paths = await self._cache_image()
+        self.now.return_value += 150
+        fresh_paths = await self._cache_image(457)
+
+        self.now.return_value = cached_at + 300
+        self.service._remove_expired_memory()
+        self.service._cleanup_disk()
+        self.assertEqual(list(self.service._records), ["123:456", "123:457"])
+        self.assertTrue(all(path.is_file() for path in (*expired_paths, *fresh_paths)))
+
+        self.now.return_value += 1
+        self.service._remove_expired_memory()
+        self.service._cleanup_disk()
+
+        self.assertEqual(list(self.service._records), ["123:457"])
+        self.assertTrue(all(not path.exists() for path in expired_paths))
+        self.assertTrue(all(path.is_file() for path in fresh_paths))
+        self.assertIsNone(await self.service._load_record("123", "456"))
+
+    async def test_disk_ttl_cleanup_after_restart_removes_json_and_image(self) -> None:
+        cached_at = self.now.return_value
+        expired_paths = await self._cache_image()
+        self.now.return_value += 150
+        fresh_paths = await self._cache_image(457)
+        await self.service.stop()
+
+        self.now.return_value = cached_at + 300
+        restarted = self._new_service()
+        await restarted.start()
+        self.assertEqual(restarted._records, {})
+        self.assertTrue(all(path.is_file() for path in (*expired_paths, *fresh_paths)))
+
+        self.now.return_value += 1
+        restarted._cleanup_disk()
+
+        self.assertTrue(all(not path.exists() for path in expired_paths))
+        self.assertTrue(all(path.is_file() for path in fresh_paths))
+        self.assertIsNone(await restarted._load_record("123", "456"))
+        fresh_record = await restarted._load_record("123", "457")
+        self.assertIsNotNone(fresh_record)
+        self.assertEqual(list(restarted._records), ["123:457"])
 
 
 if __name__ == "__main__":

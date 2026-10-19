@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
+from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from astrbot.api import logger
 from PIL import Image as PILImage
@@ -31,9 +33,10 @@ from .helper_utils import (
 )
 from .onebot_compat import (
     call_onebot,
+    call_onebot_variants,
     extract_file_references,
+    file_lookup_variants,
     onebot_error_info,
-    resolve_file,
     retry_including_timeout,
     unwrap_payload,
 )
@@ -66,6 +69,14 @@ class RevokeRecord:
     message: Any
     cached_at: float
     image_cache_files: dict[str, str] = field(default_factory=dict)
+
+
+class _ImageCaptureLock(asyncio.Lock):
+    """Keep one live record shared by the owner and queued capture/recall tasks."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.record: RevokeRecord | None = None
 
 
 @dataclass(slots=True)
@@ -272,8 +283,17 @@ def _merge_event_image_references(message: Any, event: Any) -> Any:
     if not component_segments:
         return message
     merged = _json_safe(message)
-    raw_images = _iter_image_segments(merged)
+    all_raw_images = _iter_image_segments(merged)
+    raw_images = [
+        (key, segment)
+        for key, segment in all_raw_images
+        if clean_text(segment.get("type")).casefold() == "image"
+    ]
     if not raw_images:
+        # Image components cannot safely be paired with mface/flash segments.
+        # Keep their own references rather than copying a neighbouring picture.
+        if all_raw_images:
+            return merged
         if isinstance(merged, list):
             merged.extend(component_segments)
             return merged
@@ -504,7 +524,9 @@ def _resolved_image_references(response: Any) -> list[str]:
 
 
 def _write_bytes_atomic(path: Path, data: bytes) -> None:
-    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    # Capture and recall can write the same record concurrently. Each writer
+    # needs its own temporary file; sharing `.tmp` can lose a completed write.
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     try:
         temporary.write_bytes(data)
         temporary.replace(path)
@@ -653,6 +675,7 @@ class AntiRevokeService:
         self._forward_targets = self._load_forward_targets()
         self._delete_interceptors: dict[int, _DeleteInterceptor] = {}
         self._pre_delete_capture_tasks: dict[str, asyncio.Task[None]] = {}
+        self._image_locks: WeakValueDictionary[str, _ImageCaptureLock] = WeakValueDictionary()
 
     def enabled(self) -> bool:
         return read_bool(cfg(self.config, "anti_revoke", "enabled", False), False)
@@ -839,6 +862,7 @@ class AntiRevokeService:
                 return
 
             record = await self._load_record(group_id, message_id)
+            store_record = record is None
             if record is None:
                 record = RevokeRecord(
                     group_id=group_id,
@@ -851,11 +875,11 @@ class AntiRevokeService:
                 )
                 if _message_size(record.message) > self.max_message_bytes():
                     return
-                await self._store_record(record)
 
             event._group_id = group_id
-            if await self._cache_record_images(event, record, phase="pre_delete"):
-                await asyncio.to_thread(self._write_record, record)
+            await self._cache_record_images(
+                event, record, phase="pre_delete", store_record=store_record
+            )
             logger.debug(
                 "[HelperTools/AntiRevoke] pre-delete message capture ready group=%s message=%s",
                 group_id,
@@ -959,26 +983,39 @@ class AntiRevokeService:
             if deadline - time.monotonic() <= 0:
                 errors.append("OneBot image resolution timed out")
                 break
-            try:
-                response = await resolve_file(
-                    bot,
-                    candidate,
-                    group_id=group_value,
-                    timeout=1.5,
-                    deadline=deadline,
-                    retry_on=retry_including_timeout,
-                )
-            except Exception as exc:  # noqa: BLE001 - adapters expose varying errors
-                errors.append(f"resolve_file: {_safe_image_error(exc)}")
-                continue
-            for reference in _resolved_image_references(response):
-                if reference in seen_references:
-                    continue
-                seen_references.add(reference)
+            variants = file_lookup_variants(candidate, group_id=group_value)
+            for action in dict.fromkeys(variant.action for variant in variants):
+                if deadline - time.monotonic() <= 0:
+                    break
                 try:
-                    return await self._read_image_reference(reference, allow_local=True)
-                except (OSError, ValueError) as exc:
-                    errors.append(f"resolve_file result: {_safe_image_error(exc)}")
+                    response = await call_onebot_variants(
+                        bot,
+                        tuple(variant for variant in variants if variant.action == action),
+                        op_key=f"file:anti_revoke:{action}",
+                        timeout=1.5,
+                        deadline=deadline,
+                        retry_on=retry_including_timeout,
+                    )
+                except Exception as exc:  # noqa: BLE001 - adapters expose varying errors
+                    errors.append(f"{action}: {_safe_image_error(exc)}")
+                    continue
+                # An API success is not a usable image: a remote QQ endpoint
+                # may return only its own local path. Continue to the next
+                # action when all returned references are unreadable here.
+                for reference in _resolved_image_references(response):
+                    if reference in seen_references:
+                        continue
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    seen_references.add(reference)
+                    try:
+                        return await asyncio.wait_for(
+                            self._read_image_reference(reference, allow_local=True),
+                            timeout=remaining,
+                        )
+                    except (OSError, ValueError) as exc:
+                        errors.append(f"{action} result: {_safe_image_error(exc)}")
         detail = "; ".join(errors[-4:]) or "OneBot returned no downloadable image"
         raise ValueError(detail)
 
@@ -1067,6 +1104,55 @@ class AntiRevokeService:
         record: RevokeRecord,
         *,
         phase: str = "capture",
+        store_record: bool = False,
+    ) -> bool:
+        # A recall may arrive while the original image is still downloading.
+        # Wait for that capture instead of racing a second, possibly expired
+        # download and forwarding before the original snapshot is ready.
+        key = self._record_key(record.group_id, record.message_id)
+        lock = self._image_locks.setdefault(key, _ImageCaptureLock())
+        async with lock:
+            supplied = record
+            existing = lock.record
+            if existing is None or time.time() - existing.cached_at > self.cache_expiration_seconds():
+                existing = await self._load_record(record.group_id, record.message_id)
+            if existing is not None and existing is not record:
+                # Pre-delete capture and a delayed/duplicate message event can
+                # describe the same ID with different objects. Reuse one
+                # canonical record, including its already completed snapshots.
+                existing_segments = _iter_image_segments(existing.message)
+                incoming_segments = _iter_image_segments(record.message)
+                if not existing_segments and incoming_segments:
+                    existing.message = record.message
+                else:
+                    for (_key, target), (_incoming_key, source) in zip(
+                        existing_segments, incoming_segments, strict=False
+                    ):
+                        if isinstance(target, dict) and target.get("type") == source.get("type"):
+                            replacement = _merge_image_segment_references(target, source)
+                            target.clear()
+                            target.update(replacement)
+                record = existing
+                supplied.message = record.message
+                supplied.image_cache_files = record.image_cache_files
+                supplied.cached_at = record.cached_at
+            lock.record = record
+            if key in self._records:
+                self._records[key] = record
+                self._records.move_to_end(key)
+            if store_record:
+                await self._store_record(record)
+            changed = await self._snapshot_record_images(event, record, phase=phase)
+            if changed:
+                await self._persist_record(record)
+            return changed
+
+    async def _snapshot_record_images(
+        self,
+        event: Any,
+        record: RevokeRecord,
+        *,
+        phase: str,
     ) -> bool:
         all_segments = _iter_image_segments(record.message)
         segments = all_segments[:_IMAGE_CACHE_MAX_COUNT]
@@ -1276,7 +1362,12 @@ class AntiRevokeService:
         sender_id = _payload_value(payload, "user_id", "sender_id") or clean_text(
             sender_map.get("user_id")
         )
-        if not group_id or not message_id or sender_id in self.ignore_senders():
+        if (
+            not group_id
+            or not message_id
+            or not self._is_monitored(group_id)
+            or sender_id in self.ignore_senders()
+        ):
             return
         message = _merge_event_image_references(
             extract_message_payload(payload, event),
@@ -1301,9 +1392,7 @@ class AntiRevokeService:
         )
         # Store first: a bot can send and delete an image before its download
         # finishes, but the recall handler can still find the text/segments.
-        await self._store_record(record)
-        await self._cache_record_images(event, record, phase="capture")
-        await asyncio.to_thread(self._write_record, record)
+        await self._cache_record_images(event, record, phase="capture", store_record=True)
 
     async def _handle_recall(self, event: Any, payload: Mapping[str, Any]) -> None:
         group_id = _payload_value(payload, "group_id")
@@ -1326,9 +1415,11 @@ class AntiRevokeService:
         if record is None:
             logger.warning(
                 "[HelperTools/AntiRevoke] recall cache miss group=%s message=%s; "
-                "the message may have arrived before the module was enabled or exceeded cache limits",
+                "the message may have arrived before monitoring was enabled or expired "
+                "(ttl_seconds=%d); OneBot get_msg could not recover it",
                 group_id,
                 message_id,
+                self.cache_expiration_seconds(),
             )
             return
         if record.sender_id in self.ignore_senders():
@@ -1345,8 +1436,7 @@ class AntiRevokeService:
         if bot is None:
             logger.warning("[HelperTools/AntiRevoke] recall has no OneBot bot handle group=%s", group_id)
             return
-        if await self._cache_record_images(event, record, phase="recall"):
-            await asyncio.to_thread(self._write_record, record)
+        await self._cache_record_images(event, record, phase="recall")
         group_name, sender_name, operator_name = await self._resolve_names(
             bot, group_id, record.sender_id or sender_id, operator_id
         )
@@ -1403,13 +1493,29 @@ class AntiRevokeService:
         return record
 
     async def _store_record(self, record: RevokeRecord) -> None:
-        """Make a record visible before any slow image snapshot work begins."""
+        """Store under the caller's message lock before slow image capture begins."""
 
         key = self._record_key(record.group_id, record.message_id)
         self._records[key] = record
         self._records.move_to_end(key)
         self._evict_memory_records()
-        await asyncio.to_thread(self._write_record, record)
+        await self._persist_record(record)
+
+    async def _persist_record(self, record: RevokeRecord) -> None:
+        # Cancelling to_thread does not stop its worker. Keep the message lock
+        # until the write actually finishes, or an old JSON payload could
+        # replace a newer snapshot index after the next capture gets the lock.
+        writer = asyncio.create_task(asyncio.to_thread(self._write_record, record))
+        try:
+            await asyncio.shield(writer)
+        except asyncio.CancelledError:
+            while not writer.done():
+                try:
+                    await asyncio.shield(writer)
+                except asyncio.CancelledError:
+                    continue
+            writer.result()
+            raise
 
     async def _load_record(self, group_id: str, message_id: str) -> RevokeRecord | None:
         key = self._record_key(group_id, message_id)
@@ -1504,20 +1610,18 @@ class AntiRevokeService:
             "timestamp": record.timestamp,
             "message": record.message,
             "cached_at": record.cached_at,
-            "image_cache_files": record.image_cache_files,
+            "image_cache_files": dict(record.image_cache_files),
         }
-        temporary = path.with_suffix(".tmp")
         try:
-            temporary.write_text(json_dumps(payload), encoding="utf-8")
-            temporary.replace(path)
+            _write_bytes_atomic(path, json_dumps(payload).encode("utf-8"))
         except OSError as exc:
             logger.warning("[HelperTools/AntiRevoke] write cache failed path=%s error=%r", path, exc)
-            temporary.unlink(missing_ok=True)
 
     def _evict_memory_records(self) -> None:
         while len(self._records) > self.max_cached_messages():
-            _key, record = self._records.popitem(last=False)
-            self._delete_record_cache(record.group_id, record.message_id)
+            # This limit bounds RAM, not retention. Keep disk records and image
+            # snapshots until their TTL so busy groups do not lose recent media.
+            self._records.popitem(last=False)
 
     async def _cleanup_loop(self) -> None:
         while True:
@@ -1540,12 +1644,14 @@ class AntiRevokeService:
                     path.unlink(missing_ok=True)
             except OSError:
                 continue
-        for path in self.cache_dir.glob("media_*"):
-            try:
-                if path.is_file() and path.stat().st_mtime < cutoff:
-                    path.unlink(missing_ok=True)
-            except OSError:
-                continue
+        # Include unique atomic-write leftovers from an abruptly killed process.
+        for pattern in ("media_*", ".media_*.tmp", ".cache_*.tmp"):
+            for path in self.cache_dir.glob(pattern):
+                try:
+                    if path.is_file() and path.stat().st_mtime < cutoff:
+                        path.unlink(missing_ok=True)
+                except OSError:
+                    continue
 
     def _delete_record_cache(self, group_id: str, message_id: str) -> None:
         (self.cache_dir / _cache_filename(group_id, message_id)).unlink(missing_ok=True)
