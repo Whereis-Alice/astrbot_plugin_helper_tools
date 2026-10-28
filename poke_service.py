@@ -28,6 +28,7 @@ from .helper_utils import (
 from .onebot_compat import (
     call_onebot,
     is_onebot_platform,
+    raise_for_payload,
 )
 from .onebot_compat import send_poke as onebot_send_poke
 
@@ -90,10 +91,17 @@ _DEFAULT_LLM_PROMPT = (
 _DEFAULT_MUTE_SUCCESS_PROMPT = (
     "{username} 戳了你一下，随后被禁言 {duration} 秒。请按当前人格用一句话自然回应。"
 )
-_DEFAULT_MUTE_FAILURE_PROMPT = (
+_LEGACY_MUTE_FAILURE_PROMPT = (
     "{username} 戳了你一下，（{reason}）。你因为你不是管理员或者身份比这人低而无法禁言这人，"
     "请你用一句话吐槽一下，考虑上下文。"
 )
+_DEFAULT_MUTE_FAILURE_PROMPT = (
+    "{username} 戳了你一下，此次未确认禁言成功，原因：{reason}。"
+    "请按当前人格用一句话自然回应，明确说明上述原因并考虑上下文。"
+    "不要把同级管理员说成身份更低，也不要把接口失败说成权限不足。"
+)
+_GROUP_ROLE_LABELS = {"owner": "群主", "admin": "管理员", "member": "普通群员"}
+_MUTE_API_TIMEOUT_SECONDS = 3
 _ACTION_DEFAULT_WEIGHTS = {
     "antipoke": 10,
     "llm_reply": 10,
@@ -167,6 +175,30 @@ class PokeResponse:
     action: str = ""
     chain: tuple[Any, ...] = ()
     llm_prompt: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PokeMuteResult:
+    success: bool
+    reason: str
+    duration: int
+    bot_role: str = ""
+    target_role: str = ""
+
+    def context(self, notice: PokeNotice) -> str:
+        bot_label = _GROUP_ROLE_LABELS.get(self.bot_role, "未能确认")
+        target_label = _GROUP_ROLE_LABELS.get(self.target_role, "未能确认")
+        outcome = (
+            f"禁言接口已确认成功，时长={self.duration}秒"
+            if self.success else f"本次未确认禁言成功，原因={self.reason}"
+        )
+        return (
+            f"[戳一戳禁言结果] 本次群成员接口核验：群号={notice.group_id}；"
+            f"你（Bot QQ={notice.self_id}）的群身份={bot_label}；"
+            f"戳你的人（QQ={notice.user_id}）的群身份={target_label}；{outcome}。"
+            "回复应以本次核验为准，不要用旧上下文或提示模板猜测权限，"
+            "不要把未确认成功的禁言说成已执行。"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,22 +390,29 @@ class PokeService:
             )
 
         if action == "mute_reply":
-            success, reason, duration = await self._mute_poker(event, notice)
+            result = await self._mute_poker(event, notice)
             section = self._section(action)
-            key = "success_prompt_template" if success else "failure_prompt_template"
+            key = "success_prompt_template" if result.success else "failure_prompt_template"
             default = (
                 _DEFAULT_MUTE_SUCCESS_PROMPT
-                if success
+                if result.success
                 else _DEFAULT_MUTE_FAILURE_PROMPT
             )
+            template = clean_text(section.get(key), default)
+            if not result.success and template == _LEGACY_MUTE_FAILURE_PROMPT:
+                template = _DEFAULT_MUTE_FAILURE_PROMPT
             prompt = self._render_llm_prompt(
                 event,
                 notice,
-                clean_text(section.get(key), default),
-                reason=reason,
-                duration=str(duration),
+                template,
+                reason=result.reason,
+                duration=str(result.duration),
+                bot_role=_GROUP_ROLE_LABELS.get(result.bot_role, "未能确认"),
+                target_role=_GROUP_ROLE_LABELS.get(result.target_role, "未能确认"),
             )
-            return PokeResponse(handled=True, action=action, llm_prompt=prompt)
+            return PokeResponse(
+                handled=True, action=action, llm_prompt=f"{prompt}\n\n{result.context(notice)}"
+            )
 
         if action == "command_reply":
             command = self.rng.choice(self.command_pool())
@@ -806,50 +845,71 @@ class PokeService:
         self,
         event: Any,
         notice: PokeNotice,
-    ) -> tuple[bool, str, int]:
+    ) -> PokeMuteResult:
         if not notice.group_id:
-            return False, "私聊不能禁言", 0
+            return PokeMuteResult(False, "私聊不能禁言", 0)
         section = self._section("mute_reply")
         base = read_int(section.get("duration_seconds"), 60, minimum=1, maximum=86400)
         delta = read_int(section.get("random_delta_seconds"), 30, minimum=0, maximum=3600)
         duration = max(1, min(86400, base + self.rng.randint(-delta, delta)))
         bot = getattr(event, "bot", None)
         if bot is None:
-            return False, "当前 OneBot 适配器缺少禁言接口", duration
+            return PokeMuteResult(False, "当前 OneBot 适配器缺少禁言接口", duration)
+
+        async def query_role(user_id: str) -> str:
+            payload = await asyncio.wait_for(
+                call_onebot(
+                    bot, "get_group_member_info", group_id=int(notice.group_id),
+                    user_id=int(user_id), no_cache=True,
+                ),
+                timeout=_MUTE_API_TIMEOUT_SECONDS,
+            )
+            raise_for_payload(payload)
+            info = _unwrap_onebot_mapping(payload)
+            role = clean_text(info.get("role")).casefold()
+            return role if role in _GROUP_ROLE_LABELS else ""
+
+        # Query both sides even when one fails, so a confirmed group owner is
+        # still identified. Notice events do not carry trustworthy member roles.
+        roles = await asyncio.gather(
+            query_role(notice.self_id), query_role(notice.user_id), return_exceptions=True
+        )
+        for user_id, role in zip((notice.self_id, notice.user_id), roles, strict=True):
+            if isinstance(role, BaseException):
+                logger.warning("[HelperTools/Poke] group role lookup failed user=%s: %r", user_id, role)
+        bot_role, target_role = (role if isinstance(role, str) else "" for role in roles)
+
+        def result(success: bool, reason: str) -> PokeMuteResult:
+            return PokeMuteResult(success, reason, duration, bot_role, target_role)
+
+        if target_role == "owner":
+            return result(False, "对方是群主，无法禁言群主")
+        if bot_role == "admin" and target_role == "admin":
+            return result(False, "双方都是管理员，同级管理员之间不能互相禁言")
+        if not bot_role:
+            return result(False, "未能确认机器人在本群的身份，本次未执行禁言")
+        if bot_role == "member":
+            reason = "机器人不是群管理员，当前是普通群员，没有禁言权限"
+            if target_role == "admin":
+                reason = "对方是管理员；机器人不是群管理员，当前是普通群员，没有禁言权限"
+            return result(False, reason)
+        if not target_role:
+            return result(False, "未能确认对方在本群的身份，本次未执行禁言")
         try:
-            bot_info = await call_onebot(
-                bot,
-                "get_group_member_info",
-                group_id=int(notice.group_id),
-                user_id=int(notice.self_id),
+            payload = await asyncio.wait_for(
+                call_onebot(
+                    bot, "set_group_ban", group_id=int(notice.group_id),
+                    user_id=int(notice.user_id), duration=duration,
+                ),
+                timeout=_MUTE_API_TIMEOUT_SECONDS,
             )
-            target_info = await call_onebot(
-                bot,
-                "get_group_member_info",
-                group_id=int(notice.group_id),
-                user_id=int(notice.user_id),
-            )
-            bot_info = _unwrap_onebot_mapping(bot_info)
-            target_info = _unwrap_onebot_mapping(target_info)
-            bot_role = clean_text((bot_info or {}).get("role"), "member")
-            target_role = clean_text((target_info or {}).get("role"), "member")
-            if bot_role not in {"admin", "owner"}:
-                return False, "机器人不是群管理员", duration
-            if target_role == "owner":
-                return False, "目标用户是群主", duration
-            if target_role == "admin" and bot_role != "owner":
-                return False, "机器人无权禁言管理员", duration
-            await call_onebot(
-                bot,
-                "set_group_ban",
-                group_id=int(notice.group_id),
-                user_id=int(notice.user_id),
-                duration=duration,
-            )
+            raise_for_payload(payload)
+        except asyncio.TimeoutError:
+            return result(False, "QQ 禁言接口响应超时，无法确认是否执行成功")
         except Exception as exc:  # noqa: BLE001
             logger.warning("[HelperTools/Poke] mute action failed: %r", exc)
-            return False, "调用 QQ 禁言接口失败", duration
-        return True, "", duration
+            return result(False, "调用 QQ 禁言接口失败，不能据此判定群身份或权限高低")
+        return result(True, "")
 
     def _render_llm_prompt(
         self,
@@ -865,6 +925,8 @@ class PokeService:
             "group_id": notice.group_id or "私聊",
             "reason": values.get("reason", ""),
             "duration": values.get("duration", "0"),
+            "bot_role": values.get("bot_role", "未能确认"),
+            "target_role": values.get("target_role", "未能确认"),
         }
         rendered = template
         for key, value in replacements.items():

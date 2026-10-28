@@ -2965,13 +2965,13 @@
             "type": "text",
             "description": "禁言成功的人设提示",
             "default": "{username} 戳了你一下，随后被禁言 {duration} 秒。请按当前人格用一句话自然回应。",
-            "hint": "可用变量：{username}、{user_id}、{group_id}、{duration}。"
+            "hint": "可用变量：{username}、{user_id}、{group_id}、{duration}、{bot_role}、{target_role}。群身份来自本次 OneBot 群成员查询，回复还会附带实际执行结果。"
           },
           "failure_prompt_template": {
             "type": "text",
             "description": "禁言失败的人设提示",
-            "default": "{username} 戳了你一下，（{reason}）。你因为你不是管理员或者身份比这人低而无法禁言这人，请你用一句话吐槽一下，考虑上下文。",
-            "hint": "可用变量：{username}、{user_id}、{group_id}、{reason}。"
+            "default": "{username} 戳了你一下，此次未确认禁言成功，原因：{reason}。请按当前人格用一句话自然回应，明确说明上述原因并考虑上下文。不要把同级管理员说成身份更低，也不要把接口失败说成权限不足。",
+            "hint": "可用变量：{username}、{user_id}、{group_id}、{reason}、{bot_role}、{target_role}。双方均为管理员时明确说明同级不能互相禁言，对方为群主时明确说明无法禁言群主；身份查不到或接口失败时按实际结果回复。旧版默认模板自动兼容，自定义模板保留并附带核验结果。"
           }
         }
       },

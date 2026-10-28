@@ -234,7 +234,7 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
             poke["llm_reply"]["items"]["prompt_template"]["default"],
         )
         self.assertIn(
-            "身份比这人低",
+            "原因：{reason}",
             poke["mute_reply"]["items"]["failure_prompt_template"]["default"],
         )
 
@@ -523,10 +523,10 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
         notice = PokeNotice.from_event(event)
         assert notice is not None
 
-        success, reason, _duration = await service._mute_poker(event, notice)
+        result = await service._mute_poker(event, notice)
 
-        self.assertFalse(success)
-        self.assertIn("不是群管理员", reason)
+        self.assertFalse(result.success)
+        self.assertIn("不是群管理员", result.reason)
         self.assertEqual(bot.bans, [])
 
     async def test_scheduler_does_not_register_without_targets(self) -> None:
