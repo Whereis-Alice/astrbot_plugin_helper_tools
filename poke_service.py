@@ -91,14 +91,20 @@ _DEFAULT_LLM_PROMPT = (
 _DEFAULT_MUTE_SUCCESS_PROMPT = (
     "{username} 戳了你一下，随后被禁言 {duration} 秒。请按当前人格用一句话自然回应。"
 )
-_LEGACY_MUTE_FAILURE_PROMPT = (
-    "{username} 戳了你一下，（{reason}）。你因为你不是管理员或者身份比这人低而无法禁言这人，"
-    "请你用一句话吐槽一下，考虑上下文。"
+_LEGACY_MUTE_FAILURE_PROMPTS = (
+    (
+        "{username} 戳了你一下，（{reason}）。你因为你不是管理员或者身份比这人低而无法禁言这人，"
+        "请你用一句话吐槽一下，考虑上下文。"
+    ),
+    (
+        "{username} 戳了你一下，此次未确认禁言成功，原因：{reason}。"
+        "请按当前人格用一句话自然回应，明确说明上述原因并考虑上下文。"
+        "不要把同级管理员说成身份更低，也不要把接口失败说成权限不足。"
+    ),
 )
 _DEFAULT_MUTE_FAILURE_PROMPT = (
     "{username} 戳了你一下，此次未确认禁言成功，原因：{reason}。"
-    "请按当前人格用一句话自然回应，明确说明上述原因并考虑上下文。"
-    "不要把同级管理员说成身份更低，也不要把接口失败说成权限不足。"
+    "请你用一句话吐槽一下, 考虑上下文"
 )
 _GROUP_ROLE_LABELS = {"owner": "群主", "admin": "管理员", "member": "普通群员"}
 _MUTE_API_TIMEOUT_SECONDS = 3
@@ -399,7 +405,7 @@ class PokeService:
                 else _DEFAULT_MUTE_FAILURE_PROMPT
             )
             template = clean_text(section.get(key), default)
-            if not result.success and template == _LEGACY_MUTE_FAILURE_PROMPT:
+            if not result.success and template in _LEGACY_MUTE_FAILURE_PROMPTS:
                 template = _DEFAULT_MUTE_FAILURE_PROMPT
             prompt = self._render_llm_prompt(
                 event,
