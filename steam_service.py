@@ -6,10 +6,9 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from mcp.types import CallToolResult, ImageContent, TextContent
-
 import astrbot.api.message_components as Comp
 from astrbot.api import logger
+from mcp.types import CallToolResult, ImageContent, TextContent
 
 from .helper_utils import (
     RollingRateLimiter,
@@ -26,7 +25,6 @@ from .helper_utils import (
     read_int,
     truncate,
 )
-
 
 STEAM_TOOL_NAME = "search_steam_game"
 STEAM_APP_URL_RE = re.compile(r"https?://store\.steampowered\.com/app/(\d+)(?:/|$|\?)", re.IGNORECASE)
@@ -181,7 +179,7 @@ class SteamService:
                     data["_language"] = lang
                     return data
                 last_error = "Steam API 返回 success=false 或 data 为空。"
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - try the next API language after request errors
                 last_error = str(exc)
         raise RuntimeError(last_error or "Steam API 查询失败。")
 
@@ -205,7 +203,7 @@ class SteamService:
             return None, [], "请提供 Steam AppID、商店链接或游戏关键词。"
         try:
             results = await self.search_store(query)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - convert search service errors to a reply
             return None, [], f"Steam 搜索失败: {exc}"
         if not results:
             return None, [], "没有搜索到 Steam 游戏。"
@@ -288,7 +286,7 @@ class SteamService:
         assert appid is not None
         try:
             data = await self.fetch_app_details(appid)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - convert details service errors to a tool result
             logger.warning("[HelperTools] Steam details failed: %s", exc)
             return f"Steam 查询失败: {exc}"
         text = self.format_app_details(appid, data, search_results)
@@ -299,7 +297,7 @@ class SteamService:
             image_data, mime_type = await fetch_bytes(header_image, timeout_seconds=self.timeout())
             if not mime_type.startswith("image/"):
                 mime_type = "image/jpeg"
-        except Exception:
+        except Exception:  # noqa: BLE001 - preserve the text result if the optional image fails
             return text
         return CallToolResult(
             content=[
@@ -328,10 +326,12 @@ class SteamService:
         chain.append(Comp.Plain(text))
         return chain, ""
 
-    def match_message(self, text: str, *, wake_triggered: bool = False) -> SteamMessageMatch:
+    def match_message(
+        self, text: str, *, wake_triggered: bool = False, allow_commands: bool = True
+    ) -> SteamMessageMatch:
         if not self.enabled():
             return SteamMessageMatch()
-        if self.commands_enabled():
+        if allow_commands and self.commands_enabled():
             parsed = parse_dynamic_command(text, self.command_aliases(include_plain=wake_triggered))
             if parsed:
                 return SteamMessageMatch(True, parsed[1], True)
@@ -342,7 +342,7 @@ class SteamService:
         appid_auto_mode = self.appid_auto_parse_mode()
         if appid_auto_mode == APPID_AUTO_ANY and clean_text(text).isdigit():
             return SteamMessageMatch(True, clean_text(text), True)
-        if appid_auto_mode == APPID_AUTO_WAKE_PREFIX:
+        if allow_commands and appid_auto_mode == APPID_AUTO_WAKE_PREFIX:
             if wake_triggered and clean_text(text).isdigit():
                 return SteamMessageMatch(True, clean_text(text), True)
             appid = self._wake_prefixed_appid(text)
@@ -350,8 +350,10 @@ class SteamService:
                 return SteamMessageMatch(True, appid, True)
         return SteamMessageMatch()
 
-    def should_handle_message(self, text: str, *, wake_triggered: bool = False) -> tuple[bool, str]:
-        match = self.match_message(text, wake_triggered=wake_triggered)
+    def should_handle_message(
+        self, text: str, *, wake_triggered: bool = False, allow_commands: bool = True
+    ) -> tuple[bool, str]:
+        match = self.match_message(text, wake_triggered=wake_triggered, allow_commands=allow_commands)
         return match.handled, match.query
 
     def _wake_prefixed_appid(self, text: str) -> str:

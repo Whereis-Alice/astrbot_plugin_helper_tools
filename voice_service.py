@@ -20,7 +20,6 @@ from .helper_utils import (
     read_list,
 )
 
-
 VOICE_TOOL_NAME = "send_random_voice"
 
 
@@ -73,10 +72,12 @@ class VoiceService:
     def cache_max_files(self) -> int:
         return read_int(cfg(self.config, "voice", "cache_max_files", 30), 30, minimum=1, maximum=500)
 
-    def should_handle_message(self, text: str, *, wake_triggered: bool = False) -> bool:
+    def should_handle_message(
+        self, text: str, *, wake_triggered: bool = False, allow_commands: bool = True
+    ) -> bool:
         if not self.enabled():
             return False
-        if self.commands_enabled() and parse_dynamic_command(text, self.command_aliases(include_plain=wake_triggered)):
+        if allow_commands and self.commands_enabled() and parse_dynamic_command(text, self.command_aliases(include_plain=wake_triggered)):
             return True
         if not self.auto_trigger_enabled():
             return False
@@ -127,7 +128,7 @@ class VoiceService:
         try:
             chain = await self.build_chain()
             await event.send(event.chain_result(chain))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - convert download and platform errors to a tool result
             logger.warning("[HelperTools] send random voice failed: %s", exc)
             return f"随机语音发送失败: {exc}"
         return "随机语音已发送。"

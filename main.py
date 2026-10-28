@@ -27,6 +27,7 @@ from .chat_history_service import (
     ChatHistorySearchResult,
     ChatHistoryService,
 )
+from .command_routing import RequireWakePrefix, wake_command_text
 from .helper_utils import cfg, clean_text, core_wake_prefixes, read_bool, read_list
 from .onebot_compat import (
     is_unsupported_action_error,
@@ -92,7 +93,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "2.3.5"
+PLUGIN_VERSION = "2.3.6"
 PLUGIN_DESC = "QQ / OneBot 辅助工具合集：防撤回、戳一戳、QQ 资料、壁纸、唤醒、网页与 X/Twitter 等能力。B 站与引用卡片解析已拆分为独立插件。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -1317,26 +1318,14 @@ class HelperToolsPlugin(Star):
             logger.warning("[%s] anti-revoke event handling failed: %r", PLUGIN_ID, exc)
 
     def _message_has_wake_prefix(self, event: AstrMessageEvent) -> bool:
-        message_obj = getattr(event, "message_obj", None)
-        raw_text = clean_text(getattr(message_obj, "message_str", "")) or clean_text(
-            getattr(event, "message_str", ""),
-        )
-        if not raw_text:
-            return False
-        return any(
-            prefix and raw_text.startswith(prefix)
-            for prefix in sorted(core_wake_prefixes(self.context), key=len, reverse=True)
-        )
+        return wake_command_text(
+            event, core_wake_prefixes(self.context, [], event=event)
+        ) is not None
 
     def _message_without_wake_prefix(self, event: AstrMessageEvent) -> str:
-        message_obj = getattr(event, "message_obj", None)
-        raw_text = clean_text(getattr(message_obj, "message_str", "")) or clean_text(
-            getattr(event, "message_str", ""),
-        )
-        for prefix in sorted(core_wake_prefixes(self.context), key=len, reverse=True):
-            if prefix and raw_text.startswith(prefix):
-                return raw_text[len(prefix) :].lstrip()
-        return ""
+        return wake_command_text(
+            event, core_wake_prefixes(self.context, [], event=event)
+        ) or ""
 
     def _tool_active(self, module: str, default: bool = True) -> bool:
         return self.enabled() and _module_enabled(self.config, module, default) and read_bool(
@@ -1882,6 +1871,7 @@ class HelperToolsPlugin(Star):
         )
 
     @filter.command("helper_x_search", alias={"助手X搜索"})
+    @filter.custom_filter(RequireWakePrefix)
     async def twitter_search_command(
         self,
         event: AstrMessageEvent,
@@ -1910,6 +1900,7 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("X/Twitter 搜索发生意外错误，未返回结果。")
 
     @filter.command("helper_x_account", alias={"助手X账号"})
+    @filter.custom_filter(RequireWakePrefix)
     async def twitter_account_command(
         self,
         event: AstrMessageEvent,
@@ -1940,6 +1931,7 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("X/Twitter 账号查询发生意外错误，未返回结果。")
 
     @filter.command("helper_x_recent", alias={"助手X近况"})
+    @filter.custom_filter(RequireWakePrefix)
     async def twitter_recent_command(
         self,
         event: AstrMessageEvent,
@@ -1962,6 +1954,7 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("X/Twitter 最近动态读取发生意外错误，未返回结果。")
 
     @filter.command("helper_x_post", alias={"助手X推文"})
+    @filter.custom_filter(RequireWakePrefix)
     async def twitter_post_command(self, event: AstrMessageEvent, post: str):
         """Read a public post by its X/Twitter or configured Nitter URL."""
 
@@ -1979,6 +1972,7 @@ class HelperToolsPlugin(Star):
             yield event.plain_result("X/Twitter 推文读取发生意外错误，未返回结果。")
 
     @filter.command("qq_avatar", alias={"qq头像", "头像"})
+    @filter.custom_filter(RequireWakePrefix)
     async def qq_avatar_command(
         self,
         event: AstrMessageEvent,
@@ -2006,6 +2000,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("random_avatar", alias={"随机头像", "换随机头像", "换头像"})
+    @filter.custom_filter(RequireWakePrefix)
     async def random_avatar_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "qq_avatar"):
             yield event.plain_result("QQ 头像命令当前未启用。")
@@ -2024,6 +2019,7 @@ class HelperToolsPlugin(Star):
         event.stop_event()
 
     @filter.command("戳", alias={"戳我", "戳全体成员"})
+    @filter.custom_filter(RequireWakePrefix)
     async def poke_command(self, event: AstrMessageEvent):
         if (
             not self.enabled()
@@ -2038,6 +2034,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("戳命令列表", alias={"导出戳命令", "随机命令列表"})
+    @filter.custom_filter(RequireWakePrefix)
     async def poke_command_list_command(self, event: AstrMessageEvent):
         """Export the normalized command pool, one command per line."""
 
@@ -2055,6 +2052,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("撤回转发", alias={"设置撤回转发"})
+    @filter.custom_filter(RequireWakePrefix)
     async def anti_revoke_add_target(
         self,
         event: AstrMessageEvent,
@@ -2080,6 +2078,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("取消撤回转发")
+    @filter.custom_filter(RequireWakePrefix)
     async def anti_revoke_remove_target(
         self,
         event: AstrMessageEvent,
@@ -2105,6 +2104,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("查看撤回转发")
+    @filter.custom_filter(RequireWakePrefix)
     async def anti_revoke_list_targets(self, event: AstrMessageEvent):
         if (
             not self.enabled()
@@ -2116,6 +2116,7 @@ class HelperToolsPlugin(Star):
         event.stop_event()
 
     @filter.command("qq_member", alias={"群成员信息", "qq成员"})
+    @filter.custom_filter(RequireWakePrefix)
     async def qq_member_command(
         self,
         event: AstrMessageEvent,
@@ -2138,6 +2139,7 @@ class HelperToolsPlugin(Star):
         event.stop_event()
 
     @filter.command("qq_profile", alias={"qq资料", "box", "盒", "开盒"})
+    @filter.custom_filter(RequireWakePrefix)
     async def qq_profile_command(
         self,
         event: AstrMessageEvent,
@@ -2179,6 +2181,7 @@ class HelperToolsPlugin(Star):
         event.stop_event()
 
     @filter.command("rollpig", alias={"今日小猪", "抽小猪", "我的小猪"})
+    @filter.custom_filter(RequireWakePrefix)
     async def rollpig_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "rollpig"):
             yield event.plain_result("今日小猪命令当前未启用。")
@@ -2194,6 +2197,7 @@ class HelperToolsPlugin(Star):
         event.stop_event()
 
     @filter.command("payqr", alias={"收款码", "打钱"})
+    @filter.custom_filter(RequireWakePrefix)
     async def payqr_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "payqr"):
             yield event.plain_result("收款码命令当前未启用。")
@@ -2209,6 +2213,7 @@ class HelperToolsPlugin(Star):
         event.stop_event()
 
     @filter.command("anime1_update", alias={"anime_update", "更新anime1"})
+    @filter.custom_filter(RequireWakePrefix)
     async def anime1_update_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "anime1"):
             yield event.plain_result("Anime1 命令当前未启用。")
@@ -2224,6 +2229,7 @@ class HelperToolsPlugin(Star):
         event.stop_event()
 
     @filter.command("anime1", alias={"番剧更新"})
+    @filter.custom_filter(RequireWakePrefix)
     async def anime1_command(
         self,
         event: AstrMessageEvent,
@@ -2246,6 +2252,7 @@ class HelperToolsPlugin(Star):
         event.stop_event()
 
     @filter.command("anime1_url", alias={"番剧链接"})
+    @filter.custom_filter(RequireWakePrefix)
     async def anime1_url_command(self, event: AstrMessageEvent, anime_id: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "anime1"):
             yield event.plain_result("Anime1 命令当前未启用。")
@@ -2256,6 +2263,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("设置头像")
+    @filter.custom_filter(RequireWakePrefix)
     async def set_bot_avatar_command(self, event: AstrMessageEvent, image_url: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
@@ -2271,6 +2279,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("设置昵称")
+    @filter.custom_filter(RequireWakePrefix)
     async def set_bot_nickname_command(self, event: AstrMessageEvent, nickname: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
@@ -2286,6 +2295,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("设置签名")
+    @filter.custom_filter(RequireWakePrefix)
     async def set_bot_signature_command(self, event: AstrMessageEvent, signature: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
@@ -2301,6 +2311,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("设置状态")
+    @filter.custom_filter(RequireWakePrefix)
     async def set_bot_status_command(self, event: AstrMessageEvent, status_name: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
@@ -2316,6 +2327,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("切换人格")
+    @filter.custom_filter(RequireWakePrefix)
     async def switch_persona_command(self, event: AstrMessageEvent, persona_id: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
@@ -2331,6 +2343,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("同步人格")
+    @filter.custom_filter(RequireWakePrefix)
     async def sync_persona_command(self, event: AstrMessageEvent, persona_id: str | None = None):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
@@ -2346,6 +2359,7 @@ class HelperToolsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("人格列表", alias={"查看人格列表"})
+    @filter.custom_filter(RequireWakePrefix)
     async def list_persona_command(self, event: AstrMessageEvent):
         if not self.enabled() or not _module_commands_enabled(self.config, "bot_profile"):
             yield event.plain_result("Bot QQ 资料命令当前未启用。")
@@ -2395,13 +2409,14 @@ class HelperToolsPlugin(Star):
         if not text:
             return
         wake_triggered = self._message_has_wake_prefix(event)
+        if wake_triggered:
+            text = self._message_without_wake_prefix(event)
 
-        like_result = await self.qq_like.handle_message(
-            event,
-            text,
-            wake_prefix_text=self._message_without_wake_prefix(event),
+        like_result = (
+            await self.qq_like.handle_message(event, text, wake_prefix_text=text)
+            if wake_triggered else None
         )
-        if like_result.handled:
+        if like_result is not None and like_result.handled:
             _record_dashboard_activity(
                 self,
                 "qq_like",
@@ -2421,9 +2436,8 @@ class HelperToolsPlugin(Star):
                 )
             )
             if can_use_persona_reply:
-                # Bare trigger phrases normally do not enter AstrBot's default
-                # LLM pipeline. Mark this event as a normal wake request so the
-                # active provider and persona produce the only user-facing reply.
+                # Keep the explicitly addressed request in AstrBot's default
+                # pipeline so the active persona produces the only reply.
                 event.is_at_or_wake_command = True
                 return
             if like_result.reply:
@@ -2433,8 +2447,10 @@ class HelperToolsPlugin(Star):
                 event.stop_event()
             return
 
-        wallpaper_result = await self.wallpaper.handle_message(event, text)
-        if wallpaper_result.handled:
+        wallpaper_result = (
+            await self.wallpaper.handle_message(event, text) if wake_triggered else None
+        )
+        if wallpaper_result is not None and wallpaper_result.handled:
             _record_dashboard_activity(
                 self,
                 "wallpaper",
@@ -2448,7 +2464,9 @@ class HelperToolsPlugin(Star):
                 event.stop_event()
             return
 
-        steam_match = self.steam.match_message(text, wake_triggered=wake_triggered)
+        steam_match = self.steam.match_message(
+            text, wake_triggered=wake_triggered, allow_commands=wake_triggered
+        )
         if steam_match.handled:
             try:
                 chain, error = await self.steam.build_chain_for_message(steam_match.query)
@@ -2491,7 +2509,9 @@ class HelperToolsPlugin(Star):
                 event.stop_event()
             return
 
-        if self.voice.should_handle_message(text, wake_triggered=wake_triggered):
+        if self.voice.should_handle_message(
+            text, wake_triggered=wake_triggered, allow_commands=wake_triggered
+        ):
             try:
                 chain = await self.voice.build_chain()
             except Exception as exc:  # noqa: BLE001 - convert service errors to a reply

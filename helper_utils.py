@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (compatible; AstrBot HelperTools; "
     "+https://github.com/Whereis-Alice/astrbot_plugin_helper_tools)"
@@ -107,18 +106,29 @@ def read_list(value: Any, default: list[str] | None = None) -> list[str]:
     return fallback
 
 
-def core_wake_prefixes(context: Any, default: list[str] | None = None) -> list[str]:
-    fallback = default or ["/"]
+def core_wake_prefixes(
+    context: Any, default: list[str] | None = None, *, event: Any | None = None
+) -> list[str]:
+    fallback = ["/"] if default is None else default
     core_config: dict[str, Any] = {}
     getter = getattr(context, "get_config", None)
     if callable(getter):
         try:
-            value = getter() or {}
+            origin = clean_text(getattr(event, "unified_msg_origin", ""))
+            if origin:
+                try:
+                    value = getter(origin) or {}
+                except TypeError:
+                    value = getter() or {}
+            else:
+                value = getter() or {}
             if isinstance(value, dict):
                 core_config = value
-        except Exception:
+        except Exception:  # noqa: BLE001 - tolerate unavailable core configuration
             core_config = {}
-    return read_list(core_config.get("wake_prefix"), fallback) or fallback
+    if "wake_prefix" not in core_config:
+        return fallback
+    return read_list(core_config.get("wake_prefix"), [])
 
 
 def expand_wake_prefixed_commands(
