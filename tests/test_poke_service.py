@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -215,6 +216,27 @@ def command_only_config() -> dict[str, object]:
     }
 
 
+class RecordingRng:
+    def __init__(self, action: str, command: str | None = None) -> None:
+        self.action = action
+        self.command = command
+        self.choices_calls: list[tuple[tuple[str, ...], tuple[int, ...], int]] = []
+        self.choice_calls: list[tuple[str, ...]] = []
+
+    def choices(self, population, *, weights, k):
+        self.choices_calls.append((tuple(population), tuple(weights), k))
+        if k != 1 or self.action not in population:
+            raise AssertionError(f"Unexpected action draw: {population!r}, k={k}")
+        return [self.action]
+
+    def choice(self, population):
+        pool = tuple(population)
+        self.choice_calls.append(pool)
+        if self.command not in pool:
+            raise AssertionError(f"Selected command missing from pool: {pool!r}")
+        return self.command
+
+
 class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
     def test_schema_uses_safe_defaults(self) -> None:
         schema_path = Path(__file__).parents[1] / "_conf_schema.json"
@@ -228,6 +250,17 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "怒撕",
             poke["command_reply"]["items"]["commands"]["default"],
+        )
+        command_actions = poke["command_reply_actions"]
+        self.assertEqual(command_actions["type"], "template_list")
+        self.assertEqual(command_actions["default"], [])
+        command_template = command_actions["templates"]["command_reply"]["items"]
+        self.assertEqual(
+            {
+                key: command_template[key]["default"]
+                for key in ("name", "enabled", "weight", "commands")
+            },
+            {"name": "", "enabled": True, "weight": 10, "commands": []},
         )
         self.assertIn(
             "首先检查上下文",
@@ -268,6 +301,264 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             cooldown.allow("30001", "20001", user_seconds=10, group_seconds=2)
         )
+
+    def test_command_actions_share_one_draw_with_legacy_and_other_weights(self) -> None:
+        config = command_only_config()
+        poke = config["poke"]
+        for action, weight in (
+            ("antipoke", 3),
+            ("llm_reply", 7),
+            ("qq_face", 11),
+            ("mute_reply", 13),
+            ("command_reply", 19),
+        ):
+            poke[action]["weight"] = weight
+        poke["command_reply_actions"] = [
+            {"name": "同名", "enabled": True, "weight": 23, "commands": ["/甲", "/乙"]},
+            {"name": "跳过", "enabled": False, "weight": 99, "commands": ["/禁用"]},
+            {"name": "同名", "enabled": True, "weight": 31, "commands": ["/丙"]},
+        ]
+        rng = RecordingRng("command_reply:2")
+        service = PokeService(config, Path("."), FakeContext(), rng=rng)
+        notice = PokeNotice.from_event(FakeEvent.poke_notice())
+        assert notice is not None
+
+        self.assertEqual(service.choose_action(notice), "command_reply:2")
+
+        self.assertEqual(len(rng.choices_calls), 1)
+        actions, weights, k = rng.choices_calls[0]
+        self.assertEqual(k, 1)
+        self.assertEqual(len(actions), 7)
+        self.assertEqual(len(weights), len(actions))
+        self.assertEqual(
+            dict(zip(actions, weights)),
+            {
+                "antipoke": 3,
+                "llm_reply": 7,
+                "qq_face": 11,
+                "mute_reply": 13,
+                "command_reply": 19,
+                "command_reply:0": 23,
+                "command_reply:2": 31,
+            },
+        )
+        self.assertEqual(rng.choice_calls, [])
+
+    def test_unusable_command_entries_do_not_draw_or_fall_back_to_legacy_pool(self) -> None:
+        entries = [
+            {"enabled": False, "weight": 50, "commands": ["/禁用"]},
+            {"enabled": True, "weight": 0, "commands": ["/零权重"]},
+            {"enabled": True, "weight": -5, "commands": ["/负权重"]},
+            {"enabled": True, "weight": 10, "commands": []},
+            {"enabled": True, "weight": 10, "commands": [" ", "///"]},
+            {"enabled": True, "weight": 10},
+            {"enabled": True, "weight": 10, "commands": {}},
+            None,
+            "invalid entry",
+            ["invalid entry"],
+        ]
+        notice = PokeNotice.from_event(FakeEvent.poke_notice())
+        assert notice is not None
+        for legacy_weight in (0, 100):
+            with self.subTest(legacy_weight=legacy_weight):
+                config = command_only_config()
+                config["poke"]["command_reply"]["weight"] = legacy_weight
+                config["poke"]["command_reply_actions"] = entries
+                rng = RecordingRng("command_reply")
+                service = PokeService(config, Path("."), FakeContext(), rng=rng)
+
+                action = service.choose_action(notice)
+
+                self.assertEqual(action, "command_reply" if legacy_weight else "")
+                self.assertEqual(
+                    rng.choices_calls,
+                    [(("command_reply",), (100,), 1)] if legacy_weight else [],
+                )
+                self.assertEqual(service.command_action_pool("command_reply:3"), ())
+                self.assertEqual(service.command_action_pool("command_reply:5"), ())
+                self.assertEqual(rng.choice_calls, [])
+
+    def test_legacy_default_pool_is_preserved_without_filling_new_empty_pools(self) -> None:
+        config = command_only_config()
+        del config["poke"]["command_reply"]["commands"]
+        config["poke"]["command_reply_actions"] = [
+            {"name": "", "enabled": True, "weight": 10, "commands": []},
+            {"name": "未配置", "enabled": True, "weight": 10},
+        ]
+        rng = RecordingRng("command_reply")
+        service = PokeService(config, Path("."), FakeContext(), rng=rng)
+        notice = PokeNotice.from_event(FakeEvent.poke_notice())
+        assert notice is not None
+
+        self.assertIn("怒撕", service.command_pool())
+        self.assertEqual(
+            service.command_action_pool("command_reply"), service.command_pool()
+        )
+        self.assertEqual(service.command_action_pool("command_reply:0"), ())
+        self.assertEqual(service.command_action_pool("command_reply:1"), ())
+        self.assertEqual(service.choose_action(notice), "command_reply")
+        self.assertEqual(rng.choices_calls, [(("command_reply",), (100,), 1)])
+
+    def test_private_notices_exclude_both_legacy_and_entry_command_actions(self) -> None:
+        event = FakeEvent.poke_notice()
+        del event.message_obj.raw_message["group_id"]
+        event.message_obj.type = "FriendMessage"
+        event.session_id = "20001"
+        event.unified_msg_origin = "default:FriendMessage:20001"
+        notice = PokeNotice.from_event(event)
+        assert notice is not None
+        self.assertFalse(notice.group_id)
+        for llm_weight in (0, 7):
+            with self.subTest(llm_weight=llm_weight):
+                config = command_only_config()
+                config["poke"]["llm_reply"]["weight"] = llm_weight
+                config["poke"]["command_reply_actions"] = [
+                    {"name": "群命令", "enabled": True, "weight": 99, "commands": ["/盒"]},
+                ]
+                rng = RecordingRng("llm_reply")
+                service = PokeService(config, Path("."), FakeContext(), rng=rng)
+
+                self.assertEqual(
+                    service.choose_action(notice), "llm_reply" if llm_weight else ""
+                )
+                self.assertEqual(
+                    rng.choices_calls,
+                    [(("llm_reply",), (7,), 1)] if llm_weight else [],
+                )
+                self.assertEqual(rng.choice_calls, [])
+
+    async def test_same_named_command_entries_dispatch_only_their_own_normalized_pool(
+        self,
+    ) -> None:
+        for index, pool, command in (
+            (0, ("甲 一", "甲 二"), "甲 二"),
+            (2, ("乙 一", "乙 二"), "乙 二"),
+        ):
+            with self.subTest(index=index):
+                config = command_only_config()
+                config["poke"]["command_reply_actions"] = [
+                    {
+                        "name": "同名",
+                        "enabled": True,
+                        "weight": 11,
+                        "commands": [" //甲\t一 ", "甲   一", "///", "/甲\n二"],
+                    },
+                    {"name": "跳过", "enabled": False, "weight": 99, "commands": ["/禁用"]},
+                    {
+                        "name": "同名",
+                        "enabled": True,
+                        "weight": 23,
+                        "commands": [" /乙 一 ", "乙\t一", " ", "//乙  二"],
+                    },
+                ]
+                context = FakeContext()
+                rng = RecordingRng(f"command_reply:{index}", command)
+                service = PokeService(config, Path("."), context, rng=rng)
+                event = FakeEvent.poke_notice()
+                original_raw = deepcopy(event.message_obj.raw_message)
+                original_sender = event.message_obj.sender
+
+                response = await service.handle_event(event)
+
+                self.assertTrue(response.handled)
+                self.assertEqual(response.action, "command_reply")
+                self.assertFalse(response.llm_prompt)
+                self.assertEqual(len(rng.choices_calls), 1)
+                actions, weights, k = rng.choices_calls[0]
+                self.assertEqual(k, 1)
+                self.assertEqual(len(actions), 3)
+                self.assertEqual(
+                    dict(zip(actions, weights)),
+                    {
+                        "command_reply": 100,
+                        "command_reply:0": 11,
+                        "command_reply:2": 23,
+                    },
+                )
+                self.assertEqual(service.command_pool(), ("怒撕",))
+                self.assertEqual(
+                    service.command_action_pool(f"command_reply:{index}"), pool
+                )
+                self.assertEqual(rng.choice_calls, [pool])
+                self.assertEqual(len(context.queue.items), 1)
+                synthetic = context.queue.items[0]
+                self.assertTrue(is_poke_synthetic_command(synthetic))
+                self.assertEqual(synthetic.message_str, command)
+                self.assertEqual(synthetic.get_messages()[0].text, command)
+                self.assertEqual(synthetic.get_sender_id(), "20001")
+                self.assertEqual(synthetic.get_sender_name(), "Alice")
+                self.assertEqual(synthetic.message_obj.raw_message["user_id"], 20001)
+                self.assertEqual(str(synthetic.get_messages()[1].qq), "20001")
+                self.assertTrue(event.stopped)
+                self.assertIs(event.message_obj.sender, original_sender)
+                self.assertEqual(event.message_obj.raw_message, original_raw)
+
+    async def test_command_dispatch_failure_does_not_fall_back_to_llm_or_change_sender(
+        self,
+    ) -> None:
+        for action, command in (("command_reply", "怒撕"), ("command_reply:0", "盒")):
+            with self.subTest(action=action):
+                config = command_only_config()
+                config["poke"]["llm_reply"]["weight"] = 50
+                config["poke"]["command_reply_actions"] = [
+                    {
+                        "name": "失败动作",
+                        "enabled": True,
+                        "weight": 10,
+                        "commands": ["/盒"],
+                    },
+                ]
+                context = FakeContext()
+                rng = RecordingRng(action, command)
+                service = PokeService(config, Path("."), context, rng=rng)
+                event = FakeEvent.poke_notice()
+                original_raw = deepcopy(event.message_obj.raw_message)
+                original_sender = event.message_obj.sender
+
+                with patch.object(
+                    context.queue, "put_nowait", side_effect=RuntimeError("queue full")
+                ):
+                    response = await service.handle_event(event)
+
+                self.assertTrue(response.handled)
+                self.assertEqual(response.action, "command_failed")
+                self.assertFalse(response.llm_prompt)
+                self.assertEqual(response.chain, ())
+                self.assertFalse(event.call_llm)
+                self.assertEqual(context.queue.items, [])
+                self.assertEqual(len(rng.choices_calls), 1)
+                self.assertEqual(rng.choice_calls, [(command,)])
+                self.assertIs(event.message_obj.sender, original_sender)
+                self.assertEqual(event.get_sender_id(), "20001")
+                self.assertEqual(event.message_obj.raw_message, original_raw)
+
+    def test_export_command_pool_deduplicates_active_entries_without_changing_legacy_pool(
+        self,
+    ) -> None:
+        config = command_only_config()
+        config["poke"]["command_reply"] = {
+            "weight": 0,
+            "commands": ["//怒撕", "怒撕", " /盒 ", "///"],
+        }
+        config["poke"]["command_reply_actions"] = [
+            {
+                "name": "同名",
+                "enabled": True,
+                "weight": 11,
+                "commands": ["/盒", " /甲\t一 ", "甲  一"],
+            },
+            {"name": "禁用", "enabled": False, "weight": 50, "commands": ["/禁用"]},
+            {"name": "零权重", "enabled": True, "weight": 0, "commands": ["/零权重"]},
+            {"name": "负权重", "enabled": True, "weight": -1, "commands": ["/负权重"]},
+            {"name": "同名", "enabled": True, "weight": 23, "commands": ["/怒撕", "//乙"]},
+            {"name": "空池", "enabled": True, "weight": 10, "commands": []},
+            None,
+        ]
+        service = PokeService(config, Path("."), FakeContext())
+
+        self.assertEqual(service.command_pool(), ("怒撕", "盒"))
+        self.assertEqual(service.export_command_pool(), ("怒撕", "盒", "甲 一", "乙"))
+        self.assertEqual(service.command_pool(), ("怒撕", "盒"))
 
     async def test_random_command_keeps_original_poker_as_downstream_sender(
         self,
@@ -490,7 +781,8 @@ class PokeServiceTests(unittest.IsolatedAsyncioTestCase):
             poke=SimpleNamespace(
                 enabled=lambda: True,
                 commands_enabled=lambda: True,
-                command_pool=lambda: ("怒撕", "盒", "随机命令"),
+                command_pool=lambda: ("怒撕",),
+                export_command_pool=lambda: ("怒撕", "盒", "随机命令"),
             ),
         )
         event = FakeEvent.poke_notice()

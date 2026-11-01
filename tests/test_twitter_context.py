@@ -256,7 +256,14 @@ class TwitterCommandNamespaceTests(unittest.TestCase):
             for decorator in node.decorator_list:
                 if not isinstance(decorator, ast.Call) or not decorator.args:
                     continue
-                if not isinstance(decorator.func, ast.Attribute) or decorator.func.attr != "command":
+                is_command = (
+                    isinstance(decorator.func, ast.Attribute)
+                    and decorator.func.attr == "command"
+                ) or (
+                    isinstance(decorator.func, ast.Name)
+                    and decorator.func.id == "addressed_command"
+                )
+                if not is_command:
                     continue
                 argument = decorator.args[0]
                 if isinstance(argument, ast.Constant) and isinstance(argument.value, str):

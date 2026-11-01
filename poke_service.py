@@ -108,6 +108,7 @@ _DEFAULT_MUTE_FAILURE_PROMPT = (
 )
 _GROUP_ROLE_LABELS = {"owner": "群主", "admin": "管理员", "member": "普通群员"}
 _MUTE_API_TIMEOUT_SECONDS = 3
+_COMMAND_ACTION_PREFIX = "command_reply:"
 _ACTION_DEFAULT_WEIGHTS = {
     "antipoke": 10,
     "llm_reply": 10,
@@ -420,12 +421,15 @@ class PokeService:
                 handled=True, action=action, llm_prompt=f"{prompt}\n\n{result.context(notice)}"
             )
 
-        if action == "command_reply":
-            command = self.rng.choice(self.command_pool())
+        if action == "command_reply" or action.startswith(_COMMAND_ACTION_PREFIX):
+            commands = self.command_action_pool(action)
+            if not commands:
+                return PokeResponse(handled=True, action="command_failed")
+            command = self.rng.choice(commands)
             dispatched = await self.dispatch_synthetic_command(event, notice, command)
             return PokeResponse(
                 handled=True,
-                action=action if dispatched else "command_failed",
+                action="command_reply" if dispatched else "command_failed",
             )
 
         return PokeResponse(handled=True, action=action)
@@ -444,6 +448,10 @@ class PokeService:
                 continue
             actions.append(action)
             weights.append(weight)
+        if notice.group_id:
+            for action, weight, _commands in self._command_action_entries():
+                actions.append(action)
+                weights.append(weight)
         if not actions:
             return ""
         return self.rng.choices(actions, weights=weights, k=1)[0]
@@ -468,6 +476,8 @@ class PokeService:
             # Aiocqhttp routes private replies through get_sender_id(). Once the
             # synthetic author is the bot, a private command could reply to itself.
             return bool(notice.group_id and self.command_pool())
+        if action.startswith(_COMMAND_ACTION_PREFIX):
+            return bool(notice.group_id and self.command_action_pool(action))
         return True
 
     def _cooldown_allows(self, notice: PokeNotice) -> bool:
@@ -963,6 +973,9 @@ class PokeService:
             self._section("command_reply").get("commands"),
             _DEFAULT_COMMAND_POOL,
         )
+        return self._normalized_command_pool(values)
+
+    def _normalized_command_pool(self, values: Any) -> tuple[str, ...]:
         commands: list[str] = []
         seen: set[str] = set()
         for value in values:
@@ -971,6 +984,48 @@ class PokeService:
                 seen.add(command)
                 commands.append(command)
         return tuple(commands)
+
+    def _command_action_entries(self) -> tuple[tuple[str, int, tuple[str, ...]], ...]:
+        rows = cfg(self.config, "poke", "command_reply_actions", [])
+        if not isinstance(rows, list):
+            return ()
+        entries: list[tuple[str, int, tuple[str, ...]]] = []
+        for index, row in enumerate(rows):
+            if (
+                not isinstance(row, dict)
+                or row.get("__template_key", "command_reply") != "command_reply"
+            ):
+                continue
+            if not read_bool(row.get("enabled"), True):
+                continue
+            weight = read_int(row.get("weight"), 10, minimum=0, maximum=100)
+            if weight <= 0:
+                continue
+            commands = self._normalized_command_pool(
+                _string_list(row.get("commands"), ())
+            )
+            if commands:
+                entries.append((f"{_COMMAND_ACTION_PREFIX}{index}", weight, commands))
+        return tuple(entries)
+
+    def command_action_pool(self, action: str) -> tuple[str, ...]:
+        """Return only the selected action's configured command pool."""
+        if action == "command_reply":
+            return self.command_pool()
+        return next(
+            (
+                commands for key, _weight, commands in self._command_action_entries()
+                if key == action
+            ),
+            (),
+        )
+
+    def export_command_pool(self) -> tuple[str, ...]:
+        """Export legacy commands and enabled extra actions without duplicates."""
+        commands = list(self.command_pool())
+        for _action, _weight, pool in self._command_action_entries():
+            commands.extend(pool)
+        return tuple(dict.fromkeys(commands))
 
     def _normalize_command(self, value: Any) -> str:
         command = " ".join(clean_text(value).split())

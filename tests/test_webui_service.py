@@ -319,6 +319,106 @@ class DashboardApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("模板无效", body["message"])
 
+    async def test_poke_command_actions_save_keeps_pools_separate_and_clamps_weights(
+        self,
+    ) -> None:
+        config = (await self._state())["config"]
+        config["poke"]["command_reply"] = {"weight": 17, "commands": ["//旧池"]}
+        config["poke"]["command_reply_actions"] = [
+            {
+                "__template_key": "command_reply",
+                "name": "同名",
+                "enabled": True,
+                "weight": "999999",
+                "commands": ["/怒撕", "怒撕"],
+            },
+            {
+                "__template_key": "command_reply",
+                "name": "同名",
+                "enabled": False,
+                "weight": -12,
+                "commands": ["/盒"],
+            },
+            {
+                "__template_key": "command_reply",
+                "name": "",
+                "enabled": True,
+                "weight": 10,
+                "commands": [],
+            },
+        ]
+
+        response = await self._save(config)
+        body = await response.get_json()
+
+        self.assertEqual(response.status_code, 200, body)
+        expected = [
+            {
+                "__template_key": "command_reply",
+                "name": "同名",
+                "enabled": True,
+                "weight": 100,
+                "commands": ["/怒撕", "怒撕"],
+            },
+            {
+                "__template_key": "command_reply",
+                "name": "同名",
+                "enabled": False,
+                "weight": 0,
+                "commands": ["/盒"],
+            },
+            {
+                "__template_key": "command_reply",
+                "name": "",
+                "enabled": True,
+                "weight": 10,
+                "commands": [],
+            },
+        ]
+        self.assertEqual(self.config["poke"]["command_reply_actions"], expected)
+        self.assertEqual(
+            self.config["poke"]["command_reply"], config["poke"]["command_reply"]
+        )
+        persisted = json.loads(self.config.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["poke"]["command_reply_actions"], expected)
+
+    async def test_poke_command_actions_default_empty_survives_legacy_config_save(
+        self,
+    ) -> None:
+        config = (await self._state())["config"]
+        self.assertEqual(config["poke"]["command_reply_actions"], [])
+        legacy_commands = config["poke"]["command_reply"]["commands"]
+
+        response = await self._save(config)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.config["poke"]["command_reply_actions"], [])
+        self.assertEqual(self.config["poke"]["command_reply"]["commands"], legacy_commands)
+
+    async def test_poke_command_actions_reject_unknown_template_without_saving(
+        self,
+    ) -> None:
+        config = (await self._state())["config"]
+        config["poke"]["command_reply_actions"] = [
+            {
+                "__template_key": "not-real",
+                "name": "无效",
+                "enabled": True,
+                "weight": 10,
+                "commands": ["/怒撕"],
+            },
+        ]
+        before = deepcopy(self.config)
+
+        response = await self._save({"poke": config["poke"]})
+        body = await response.get_json()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("模板无效", body["message"])
+        self.assertEqual(self.config, before)
+        self.assertEqual(self.config.save_calls, 0)
+        self.assertFalse(self.config.config_path.exists())
+
     async def test_upload_is_extension_checked_and_stays_under_plugin_data(self) -> None:
         payload = base64.b64encode(b"test image").decode("ascii")
         invalid = await self.client.post(

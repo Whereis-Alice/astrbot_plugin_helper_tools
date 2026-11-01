@@ -74,6 +74,9 @@ class FakeEvent:
     def get_group_id(self) -> str:
         return self.group_id
 
+    def is_private_chat(self) -> bool:
+        return not self.group_id
+
     def get_messages(self) -> list[object]:
         return self.message_obj.message
 
@@ -123,12 +126,16 @@ class QQProfileLikePersonaTests(unittest.IsolatedAsyncioTestCase):
         plugin.voice = SimpleNamespace(should_handle_message=Mock(return_value=False))
         return plugin
 
-    async def test_persona_mode_forces_default_pipeline_and_keeps_fact_temporary(
+    async def assert_like_keeps_temporary_persona_context(
         self,
+        event: FakeEvent,
+        prefixes: list[str] | None = None,
     ) -> None:
-        plugin = self.make_plugin()
+        plugin = self.make_plugin(prefixes)
         like_service = plugin.qq_like
-        event = FakeEvent()
+        original_text = event.message_obj.message_str
+        routed_text = event.message_str
+        like_service.handle_message = AsyncMock(wraps=like_service.handle_message)
 
         results = [
             item
@@ -136,9 +143,12 @@ class QQProfileLikePersonaTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         self.assertEqual(results, [])
-        self.assertEqual(event.message_str, "赞我")
-        self.assertEqual(event.message_obj.message_str, "/赞我")
+        self.assertEqual(event.message_str, routed_text)
+        self.assertEqual(event.message_obj.message_str, original_text)
         self.assertEqual(event.bot.likes, [(20001, 10)])
+        like_service.handle_message.assert_awaited_once_with(
+            event, "赞我", wake_prefix_text="赞我"
+        )
         plugin.context.get_config.assert_called_with(event.unified_msg_origin)
         self.assertTrue(event.is_at_or_wake_command)
         self.assertFalse(event.call_llm)
@@ -156,11 +166,51 @@ class QQProfileLikePersonaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persisted[0]["content"], [])
         self.assertEqual(like_service.take_persona_context(event), "")
 
-    async def test_dynamic_entry_rejects_bare_other_prefix_empty_config_and_other_bot(
+    async def test_persona_mode_forces_default_pipeline_and_keeps_fact_temporary(
+        self,
+    ) -> None:
+        await self.assert_like_keeps_temporary_persona_context(FakeEvent())
+        await self.assert_like_keeps_temporary_persona_context(
+            FakeEvent(group_id="123")
+        )
+
+    async def test_bare_private_self_at_and_self_reply_keep_persona_temporary(
+        self,
+    ) -> None:
+        for prefixes in (["/"], []):
+            cases = [
+                ("private", FakeEvent("赞我")),
+                (
+                    "self_at",
+                    FakeEvent(
+                        "赞我",
+                        group_id="123",
+                        messages=[Comp.At(qq="10001"), Comp.Plain("赞我")],
+                    ),
+                ),
+                (
+                    "self_reply",
+                    FakeEvent(
+                        "赞我",
+                        group_id="123",
+                        messages=[
+                            Comp.Reply(id="previous", sender_id="10001"),
+                            Comp.Plain("赞我"),
+                        ],
+                    ),
+                ),
+            ]
+            for address, event in cases:
+                with self.subTest(address=address, prefixes=prefixes):
+                    event.message_str = "唤醒阶段改写的文本"
+                    await self.assert_like_keeps_temporary_persona_context(
+                        event, prefixes
+                    )
+
+    async def test_dynamic_entry_rejects_unaddressed_group_and_other_bot(
         self,
     ) -> None:
         cases = [
-            (FakeEvent("赞我"), ["/"]),
             (FakeEvent("赞我", group_id="123"), ["/"]),
             (FakeEvent("!赞我", group_id="123"), ["/"]),
             (FakeEvent("/赞我", group_id="123"), []),
@@ -168,10 +218,24 @@ class QQProfileLikePersonaTests(unittest.IsolatedAsyncioTestCase):
                 FakeEvent(
                     "赞我",
                     group_id="123",
-                    messages=[Comp.At(qq="10001"), Comp.Plain("赞我")],
+                    messages=[Comp.At(qq="all"), Comp.Plain("赞我")],
                 ),
                 ["/"],
             ),
+            *[
+                (
+                    FakeEvent(
+                        "赞我",
+                        group_id="123",
+                        messages=[
+                            Comp.Reply(id="previous", sender_id=sender_id),
+                            Comp.Plain("赞我"),
+                        ],
+                    ),
+                    ["/"],
+                )
+                for sender_id in ("20002", "10002")
+            ],
             (
                 FakeEvent(
                     "赞我",
@@ -180,6 +244,14 @@ class QQProfileLikePersonaTests(unittest.IsolatedAsyncioTestCase):
                         Comp.Reply(id="previous", message_str="/赞我"),
                         Comp.Plain("赞我"),
                     ],
+                ),
+                ["/"],
+            ),
+            (
+                FakeEvent(
+                    "赞我",
+                    group_id="123",
+                    messages=[Comp.At(qq="10002"), Comp.Plain("赞我")],
                 ),
                 ["/"],
             ),
@@ -202,7 +274,11 @@ class QQProfileLikePersonaTests(unittest.IsolatedAsyncioTestCase):
                 original=event.message_obj.message_str,
                 group=event.group_id,
                 prefixes=prefixes,
+                messages=event.get_messages(),
             ):
+                # A rewritten prefix or wake flag must not address a group message.
+                event.message_str = "/赞我"
+                event.is_at_or_wake_command = True
                 plugin = self.make_plugin(prefixes)
                 plugin.qq_like.handle_message = AsyncMock(
                     wraps=plugin.qq_like.handle_message
@@ -218,11 +294,15 @@ class QQProfileLikePersonaTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(plugin.qq_like.take_persona_context(event), "")
                 plugin.qq_like.handle_message.assert_not_awaited()
                 plugin.wallpaper.handle_message.assert_not_awaited()
-                plugin.steam.match_message.assert_called_once_with(
-                    "赞我", wake_triggered=False, allow_commands=False
+                plugin.steam.match_message.assert_called_once()
+                self.assertEqual(
+                    plugin.steam.match_message.call_args.kwargs,
+                    {"wake_triggered": False, "allow_commands": False},
                 )
-                plugin.voice.should_handle_message.assert_called_once_with(
-                    "赞我", wake_triggered=False, allow_commands=False
+                plugin.voice.should_handle_message.assert_called_once()
+                self.assertEqual(
+                    plugin.voice.should_handle_message.call_args.kwargs,
+                    {"wake_triggered": False, "allow_commands": False},
                 )
 
     async def test_dynamic_entry_uses_session_profile_prefix_for_like_persona(
