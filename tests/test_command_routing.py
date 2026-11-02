@@ -871,7 +871,8 @@ class DynamicWallpaperRoutingTests(unittest.IsolatedAsyncioTestCase):
             plugin = object.__new__(HelperToolsPlugin)
             plugin.context, plugin.config = context, config
             plugin.qq_like = SimpleNamespace(
-                handle_message=AsyncMock(return_value=SimpleNamespace(handled=False))
+                match_message=Mock(return_value=None),
+                handle_message=AsyncMock(return_value=SimpleNamespace(handled=False)),
             )
             plugin.wallpaper = service
             plugin.steam = SimpleNamespace(

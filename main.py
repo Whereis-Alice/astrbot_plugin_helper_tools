@@ -93,7 +93,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "2.4.0"
+PLUGIN_VERSION = "2.4.1"
 PLUGIN_DESC = "QQ / OneBot 辅助工具合集：防撤回、戳一戳、QQ 资料、壁纸、唤醒、网页与 X/Twitter 等能力。B 站与引用卡片解析已拆分为独立插件。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -2380,17 +2380,22 @@ class HelperToolsPlugin(Star):
     async def dynamic_message_handler(self, event: AstrMessageEvent):
         if not self.enabled():
             return
+        like_match = self.qq_like.match_message(
+            event, core_wake_prefixes(self.context, [], event=event)
+        )
         wake_triggered = self._message_has_command_address(event)
         text = (
             self._addressed_command_body(event) if wake_triggered
             else clean_text(getattr(event, "message_str", ""))
         )
-        if not text:
+        if not text and like_match is None:
             return
 
         like_result = (
-            await self.qq_like.handle_message(event, text, wake_prefix_text=text)
-            if wake_triggered else None
+            await self.qq_like.handle_message(
+                event, like_match.text, use_persona_reply=like_match.use_persona_reply
+            )
+            if like_match is not None else None
         )
         if like_result is not None and like_result.handled:
             _record_dashboard_activity(
@@ -2402,7 +2407,8 @@ class HelperToolsPlugin(Star):
             )
             stopped = getattr(event, "is_stopped", None)
             can_use_persona_reply = (
-                bool(like_result.persona_context)
+                like_match is not None and like_match.use_persona_reply
+                and bool(like_result.persona_context)
                 and not (callable(stopped) and stopped())
                 and not bool(getattr(event, "call_llm", False))
                 and not self.wake.is_llm_request_blocked(event)
@@ -2412,7 +2418,7 @@ class HelperToolsPlugin(Star):
                 )
             )
             if can_use_persona_reply:
-                # Keep the addressed request in AstrBot's default
+                # Wake the matched like interaction in AstrBot's default
                 # pipeline so the active persona produces the only reply.
                 event.is_at_or_wake_command = True
                 return

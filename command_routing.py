@@ -69,23 +69,39 @@ def _directly_addressed(event: Any) -> bool:
     )
 
 
-def addressed_command_text(event: Any, prefixes: Iterable[str]) -> str | None:
-    """Return original command text when it is addressed to this bot."""
+def original_message_text(event: Any) -> str:
+    """Read adapter text without trusting a rewritten event body."""
     message_obj = getattr(event, "message_obj", None)
     original = getattr(message_obj, "message_str", None)
-    text = clean_text(
+    return clean_text(
         original if original is not None else getattr(event, "message_str", "")
     )
-    # These events are generated locally by the poke action, never by a QQ
-    # message. They keep their existing command dispatch and sender identity.
-    if is_poke_synthetic_command(event):
-        return text
+
+
+def prefixed_command_text(event: Any, prefixes: Iterable[str]) -> str | None:
+    """Return a command body only when its original text has a real prefix."""
+    text = original_message_text(event)
     if not text or _addressed_elsewhere(event):
         return None
     for value in prefixes:
         prefix = clean_text(value)
         if prefix and text.startswith(prefix):
             return text[len(prefix) :].lstrip()
+    return None
+
+
+def addressed_command_text(event: Any, prefixes: Iterable[str]) -> str | None:
+    """Return original command text when it is addressed to this bot."""
+    text = original_message_text(event)
+    # These events are generated locally by the poke action, never by a QQ
+    # message. They keep their existing command dispatch and sender identity.
+    if is_poke_synthetic_command(event):
+        return text
+    if not text or _addressed_elsewhere(event):
+        return None
+    prefixed = prefixed_command_text(event, prefixes)
+    if prefixed is not None:
+        return prefixed
     return text if _directly_addressed(event) else None
 
 

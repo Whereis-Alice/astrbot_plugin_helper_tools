@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+import astrbot.api.message_components as Comp
 from astrbot.api import logger
 
+from .command_routing import (
+    addressed_command_text,
+    original_message_text,
+    prefixed_command_text,
+)
 from .helper_utils import cfg, clean_text, read_bool, read_int, read_list
 from .onebot_compat import (
     call_onebot,
@@ -35,6 +42,12 @@ _QQ_PLATFORM_NAMES = frozenset(
 
 
 @dataclass(frozen=True)
+class QQLikeMessageMatch:
+    text: str
+    use_persona_reply: bool
+
+
+@dataclass(frozen=True)
 class QQLikeHandleResult:
     handled: bool = False
     reply: str = ""
@@ -51,7 +64,7 @@ class _TargetLikeResult:
 
 
 class QQProfileLikeService:
-    """Automatic QQ profile-like handling without exposing an LLM tool."""
+    """QQ profile likes with automatic, persona and optional LLM-tool paths."""
 
     def __init__(self, config: Any) -> None:
         self.config = config
@@ -83,12 +96,53 @@ class QQProfileLikeService:
             True,
         )
 
+    def match_message(
+        self, event: Any, prefixes: Iterable[str]
+    ) -> QQLikeMessageMatch | None:
+        """Separate prefixed automatic likes from bare persona interactions."""
+        if (
+            not self.enabled()
+            or not self._is_qq_event(event)
+            or not self._is_message_allowed(event)
+        ):
+            return None
+        prefixes = tuple(prefixes)
+        prefixed = prefixed_command_text(event, prefixes)
+        if prefixed is not None:
+            return (
+                QQLikeMessageMatch(prefixed, False)
+                if self._match_targets(event, prefixed) else None
+            )
+        addressed = addressed_command_text(event, prefixes)
+        if addressed is not None:
+            return (
+                QQLikeMessageMatch(addressed, True)
+                if self._match_targets(event, addressed) else None
+            )
+        # Only the configured self-like phrases are automatic bare triggers.
+        # Mentions and replies addressed elsewhere keep the command routing rules.
+        getter = getattr(event, "get_messages", None)
+        messages = (
+            getter() if callable(getter)
+            else getattr(getattr(event, "message_obj", None), "message", [])
+        )
+        if any(
+            isinstance(segment, (Comp.At, Comp.AtAll, Comp.Reply))
+            for segment in messages or []
+        ):
+            return None
+        text = original_message_text(event)
+        if self._is_self_trigger(text) and self._sender_id(event):
+            return QQLikeMessageMatch(text, True)
+        return None
+
     async def handle_message(
         self,
         event: Any,
         text: str,
         *,
         wake_prefix_text: str = "",
+        use_persona_reply: bool = True,
     ) -> QQLikeHandleResult:
         if not self.enabled() or not self._is_qq_event(event):
             return QQLikeHandleResult()
@@ -136,7 +190,10 @@ class QQProfileLikeService:
             for target_id in targets
         ]
         reply = self._format_reply(results)
-        persona_context = self._persona_context(results) if self.persona_reply_enabled() else ""
+        persona_context = (
+            self._persona_context(results)
+            if use_persona_reply and self.persona_reply_enabled() else ""
+        )
         return QQLikeHandleResult(
             handled=True,
             reply=reply,
@@ -218,12 +275,11 @@ class QQProfileLikeService:
             True,
         )
 
-    def _match_targets(self, event: Any, text: str) -> list[str]:
+    def _is_self_trigger(self, text: str) -> bool:
         text = clean_text(text)
         if not text:
-            return []
+            return False
         normalized = re.sub(r"\s+", "", text)
-        sender_id = self._sender_id(event)
         # 触发短语的 fallback 必须是空列表：read_list 会把空列表回落到默认值，
         # 这里写内置短语的话，用户在 WebUI 里清空也清不掉。
         phrases = read_list(cfg(self.config, "qq_like", "trigger_phrases", []), [])
@@ -232,7 +288,15 @@ class QQProfileLikeService:
             for phrase in phrases
             if clean_text(phrase)
         }
-        if normalized in normalized_phrases:
+        return normalized in normalized_phrases
+
+    def _match_targets(self, event: Any, text: str) -> list[str]:
+        text = clean_text(text)
+        if not text:
+            return []
+        normalized = re.sub(r"\s+", "", text)
+        sender_id = self._sender_id(event)
+        if self._is_self_trigger(text):
             return [sender_id] if sender_id else []
 
         # @ 点赞开头的 fallback 必须是空列表：read_list 会把空列表回落到默认值，

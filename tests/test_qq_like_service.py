@@ -372,6 +372,58 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("机器人自己", await service.like_from_tool(event, "10001"))
         self.assertEqual(bot.likes, [])
 
+    def test_like_mode_matches_original_text_and_never_sends_during_matching(self) -> None:
+        service = QQProfileLikeService(self._config(persona_reply={"enabled": True}))
+        bot = FakeBot(friend_ids=["20001"])
+        for original, rewritten, prefixes, expected in (
+            ("赞我", "/赞我", ["/"], ("赞我", True)),
+            ("/赞我", "赞我", ["/"], ("赞我", False)),
+            ("!赞我", "赞我", ["!"], ("赞我", False)),
+            ("/赞我", "赞我", ["!"], None),
+            ("赞我", "", [], ("赞我", True)),
+            ("", "赞我", ["/"], None),
+            ("请赞我一下", "赞我", ["/"], None),
+        ):
+            with self.subTest(original=original, prefixes=prefixes):
+                event = FakeEvent(text=rewritten, bot=bot, group_id="30001")
+                event.message_obj = SimpleNamespace(message_str=original)
+                event.is_at_or_wake_command = True
+                match = service.match_message(event, prefixes)
+                self.assertEqual(
+                    (match.text, match.use_persona_reply) if match is not None else None,
+                    expected,
+                )
+                self.assertEqual(event.message_str, rewritten)
+                self.assertEqual(event.message_obj.message_str, original)
+        self.assertEqual(bot.likes, [])
+        self.assertEqual(bot.friend_list_calls, 0)
+
+    def test_empty_self_like_phrases_do_not_restore_a_default_trigger(self) -> None:
+        service = QQProfileLikeService(self._config(trigger_phrases=[]))
+        bot = FakeBot()
+        for text in ("赞我", "/赞我"):
+            with self.subTest(text=text):
+                event = FakeEvent(text=text, bot=bot, group_id="30001")
+                self.assertIsNone(service.match_message(event, ["/"]))
+        self.assertEqual(bot.likes, [])
+
+    async def test_automatic_reply_never_builds_persona_facts_even_when_enabled(self) -> None:
+        for failure in (None, RuntimeError("今日点赞额度已达上限")):
+            with self.subTest(failure=failure):
+                bot = FakeBot(friend_ids=["20001"], failure=failure)
+                event = FakeEvent(text="赞我", bot=bot)
+                service = QQProfileLikeService(
+                    self._config(persona_reply={"enabled": True})
+                )
+                result = await service.handle_message(
+                    event, "赞我", use_persona_reply=False
+                )
+                self.assertTrue(result.handled)
+                self.assertTrue(result.reply)
+                self.assertEqual(result.persona_context, "")
+                self.assertEqual(service.take_persona_context(event), "")
+                self.assertEqual(bot.likes, [] if failure else [(20001, 10)])
+
     async def test_tool_reports_stranger_cannot_be_verified(self) -> None:
         bot = FakeBot(friend_ids=[])
         event = FakeEvent(text="", bot=bot)
