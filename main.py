@@ -64,7 +64,10 @@ from .qq_features import (
     normalize_avatar_size,
 )
 from .qq_like_service import QQ_LIKE_TOOL_NAME, QQProfileLikeService
+from .reply_media_capture import ReplyMediaCapture
 from .reply_media_guard import BOT_REPLY_IMAGE_MARKER, ReplyMediaGuard
+from .reply_media_pipeline import ReplyMediaRequestPipeline
+from .reply_media_request import annotate_quoted_images
 from .rollpig_service import RollPigService
 from .steam_service import STEAM_TOOL_NAME, SteamService
 from .twitter_service import (
@@ -93,7 +96,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "2.4.1"
+PLUGIN_VERSION = "2.4.2"
 PLUGIN_DESC = "QQ / OneBot 辅助工具合集：防撤回、戳一戳、QQ 资料、壁纸、唤醒、网页与 X/Twitter 等能力。B 站与引用卡片解析已拆分为独立插件。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -1236,6 +1239,14 @@ class HelperToolsPlugin(Star):
         self.chat_history = ChatHistoryService(self.config, self.data_dir)
         self.chat_history_card = ChatHistoryCardRenderer()
         self.reply_media_guard = ReplyMediaGuard(self.config, self.data_dir)
+        self.reply_media_capture = ReplyMediaCapture(
+            self.context,
+            self.reply_media_guard.remember_outgoing_images,
+            lambda: self.enabled() and self.reply_media_guard.enabled(),
+        )
+        self.reply_media_request_pipeline = ReplyMediaRequestPipeline(
+            lambda event, request: self.reply_media_llm_request_context_handler(event, request, _final=True),
+        )
         self.wake = WakeService(self.config, self.context)
         self.wallpaper = WallpaperService(self.config, self.data_dir, self.context)
         self.rollpig = RollPigService(self.config, self.data_dir, self.context)
@@ -1252,6 +1263,8 @@ class HelperToolsPlugin(Star):
 
     async def initialize(self) -> None:
         self._sync_onebot_platform_names()
+        await self.reply_media_capture.start()
+        await self.reply_media_request_pipeline.start()
         await self.anime1.start()
         if self.enabled():
             await self.avatar_rotation.start()
@@ -1265,7 +1278,14 @@ class HelperToolsPlugin(Star):
         )
         logger.info("[%s] initialized", PLUGIN_ID)
 
+    @filter.on_platform_loaded(priority=100001)
+    async def reply_media_platform_loaded_handler(self) -> None:
+        """Attach send observers after cold-start or reloaded platform creation."""
+        await self.reply_media_capture.start()
+
     async def terminate(self) -> None:
+        await self.reply_media_capture.stop()
+        await self.reply_media_request_pipeline.stop()
         self.chat_history.close()
         await self.twitter.close()
         await self.web_browser.close()
@@ -1306,6 +1326,9 @@ class HelperToolsPlugin(Star):
     async def anti_revoke_event_handler(self, event: AstrMessageEvent) -> None:
         """Cache OneBot group messages and handle group recall notices."""
 
+        capture = getattr(self, "reply_media_capture", None)
+        if capture is not None:
+            capture.observe_event(event)
         if (
             not self.enabled()
             or not self.anti_revoke.enabled()
@@ -1635,15 +1658,21 @@ class HelperToolsPlugin(Star):
         )
         event.stop_event()
 
-    @filter.on_llm_request(priority=99997)
+    @filter.on_llm_request(priority=-99997)
     async def reply_media_llm_request_context_handler(
         self,
         event: AstrMessageEvent,
         request: Any,
+        _final: bool = False,
     ) -> None:
         """Keep quoted self-authored image provenance even if adapter hydration was late."""
 
-        if not self.enabled():
+        if not self.enabled() or not self.reply_media_guard.enabled():
+            return
+        if WakeService.is_llm_request_blocked(event):
+            return
+        stopped = getattr(event, "is_stopped", None)
+        if callable(stopped) and stopped():
             return
         marker = clean_text(getattr(event, "_helper_tools_reply_media_marker", ""))
         if not marker:
@@ -1651,9 +1680,21 @@ class HelperToolsPlugin(Star):
             if image_result.marked_image_count:
                 marker = BOT_REPLY_IMAGE_MARKER
                 event._helper_tools_reply_media_marker = marker
-        if not marker:
+        pipeline = getattr(self, "reply_media_request_pipeline", None)
+        # Modern AstrBot chooses a visual provider after on_llm_request. Preserve
+        # its image_urls lane until final preparation has selected that provider.
+        if not _final and pipeline is not None and pipeline.installed:
+            if marker:
+                _append_reply_media_marker(request, BOT_REPLY_IMAGE_MARKER)
             return
-        _append_reply_media_marker(request, marker)
+        annotated = await annotate_quoted_images(event, request)
+        if marker or annotated:
+            _append_reply_media_marker(request, BOT_REPLY_IMAGE_MARKER)
+        if annotated:
+            logger.info(
+                "[%s] attached per-image quoted provenance (images=%d, session=%s)",
+                PLUGIN_ID, annotated, clean_text(getattr(event, "unified_msg_origin", "")),
+            )
 
     @filter.on_llm_request(priority=22)
     async def perception_context_handler(

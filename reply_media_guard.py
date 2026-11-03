@@ -1,25 +1,34 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+import hashlib
 import json
 import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
-from astrbot.api import logger
 import astrbot.api.message_components as Comp
+from astrbot.api import logger
 
 from .helper_utils import cfg, clean_text, read_bool, read_float, read_int
 from .onebot_compat import get_msg as onebot_get_msg
 
 BOT_REPLY_IMAGE_MARKER = (
-    "[图片来源说明：这是你先前发出，或者自带插件自动发出的图，"
-    "不是当前用户上传的图片。]"
+    "[引用图片来源规则：以每张图片前的发送者标注为准。"
+    "标注为当前 Bot 发送的图片（包括其它插件自动或嵌入发送的表情包）"
+    "是你此前发出的，当前用户只是在引用；不要因为图片放在 user 消息中"
+    "就称为用户发来的表情包。用户本轮新上传的图片另行区分。"
+    "发送者不代表图片创作者；未知来源不能猜测。]"
 )
 
 _SELF_IMAGE_LEDGER_FILENAME = "reply_media_self_images.json"
-_SELF_IMAGE_LEDGER_VERSION = 1
+_SELF_IMAGE_LEDGER_VERSION = 2
+_MAX_IMAGE_BYTES = 12 * 1024 * 1024
+_MAX_SNAPSHOT_BYTES = 128 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +41,7 @@ class ReplyMediaGuardResult:
 class _QuotedMessageInfo:
     sender_id: str = ""
     image_count: int = 0
+    images: tuple[dict[str, str], ...] = ()
 
 
 class ReplyMediaGuard:
@@ -45,6 +55,9 @@ class ReplyMediaGuard:
         )
         # message_id -> (recorded_epoch, image_count) for images this bot sent.
         self._self_image_ledger: dict[str, tuple[float, int]] = {}
+        self._self_image_sources: dict[str, tuple[dict[str, str], ...]] = {}
+        self._snapshot_dir = Path(data_dir) / "reply_media_images" if data_dir else None
+        self._capture_lock = asyncio.Lock()
         self._load_self_image_ledger()
 
     def enabled(self) -> bool:
@@ -79,6 +92,7 @@ class ReplyMediaGuard:
                 quoted = _QuotedMessageInfo(
                     sender_id=bot_id,
                     image_count=max(inline.image_count, ledger_images, 1),
+                    images=self._self_image_sources.get(self._cache_key(event, message_id), ()),
                 )
             # Some OneBot adapters cannot hydrate quoted messages emitted by other
             # plugins. Querying get_msg restores both the sender and image segments.
@@ -93,12 +107,33 @@ class ReplyMediaGuard:
                     quoted = _QuotedMessageInfo(
                         sender_id=looked_up.sender_id or inline.sender_id,
                         image_count=max(inline.image_count, looked_up.image_count),
+                        images=looked_up.images,
                     )
 
+            # Restore missing image components without changing addressing or wake flags.
+            # Late/expired QQ quotes often contain only an ID; the sending receipt
+            # provides the original media references even before their first quote.
+            if not inline.image_count and quoted.images:
+                chain = getattr(component, "chain", None)
+                if not isinstance(chain, list):
+                    chain = []
+                    component.chain = chain
+                for source in quoted.images:
+                    image = self._image_component(source)
+                    if image is not None:
+                        chain.append(image)
+            self._annotate_reply_images(component, quoted.sender_id, message_id, bot_id)
+            for name, value in (
+                ("_helper_tools_quote_sender_id", quoted.sender_id),
+                ("_helper_tools_quote_message_id", message_id),
+                ("_helper_tools_quote_is_bot", quoted.sender_id == bot_id if quoted.sender_id else None),
+                ("_helper_tools_quote_image_count", quoted.image_count),
+            ):
+                object.__setattr__(component, name, value)
             if quoted.sender_id != bot_id or not quoted.image_count:
                 continue
             # 确认是 bot 自己的图后写回台账，使缓存过期后再次引用仍可命中。
-            self._remember_quoted_bot_image(event, message_id, quoted.image_count)
+            self._remember_quoted_bot_image(event, message_id, quoted.image_count, quoted.images)
             self._append_marker(component)
             marked_reply_count += 1
             marked_image_count += quoted.image_count
@@ -106,15 +141,7 @@ class ReplyMediaGuard:
         return ReplyMediaGuardResult(marked_reply_count, marked_image_count)
 
     def remember_self_authored_images(self, event: Any) -> int:
-        """在“会把 bot 自身消息作为事件回流”的适配器上，记录 bot 刚发出的含图消息。
-
-        平台差异：aiocqhttp（QQ / LLOneBot / NapCat / Lagrange）只订阅 on_message
-        group/private，不投递 bot 自身的 message_sent 事件，发送 API 的返回值
-        （含 message_id）也被 AstrBot 丢弃，因此这条路径在 QQ 上通常不会触发——
-        QQ 场景的台账主要由 mark_bot_reply_images 的“确认后写回”建立。要让首次引用
-        旧图也稳定命中，请调大 LLOneBot 的 msgCacheExpire。本方法保留给确实会回流
-        自身消息的平台。
-        """
+        """Remember self-message echoes; QQ additionally records actual send receipts."""
 
         if not self.enabled() or not self._self_ledger_enabled():
             return 0
@@ -129,6 +156,138 @@ class ReplyMediaGuard:
             return 0
         self._ledger_put(self._cache_key(event, message_id), image_count)
         return image_count
+
+    async def remember_outgoing_images(
+        self, platform_id: str, self_id: str, message_id: str, images: list[dict[str, Any]],
+    ) -> None:
+        """Persist successful sends from every plugin, without invoking the LLM.
+
+        Args:
+            platform_id: AstrBot adapter ID, independent of its OneBot implementation.
+            self_id: Actual sending account from the API routing or connection.
+            message_id: Protocol receipt ID after a successful send.
+            images: Image segment data only; message text is never stored here.
+        """
+        if not self.enabled() or not self._self_ledger_enabled() or not images:
+            return
+        self_id = self._normalize_sender_id(self_id)
+        if not platform_id or not self_id or not message_id:
+            return
+        async with self._capture_lock:
+            sources = await asyncio.to_thread(self._capture_image_sources, images[:20])
+            key = f"{platform_id}:{self_id}:{message_id}"
+            self._ledger_put(key, len(images), sources=sources)
+
+    def _capture_image_sources(self, images: list[dict[str, Any]]) -> tuple[dict[str, str], ...]:
+        sources: list[dict[str, str]] = []
+        for data in images:
+            source = self._source_from_image_data(data)
+            if not source:
+                continue
+            ref = source["ref"]
+            raw: bytes | None = None
+            try:
+                if ref.startswith("base64://") and len(ref) <= _MAX_IMAGE_BYTES * 4 // 3 + 32:
+                    raw = base64.b64decode(ref[9:], validate=True)
+                elif ref.startswith("data:image/") and ";base64," in ref:
+                    encoded = ref.split(";base64,", 1)[1]
+                    if len(encoded) <= _MAX_IMAGE_BYTES * 4 // 3 + 32:
+                        raw = base64.b64decode(encoded, validate=True)
+                elif source["kind"] == "file":
+                    path = Path(ref)
+                    if path.is_file() and 0 < path.stat().st_size <= _MAX_IMAGE_BYTES:
+                        raw = path.read_bytes()
+                if raw and len(raw) <= _MAX_IMAGE_BYTES and self._snapshot_dir is not None:
+                    self._snapshot_dir.mkdir(parents=True, exist_ok=True)
+                    snapshot = self._snapshot_dir / (hashlib.sha256(raw).hexdigest() + ".img")
+                    if not snapshot.exists():
+                        files = list(self._snapshot_dir.glob("*.img"))
+                        total = sum(path.stat().st_size for path in files)
+                        for stale in sorted(files, key=lambda path: path.stat().st_mtime):
+                            if total + len(raw) <= _MAX_SNAPSHOT_BYTES:
+                                break
+                            total -= stale.stat().st_size
+                            stale.unlink(missing_ok=True)
+                        snapshot.write_bytes(raw)
+                    source = {"kind": "file", "ref": str(snapshot)}
+                elif ref.startswith(("base64://", "data:")):
+                    # Receipt ownership still persists when media exceeds the budget;
+                    # never dump an unbounded base64 body into the JSON ledger.
+                    continue
+            except (OSError, ValueError):
+                if ref.startswith(("base64://", "data:")):
+                    continue
+            sources.append(source)
+        return tuple(sources)
+
+    @staticmethod
+    def _source_from_image_data(data: dict[str, Any]) -> dict[str, str] | None:
+        for key in ("url", "file", "path"):
+            value = data.get(key)
+            if not isinstance(value, str) or not value:
+                continue
+            if value.startswith(("http://", "https://", "base64://", "data:image/")):
+                return {"kind": "url", "ref": value}
+            if value.startswith("file://"):
+                parsed = urlparse(value)
+                value = unquote(parsed.path)
+                if re.match(r"^/[A-Za-z]:/", value):
+                    value = value[1:]
+                if parsed.netloc and parsed.netloc != "localhost":
+                    value = "//" + parsed.netloc + value
+            if Path(value).is_absolute():
+                return {"kind": "file", "ref": value}
+        return None
+
+    @staticmethod
+    def _image_component(source: dict[str, str]) -> Any | None:
+        ref = source.get("ref", "")
+        if not ref:
+            return None
+        if source.get("kind") == "file":
+            return Comp.Image.fromFileSystem(ref) if Path(ref).is_file() else None
+        if ref.startswith(("http://", "https://", "base64://", "data:image/")):
+            return Comp.Image(file=ref, url=ref)
+        return None
+
+    @classmethod
+    def _annotate_reply_images(cls, reply: Any, sender_id: str, message_id: str, bot_id: str) -> None:
+        cls._annotate_image_chain(getattr(reply, "chain", None) or [], sender_id, message_id, bot_id)
+
+    @classmethod
+    def _annotate_image_chain(cls, chain: list[Any], sender_id: str, message_id: str, bot_id: str, depth: int = 0) -> None:
+        if depth > 8:
+            return
+        for component in chain:
+            if isinstance(component, Comp.Image):
+                for name, value in (
+                    ("_helper_tools_quote_sender_id", sender_id),
+                    ("_helper_tools_quote_message_id", message_id),
+                    ("_helper_tools_quote_is_bot", sender_id == bot_id if sender_id else None),
+                ):
+                    object.__setattr__(component, name, value)
+                # Keep the exact path returned by normal AstrBot media resolution.
+                # Late get_msg hydration missed preprocess, so URL -> path aliases
+                # otherwise disappear before the model's image preparation cache.
+                if not getattr(component, "_helper_tools_resolver_wrapped", False):
+                    original = component.convert_to_file_path
+
+                    async def resolve_image(*args: Any, _image: Any = component, _original: Any = original, **kwargs: Any) -> str:
+                        path = await _original(*args, **kwargs)
+                        if isinstance(path, str) and path:
+                            refs = getattr(_image, "_helper_tools_resolved_refs", ())
+                            object.__setattr__(_image, "_helper_tools_resolved_refs", tuple(dict.fromkeys((*refs, path))))
+                        return path
+
+                    object.__setattr__(component, "convert_to_file_path", resolve_image)
+                    object.__setattr__(component, "_helper_tools_resolver_wrapped", True)
+            elif isinstance(component, Comp.Node):
+                nested = getattr(component, "content", None)
+                if isinstance(nested, list):
+                    node_sender = cls._normalize_sender_id(getattr(component, "uin", ""))
+                    cls._annotate_image_chain(nested, node_sender, "", bot_id, depth + 1)
+            elif isinstance(component, Comp.Nodes):
+                cls._annotate_image_chain(list(component.nodes or []), sender_id, message_id, bot_id, depth + 1)
 
     def _onebot_lookup_enabled(self) -> bool:
         return read_bool(
@@ -251,6 +410,7 @@ class ReplyMediaGuard:
         info = _QuotedMessageInfo(
             sender_id=self._payload_sender_id(payload),
             image_count=self._payload_image_count(payload),
+            images=self._payload_image_sources(payload),
         )
         self._cache_put(cache_key, info)
         return info
@@ -289,8 +449,42 @@ class ReplyMediaGuard:
         message = payload.get("message")
         if isinstance(message, list):
             return cls._count_onebot_segments(message)
+        if isinstance(message, str):
+            return message.casefold().count("[cq:image")
         raw_message = clean_text(payload.get("raw_message"))
         return raw_message.casefold().count("[cq:image")
+
+    @classmethod
+    def _payload_image_sources(cls, payload: dict[str, Any]) -> tuple[dict[str, str], ...]:
+        message = payload.get("message", payload.get("raw_message", ""))
+        if isinstance(message, str):
+            from aiocqhttp import Message
+            message = list(Message(message))
+        sources: list[dict[str, str]] = []
+
+        def visit(value: Any, depth: int = 0) -> None:
+            if depth > 8 or len(sources) >= 20:
+                return
+            if isinstance(value, list):
+                for segment in value:
+                    visit(segment, depth + 1)
+            elif isinstance(value, dict):
+                data = value.get("data", {})
+                if value.get("type") in {"image", "flash"} and isinstance(data, dict):
+                    source = cls._source_from_image_data(data)
+                    if source:
+                        sources.append(source)
+                    return
+                for key in ("message", "content", "messages"):
+                    nested = value.get(key)
+                    if isinstance(nested, list):
+                        visit(nested, depth + 1)
+                    nested = data.get(key) if isinstance(data, dict) else None
+                    if isinstance(nested, list):
+                        visit(nested, depth + 1)
+
+        visit(message)
+        return tuple(sources)
 
     @classmethod
     def _count_onebot_segments(cls, value: Any) -> int:
@@ -354,6 +548,7 @@ class ReplyMediaGuard:
         recorded_at, image_count = entry
         if recorded_at + self._self_ledger_ttl_seconds() <= time.time():
             self._self_image_ledger.pop(key, None)
+            self._self_image_sources.pop(key, None)
             return None
         return image_count
 
@@ -362,15 +557,22 @@ class ReplyMediaGuard:
         event: Any,
         message_id: str,
         image_count: int,
+        sources: tuple[dict[str, str], ...] = (),
     ) -> None:
         if not message_id or not self._self_ledger_enabled():
             return
-        self._ledger_put(self._cache_key(event, message_id), image_count)
+        self._ledger_put(self._cache_key(event, message_id), image_count, sources=sources or None)
 
-    def _ledger_put(self, key: str, image_count: int) -> None:
+    def _ledger_put(self, key: str, image_count: int, *, sources: tuple[dict[str, str], ...] | None = None) -> None:
         if not key:
             return
         self._self_image_ledger[key] = (time.time(), max(int(image_count), 1))
+        if sources is not None:
+            self._self_image_sources[key] = tuple(
+                source for source in sources[:20]
+                if isinstance(source.get("ref"), str) and len(source["ref"]) <= 16_384
+                and not source["ref"].startswith(("base64://", "data:"))
+            )
         overflow = len(self._self_image_ledger) - self._self_ledger_limit()
         if overflow > 0:
             oldest = sorted(
@@ -379,6 +581,7 @@ class ReplyMediaGuard:
             )
             for stale_key, _entry in oldest[:overflow]:
                 self._self_image_ledger.pop(stale_key, None)
+                self._self_image_sources.pop(stale_key, None)
         self._save_self_image_ledger()
 
     def _load_self_image_ledger(self) -> None:
@@ -412,6 +615,17 @@ class ReplyMediaGuard:
             if recorded_at + ttl <= now:
                 continue
             loaded[key] = (recorded_at, image_count)
+            sources = value.get("sources", [])
+            if isinstance(sources, list):
+                valid = tuple(
+                    {"kind": source["kind"], "ref": source["ref"]}
+                    for source in sources[:20]
+                    if isinstance(source, dict) and source.get("kind") in {"file", "url"}
+                    and isinstance(source.get("ref"), str) and len(source["ref"]) <= 16_384
+                    and not source["ref"].startswith(("base64://", "data:"))
+                )
+                if valid:
+                    self._self_image_sources[key] = valid
         self._self_image_ledger = loaded
 
     def _save_self_image_ledger(self) -> None:
@@ -421,17 +635,19 @@ class ReplyMediaGuard:
         ttl = self._self_ledger_ttl_seconds()
         now = time.time()
         entries = {
-            key: {"ts": recorded_at, "images": image_count}
+            key: {"ts": recorded_at, "images": image_count, "sources": self._self_image_sources.get(key, ())}
             for key, (recorded_at, image_count) in self._self_image_ledger.items()
             if recorded_at + ttl > now
         }
         payload = {"version": _SELF_IMAGE_LEDGER_VERSION, "entries": entries}
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            temporary.replace(path)
         except Exception as exc:  # noqa: BLE001 - 落盘失败不影响内存台账与主流程
             logger.debug(
                 "[HelperTools/ReplyMedia] save self-image ledger failed: %s", exc

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
+import json
 import tempfile
 import time
 import unittest
+from pathlib import Path
 
 import astrbot.api.message_components as Comp
 
@@ -132,6 +135,110 @@ class ReplyMediaGuardTests(unittest.IsolatedAsyncioTestCase):
 
     def tearDown(self) -> None:
         reset_compat_caches()
+
+    async def test_outgoing_receipt_restores_first_quote_after_protocol_expiry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            guard = ReplyMediaGuard({}, tmpdir)
+            await guard.remember_outgoing_images("qq-test", "10001", "old-receipt", [
+                {"url": "https://example.com/magpie-embedded.png"},
+                {"url": "https://example.com/another-plugin.png"},
+            ])
+            bot = ExpiredCacheBot()
+            reply = Comp.Reply(id="old-receipt", sender_id="20002", chain=[])
+            event = DummyEvent([reply], bot=bot, sender_id="20002")
+            restored = ReplyMediaGuard({}, tmpdir)
+            result = await restored.mark_bot_reply_images(event)
+            self.assertEqual(result.marked_image_count, 2)
+            self.assertEqual(bot.calls, 0)
+            images = [part for part in reply.chain if isinstance(part, Comp.Image)]
+            self.assertEqual(len(images), 2)
+            self.assertTrue(all(part._helper_tools_quote_is_bot for part in images))
+            self.assertTrue(all(part._helper_tools_quote_sender_id == "10001" for part in images))
+            # Provenance enrichment must not rewrite addressing/wake metadata.
+            self.assertEqual(str(reply.sender_id), "20002")
+            self.assertEqual(event.get_sender_id(), "20002")
+
+    async def test_temporary_outgoing_image_is_snapshotted_before_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temporary = Path(tmpdir) / "temporary.png"
+            raw = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jJ1sAAAAASUVORK5CYII=")
+            temporary.write_bytes(raw)
+            guard = ReplyMediaGuard({}, tmpdir)
+            await guard.remember_outgoing_images("qq-test", "10001", "temp-receipt", [{"file": temporary.as_uri()}])
+            temporary.unlink()
+            reply = Comp.Reply(id="temp-receipt", chain=[])
+            result = await ReplyMediaGuard({}, tmpdir).mark_bot_reply_images(DummyEvent([reply]))
+            self.assertEqual(result.marked_image_count, 1)
+            image = next(part for part in reply.chain if isinstance(part, Comp.Image))
+            self.assertEqual(Path(image.path).read_bytes(), raw)
+
+    async def test_base64_snapshot_does_not_dump_image_body_into_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw = b"persist-only-a-reference"
+            encoded = base64.b64encode(raw).decode()
+            guard = ReplyMediaGuard({}, tmpdir)
+            await guard.remember_outgoing_images("qq-test", "10001", "base64-receipt", [{"file": "base64://" + encoded}])
+            ledger = Path(tmpdir) / "reply_media_self_images.json"
+            data = json.loads(ledger.read_text())
+            self.assertEqual(data["version"], 2)
+            self.assertNotIn(encoded, ledger.read_text())
+            self.assertEqual(len(list((Path(tmpdir) / "reply_media_images").glob("*.img"))), 1)
+
+    async def test_receipts_are_isolated_by_adapter_and_actual_bot_id(self) -> None:
+        guard = ReplyMediaGuard({})
+        await guard.remember_outgoing_images("qq-test", "10001", "42", [{"url": "https://example.com/bot.png"}])
+        other = Comp.Reply(id="42", chain=[])
+        event = DummyEvent([other], self_id="30003")
+        result = await guard.mark_bot_reply_images(event)
+        self.assertEqual(result.marked_image_count, 0)
+        self.assertEqual(other.chain, [])
+        event = DummyEvent([Comp.Reply(id="42", chain=[])])
+        event.get_platform_id = lambda: "another-adapter"
+        result = await guard.mark_bot_reply_images(event)
+        self.assertEqual(result.marked_image_count, 0)
+
+    async def test_quoted_user_and_current_upload_keep_distinct_origins(self) -> None:
+        uploaded = Comp.Image.fromURL("https://example.com/shared.png")
+        user_image = Comp.Image.fromURL("https://example.com/shared.png")
+        bot_image = Comp.Image.fromURL("https://example.com/bot.png")
+        user_reply = Comp.Reply(id="user-image", sender_id="20002", chain=[user_image])
+        bot_reply = Comp.Reply(id="bot-image", sender_id="10001", chain=[bot_image])
+        event = DummyEvent([uploaded, user_reply, bot_reply], sender_id="20002")
+        result = await ReplyMediaGuard({}).mark_bot_reply_images(event)
+        self.assertEqual(result.marked_image_count, 1)
+        self.assertFalse(user_image._helper_tools_quote_is_bot)
+        self.assertEqual(user_image._helper_tools_quote_sender_id, "20002")
+        self.assertTrue(bot_image._helper_tools_quote_is_bot)
+        self.assertFalse(hasattr(uploaded, "_helper_tools_quote_sender_id"))
+
+    async def test_get_msg_restores_actual_image_components_and_origin(self) -> None:
+        bot = FakeBot({"data": {"sender": {"user_id": "10001"}, "message": [
+            {"type": "text", "data": {"text": "嵌入消息的表情包"}},
+            {"type": "image", "data": {"url": "https://example.com/embedded.png", "file": "opaque-file-id"}},
+        ]}})
+        reply = Comp.Reply(id="embedded", chain=[])
+        result = await ReplyMediaGuard({}).mark_bot_reply_images(DummyEvent([reply], bot=bot))
+        self.assertEqual(result.marked_image_count, 1)
+        image = next(part for part in reply.chain if isinstance(part, Comp.Image))
+        self.assertEqual(image.url, "https://example.com/embedded.png")
+        self.assertTrue(image._helper_tools_quote_is_bot)
+
+    async def test_disabled_receipt_ledger_performs_no_disk_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            guard = ReplyMediaGuard({"reply_media_guard": {"self_ledger_enabled": False}}, tmpdir)
+            await guard.remember_outgoing_images("qq-test", "10001", "disabled", [{"url": "https://example.com/bot.png"}])
+            self.assertFalse(list(Path(tmpdir).iterdir()))
+
+    async def test_legacy_count_only_ledger_still_confirms_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "reply_media_self_images.json").write_text(json.dumps({
+                "version": 1, "entries": {"qq-test:10001:legacy": {"ts": time.time(), "images": 1}},
+            }))
+            reply = Comp.Reply(id="legacy", chain=[])
+            result = await ReplyMediaGuard({}, tmpdir).mark_bot_reply_images(DummyEvent([reply]))
+            self.assertEqual(result.marked_image_count, 1)
+            self.assertTrue(reply._helper_tools_quote_is_bot)
+            self.assertEqual(reply._helper_tools_quote_image_count, 1)
 
     async def test_marks_a_bot_authored_quote_without_removing_images(self) -> None:
         direct_image = Comp.Image.fromURL("https://example.com/user.png")

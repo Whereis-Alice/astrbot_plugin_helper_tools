@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 import astrbot.api.message_components as Comp
-from astrbot.core.agent.message import Message, TextPart
+from astrbot.core.agent.message import ImageURLPart, Message, TextPart
 
 from astrbot_plugin_helper_tools.chat_history_service import (
     CHAT_HISTORY_TOOL_RESULT_MARKER,
@@ -62,6 +62,64 @@ class GuardEvent:
 
 
 class MainContextGuardTests(unittest.IsolatedAsyncioTestCase):
+    async def test_platform_loaded_installs_send_capture_before_first_quote(self) -> None:
+        calls = []
+
+        async def start() -> None:
+            calls.append("platform-ready")
+
+        plugin = SimpleNamespace(reply_media_capture=SimpleNamespace(start=start))
+        await HelperToolsPlugin.reply_media_platform_loaded_handler(plugin)
+        self.assertEqual(calls, ["platform-ready"])
+
+    async def test_reply_provenance_does_not_bypass_wake_block(self) -> None:
+        guard = ReplyMediaGuard({})
+        plugin = SimpleNamespace(enabled=lambda: True, reply_media_guard=guard)
+        event = ReplyEvent()
+        event.get_extra = lambda key, default=None: True if key == "helper_tools_wake_block_llm_request" else default
+        request = SimpleNamespace(prompt="未唤醒", system_prompt="人设", image_urls=["original.png"], extra_user_content_parts=[])
+        await HelperToolsPlugin.reply_media_llm_request_context_handler(plugin, event, request, _final=True)
+        self.assertEqual(request.image_urls, ["original.png"])
+        self.assertEqual(request.system_prompt, "人设")
+        self.assertEqual(request.extra_user_content_parts, [])
+        self.assertFalse(hasattr(event, "_helper_tools_reply_media_marker"))
+
+    async def test_reply_provenance_preserves_stopped_event(self) -> None:
+        plugin = SimpleNamespace(enabled=lambda: True, reply_media_guard=ReplyMediaGuard({}))
+        event = ReplyEvent()
+        event.is_stopped = lambda: True
+        request = SimpleNamespace(prompt="已停止", system_prompt="人设", image_urls=["original.png"], extra_user_content_parts=[])
+        await HelperToolsPlugin.reply_media_llm_request_context_handler(plugin, event, request, _final=True)
+        self.assertEqual(request.image_urls, ["original.png"])
+        self.assertEqual(request.system_prompt, "人设")
+
+    async def test_modern_pipeline_keeps_visual_provider_selection_until_final(self) -> None:
+        image = Comp.Image(file="https://example.com/bot.png", url="https://example.com/bot.png")
+        event = ReplyEvent()
+        event.message_obj.message = [Comp.Reply(id="321", sender_id="10001", chain=[image])]
+        plugin = SimpleNamespace(
+            enabled=lambda: True, reply_media_guard=ReplyMediaGuard({}),
+            reply_media_request_pipeline=SimpleNamespace(installed=True),
+        )
+        request = SimpleNamespace(prompt="引用", system_prompt="人设", image_urls=[image.url], extra_user_content_parts=[])
+        await HelperToolsPlugin.reply_media_llm_request_context_handler(plugin, event, request)
+        self.assertEqual(request.image_urls, [image.url])
+        self.assertEqual(request.extra_user_content_parts, [])
+        await HelperToolsPlugin.reply_media_llm_request_context_handler(plugin, event, request, _final=True)
+        self.assertEqual(request.image_urls, [])
+        self.assertEqual(len(request.extra_user_content_parts), 2)
+        self.assertIn("bot 自己先前发送", request.extra_user_content_parts[0].text)
+        self.assertIsInstance(request.extra_user_content_parts[1], ImageURLPart)
+
+    async def test_source_capture_before_wake_does_not_enable_llm(self) -> None:
+        seen = []
+        event = SimpleNamespace(bot=object())
+        plugin = SimpleNamespace(enabled=lambda: False, reply_media_capture=SimpleNamespace(observe_event=seen.append))
+        await HelperToolsPlugin.anti_revoke_event_handler(plugin, event)
+        self.assertEqual(seen, [event])
+        self.assertFalse(hasattr(event, "is_at_or_wake_command"))
+        self.assertFalse(hasattr(event, "_helper_tools_reply_media_marker"))
+
     async def test_late_request_guard_labels_quoted_bot_image_as_temporary(self) -> None:
         plugin = SimpleNamespace(
             enabled=lambda: True,

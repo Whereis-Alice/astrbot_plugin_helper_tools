@@ -355,7 +355,7 @@ class VariantDispatchTests(CompatTestCase):
         from time import monotonic
 
         bot = FakeBot({"first": "ok"})
-        with self.assertRaises(Exception):
+        with self.assertRaises(RuntimeError):
             await compat.call_onebot_variants(
                 bot,
                 (compat.OneBotVariant("first", {}),),
@@ -589,6 +589,10 @@ class PlatformDetectionTests(unittest.TestCase):
             "luckylilliabot",
             "napcat",
             "lagrange",
+            "snowluma",
+            "SnowLuma",
+            "snow_luma",
+            "snow-luma",
         ):
             self.assertTrue(compat.is_onebot_platform(name), name)
 

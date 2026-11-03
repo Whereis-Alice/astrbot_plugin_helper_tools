@@ -59,6 +59,9 @@ ONEBOT_PLATFORM_NAMES = frozenset(
         "onebot_v11",
         "openshamrock",
         "shamrock",
+        "snowluma",
+        "snow_luma",
+        "snow-luma",
     }
 )
 
