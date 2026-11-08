@@ -87,10 +87,16 @@ class PerceptionServiceTests(unittest.IsolatedAsyncioTestCase):
             event,
             now=datetime(2026, 2, 17, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai")),
         )
-        unavailable_year = await service.context_for_event(
-            event,
-            now=datetime(2027, 1, 1, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai")),
-        )
+        # Newer calendar releases can already cover 2027; exercise the
+        # unavailable-data branch independently of the installed dataset.
+        with patch(
+            "astrbot_plugin_helper_tools.perception_service.chinese_calendar.get_holiday_detail",
+            side_effect=NotImplementedError,
+        ):
+            unavailable_year = await service.context_for_event(
+                event,
+                now=datetime(2027, 1, 1, 10, 30, tzinfo=ZoneInfo("Asia/Shanghai")),
+            )
 
         self.assertIn(PERCEPTION_CONTEXT_PREFIX, spring_festival)
         self.assertIn("法定节假日（春节）", spring_festival)
