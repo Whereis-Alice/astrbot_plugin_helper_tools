@@ -1954,7 +1954,8 @@
       "include_raw_extra_fields": {
         "type": "bool",
         "description": "附带 OneBot 返回的其它原始字段",
-        "default": true
+        "default": true,
+        "hint": "仍会过滤无法证明是当前状态的在线/扩展/自定义状态字段。单人成员查询尝试专用状态接口；成员列表和群统计不推断在线状态。"
       },
       "member_list_default_limit": {
         "type": "int",
@@ -2058,7 +2059,8 @@
       "include_raw_extra_fields": {
         "type": "bool",
         "description": "资料查询结果附带原始字段",
-        "default": false
+        "default": false,
+        "hint": "保留普通扩展资料，但过滤资料卡中可能残留的在线/自定义状态；当前状态单独通过用户状态接口查询，不支持时明确为未知。"
       },
       "max_text_chars": {
         "type": "int",

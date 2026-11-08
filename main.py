@@ -64,6 +64,7 @@ from .qq_features import (
     normalize_avatar_size,
 )
 from .qq_like_service import QQ_LIKE_TOOL_NAME, QQProfileLikeService
+from .qq_status import USER_STATUS_RULE
 from .reply_media_capture import ReplyMediaCapture
 from .reply_media_guard import BOT_REPLY_IMAGE_MARKER, ReplyMediaGuard
 from .reply_media_pipeline import ReplyMediaRequestPipeline
@@ -96,7 +97,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "2.4.2"
+PLUGIN_VERSION = "2.4.3"
 PLUGIN_DESC = "QQ / OneBot 辅助工具合集：防撤回、戳一戳、QQ 资料、壁纸、唤醒、网页与 X/Twitter 等能力。B 站与引用卡片解析已拆分为独立插件。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -364,7 +365,10 @@ class QQAvatarTool(FunctionTool[AstrAgentContext]):
 class QQGroupMemberTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = QQ_GROUP_MEMBER_TOOL_NAME
-    description: str = "获取 QQ 群成员信息，包括 QQ号、QQ名、群昵称、群身份、群等级、群专属头衔，以及 OneBot 可提供的其它字段。"
+    description: str = (
+        "获取 QQ 群成员信息，包括 QQ号、QQ名、群昵称、群身份、群等级、群专属头衔，"
+        "并尝试通过用户状态专用接口查询当前状态。" + USER_STATUS_RULE
+    )
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
@@ -398,6 +402,7 @@ class QQGroupMemberListTool(FunctionTool[AstrAgentContext]):
     description: str = (
         "获取 QQ 群成员列表。结果含群名称、QQ号、QQ昵称、群昵称、群身份、群等级、"
         "专属头衔以及 OneBot 可提供的成员字段；支持按 QQ号、昵称、群昵称或头衔筛选和分页。"
+        "此列表不查询成员当前在线/展示状态，不能根据最后发言时间推断；需要时请用单人资料工具。"
     )
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
@@ -450,6 +455,7 @@ class QQGroupInfoTool(FunctionTool[AstrAgentContext]):
     description: str = (
         "获取 QQ 群详情。包括群名称、群号、备注、建群时间、等级、人数上限，"
         "可选附带群头像供视觉模型查看，并可汇总群成员身份、头衔、管理人员、群荣誉和 @全体成员配额等 OneBot 可用信息。"
+        "此工具不提供群成员当前在线/展示状态。"
     )
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
@@ -512,7 +518,10 @@ class QQGroupInfoTool(FunctionTool[AstrAgentContext]):
 class QQProfileTool(FunctionTool[AstrAgentContext]):
     plugin: Any = Field(default=None, repr=False)
     name: str = QQ_PROFILE_TOOL_NAME
-    description: str = "查询 QQ 用户资料和当前群资料，整合头像、QQ名、签名、群名片、群身份、等级等公开/OneBot 可用信息。"
+    description: str = (
+        "查询 QQ 用户资料和当前群资料，整合头像、QQ名、签名、群名片、群身份、等级等信息，"
+        "并尝试通过用户状态专用接口查询当前状态。" + USER_STATUS_RULE
+    )
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",

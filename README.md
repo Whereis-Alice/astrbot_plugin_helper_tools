@@ -4,7 +4,7 @@
 
 为 AstrBot 提供一组可由 LLM 主动调用、也可通过消息或命令使用的 QQ / OneBot 辅助能力。插件按模块组织配置，当前包含 X/Twitter 资料检索、网页浏览、环境感知、QQ 防撤回、群聊历史检索、QQ 信息、QQ 名片点赞、戳一戳互动、今日小猪、引用媒体标注、Anime1、收款码、随机语音、Steam、唤醒增强、本地壁纸和 Bot QQ 资料管理。
 
-- 当前版本：`v2.4.2`
+- 当前版本：`v2.4.3`
 - AstrBot：`>=4.16,<5`
 - 更新记录：[CHANGELOG.md](CHANGELOG.md)
 
@@ -358,6 +358,14 @@ LLM 工具 `get_x_recent_posts` 和 `search_x_posts` 另有 `include_reposts` �
 群详情会读取标准 `get_group_info` 资料，并可选读取成员统计、`get_group_honor_info` 群荣誉和 `get_group_at_all_remain` 的当前 Bot 账号配额。它还可按群号构造 QQ 公开群头像地址，并把头像图片交给视觉模型查看；在 `qq_member.group_info_include_avatar` 关闭、模型不需要图片或下载失败时，仍会返回群头像 URL 和其它群资料。群荣誉与 `@全体` 配额取决于 OneBot/AIOCQHTTP/NapCat 实现，适配器不支持时会明确说明而不影响其它群资料。
 
 这里的“QQ昵称”来自 OneBot 返回的公开/群内昵称字段，不等同于 QQ 实名信息；插件不会尝试获取或推断实名认证姓名。可在 `qq_member` 配置里调整单页人数、单次硬上限、文本上限，以及群详情是否默认附带统计、荣誉和 `@全体` 配额。
+
+### QQ 用户状态与资料卡残留
+
+`get_qq_profile`（综合资料）和 `get_qq_group_member_info`（单个群成员）会单独调用目标 QQ 的 `nc_get_user_status`，返回本次查询的在线状态、可识别的展示状态和查询时间。NapCat、SnowLuma 支持该接口；LLBot 等协议端没有提供可用接口时，状态明确显示“未知”，仍可查询其它资料。查询有 4 秒超时，不使用 Bot 自身的 `get_status` 代替用户状态，也不复用上次查询结果。
+
+QQ 资料卡的 `customStatus` / `customStatusDescInfo` 可能在用户切换状态后仍保留旧文字。例如当前已经是“听歌中”或“隐身”，资料卡仍可能返回之前设置的文字。从 v2.4.3 开始，这些未经当前状态确认的字段不会再随原始资料进入模型；开启“附带原始字段”时也会过滤。未知状态码或无法确认的展示文字不会由模型猜测；展示状态只代表协议端返回，不能证明用户正在进行相应的现实活动。
+
+`get_qq_group_member_list`（成员列表）与 `get_qq_group_info`（群详情/统计）不批量查询成员状态，最后发言时间不代表当前在线。`get_qq_avatar` 只查询头像；`set_bot_qq_profile` 用于修改 Bot 自身资料，都不能代替查询目标用户状态。对应的 `qq_profile` / `qq_member` 命令复用相同规则，触发和唤醒设置保持原有行为。
 
 ### QQ 头像自动更换
 

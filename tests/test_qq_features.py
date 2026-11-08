@@ -15,6 +15,7 @@ from astrbot_plugin_helper_tools.qq_features import (
     QQService,
     build_qq_group_avatar_url,
 )
+from astrbot_plugin_helper_tools.qq_status import USER_STATUS_ACTION, USER_STATUS_RULE
 
 
 class FakeEvent:
@@ -274,3 +275,170 @@ class QQGroupToolRegistrationTests(unittest.TestCase):
         group_info_tool = next(tool for tool in tools if tool.name == QQ_GROUP_INFO_TOOL_NAME)
         self.assertIn("include_avatar", group_info_tool.parameters["properties"])
         self.assertIn("return_image", group_info_tool.parameters["properties"])
+
+
+class ProfileBot(FakeBot):
+    def __init__(self, *, presence: Any = None) -> None:
+        super().__init__()
+        # Reproduces SnowLuma's profile: old custom wording survives after the
+        # current status changes. Keep extra fields enabled in these tests.
+        self.profile = {
+            "user_id": 20001, "nickname": "Alice", "long_nick": "这是签名",
+            "status": 10, "extStatus": 1028, "ext_status": 1028,
+            "customStatus": {"faceId": 262, "wording": "旧状态：直面天命"},
+            "customStatusDescInfo": "旧状态：直面天命", "qqLevel": 42,
+            "custom_profile_field": "保留公开扩展",
+        }
+        self.presence = presence
+        self.profile_error: Exception | None = None
+
+    async def get_stranger_info(self, *, user_id: int, no_cache: bool) -> Any:
+        self.calls.append(("get_stranger_info", {"user_id": user_id, "no_cache": no_cache}))
+        if self.profile_error is not None:
+            raise self.profile_error
+        return {"status": "ok", "retcode": 0, "data": self.profile}
+
+    async def get_group_member_info(self, *, group_id: int, user_id: int, no_cache: bool) -> Any:
+        self.calls.append(("get_group_member_info", {"group_id": group_id, "user_id": user_id, "no_cache": no_cache}))
+        return {"data": self.members[0]}
+
+    async def nc_get_user_status(self, *, user_id: int) -> Any:
+        self.calls.append((USER_STATUS_ACTION, {"user_id": user_id}))
+        if self.presence is None:
+            return {"status": "failed", "retcode": 1404, "message": "unknown action"}
+        return {"status": "ok", "retcode": 0, "data": self.presence}
+
+
+class QQProfileStatusRegressionTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def service(**overrides: Any) -> QQService:
+        profile_config = {"include_raw_extra_fields": True}
+        profile_config.update(overrides)
+        return QQService({"qq_profile": profile_config, "qq_member": {"include_raw_extra_fields": True}})
+
+    async def test_profile_uses_current_query_instead_of_snowluma_old_custom_wording(self) -> None:
+        bot = ProfileBot(presence={"status": 10, "ext_status": 1028})
+        result = await self.service().get_profile_result(event=FakeEvent(bot), include_avatar=False)
+
+        self.assertIn("QQ名: Alice", result)
+        self.assertIn("签名: 这是签名", result)
+        self.assertIn("QQ在线状态: 在线", result)
+        self.assertIn("QQ展示状态: 听歌中", result)
+        self.assertNotIn("直面天命", result)
+        self.assertNotIn('"customStatus', result)
+        self.assertNotIn('"status"', result)
+        self.assertIn("保留公开扩展", result)
+        self.assertIn((USER_STATUS_ACTION, {"user_id": 20001}), bot.calls)
+
+    async def test_invisible_user_does_not_inherit_a_historical_custom_status(self) -> None:
+        bot = ProfileBot(presence={"status": 40, "ext_status": 0})
+        bot.profile["customStatus"] = {"faceId": 5, "wording": "进入ICU"}
+        bot.profile["customStatusDescInfo"] = "进入ICU"
+        result = await self.service().get_profile_result(event=FakeEvent(bot, group_id=""), include_avatar=False)
+
+        self.assertIn("QQ在线状态: 隐身", result)
+        self.assertNotIn("ICU", result)
+        self.assertNotIn("QQ展示状态: 听歌中", result)
+
+    async def test_adapter_without_status_action_returns_unknown_even_if_profile_has_status(self) -> None:
+        bot = ProfileBot()
+        result = await self.service().get_profile_result(event=FakeEvent(bot), include_avatar=False)
+
+        self.assertIn("QQ在线状态: 未知", result)
+        self.assertIn("QQ展示状态: 未知", result)
+        self.assertNotIn("直面天命", result)
+        self.assertNotIn('"status"', result)
+        self.assertNotIn("get_status", [name for name, _ in bot.calls])
+
+    async def test_group_member_query_has_the_same_status_rules_and_filtered_extras(self) -> None:
+        bot = ProfileBot(presence={"status": 50, "ext_status": 0})
+        bot.members[0].update({"customStatusDescInfo": "旧状态：进入ICU", "status": 10})
+        result = await self.service().get_group_member_result(event=FakeEvent(bot))
+
+        self.assertIn("QQ在线状态: 忙碌", result)
+        self.assertIn("群身份: 群主", result)
+        self.assertIn("custom_badge", result)
+        self.assertNotIn("ICU", result)
+        self.assertNotIn('"status"', result)
+
+    async def test_member_list_never_treats_raw_or_last_sent_fields_as_presence(self) -> None:
+        bot = ProfileBot()
+        bot.members[0].update({"status": 10, "customStatus": {"wording": "旧状态：进入ICU"}})
+        result = await self.service().get_group_member_list_result(event=FakeEvent(bot))
+
+        self.assertIn("成员在线/展示状态: 未查询", result)
+        self.assertIn("不能从成员列表或最后发言时间推断", result)
+        self.assertNotIn("ICU", result)
+        self.assertNotIn('"status"', result)
+        self.assertNotIn(USER_STATUS_ACTION, [name for name, _ in bot.calls])
+
+    async def test_important_status_boundary_survives_the_minimum_profile_text_limit(self) -> None:
+        bot = ProfileBot(presence={"status": 10, "ext_status": 1028})
+        bot.profile["long_nick"] = "超长签名" * 1000
+        result = await self.service(max_text_chars=500).get_profile_result(event=FakeEvent(bot), include_avatar=False)
+
+        self.assertLessEqual(len(result), 500)
+        self.assertIn("QQ展示状态: 听歌中", result)
+        self.assertIn(USER_STATUS_RULE, result)
+
+    async def test_current_status_can_still_be_queried_when_public_profile_fails(self) -> None:
+        bot = ProfileBot(presence={"status": 30, "ext_status": 0})
+        bot.profile_error = RuntimeError("public profile failed")
+        result = await self.service().get_profile_result(event=FakeEvent(bot, group_id=""), include_avatar=False)
+
+        self.assertIn("QQ号: 20001", result)
+        self.assertIn("QQ在线状态: 离开", result)
+        self.assertNotIn("直面天命", result)
+
+    async def test_mismatched_member_or_group_cannot_receive_the_requested_users_status(self) -> None:
+        for field, wrong_id in (("user_id", 20002), ("group_id", 30004)):
+            with self.subTest(field=field):
+                bot = ProfileBot(presence={"status": 10, "ext_status": 1028})
+                bot.members[0][field] = wrong_id
+
+                result = await self.service().get_group_member_result(event=FakeEvent(bot))
+
+                self.assertIn("不一致", result)
+                self.assertNotIn("QQ在线状态:", result)
+                self.assertNotIn(USER_STATUS_ACTION, [name for name, _ in bot.calls])
+
+    async def test_wrong_stranger_response_is_not_merged_with_the_requested_users_status(self) -> None:
+        bot = ProfileBot(presence={"status": 10, "ext_status": 1028})
+        bot.profile.update({"user_id": 20002, "nickname": "另一个人的名字", "long_nick": "另一个人的签名"})
+
+        result = await self.service().get_profile_result(event=FakeEvent(bot), include_avatar=False)
+
+        self.assertIn("QQ号: 20001", result)
+        self.assertIn("QQ展示状态: 听歌中", result)
+        self.assertNotIn("另一个人的", result)
+
+    async def test_wrong_member_response_is_not_merged_into_comprehensive_profile(self) -> None:
+        bot = ProfileBot(presence={"status": 10, "ext_status": 1028})
+        bot.members[0].update({"user_id": 20002, "card": "另一个人的群名片"})
+
+        result = await self.service().get_profile_result(event=FakeEvent(bot), include_avatar=False)
+
+        self.assertIn("QQ名: Alice", result)
+        self.assertIn("QQ展示状态: 听歌中", result)
+        self.assertNotIn("另一个人的群名片", result)
+        self.assertNotIn("群身份: 群主", result)
+
+    async def test_failed_member_payload_does_not_become_a_partial_success(self) -> None:
+        class FailedMemberBot(ProfileBot):
+            async def get_group_member_info(self, **_params: Any) -> Any:
+                return {"status": "failed", "retcode": 1200, "message": "member query failed"}
+
+        bot = FailedMemberBot(presence={"status": 10, "ext_status": 1028})
+        result = await self.service().get_group_member_result(event=FakeEvent(bot))
+
+        self.assertIn("获取群成员信息失败", result)
+        self.assertNotIn("QQ在线状态:", result)
+        self.assertNotIn(USER_STATUS_ACTION, [name for name, _ in bot.calls])
+
+    async def test_both_single_user_tool_descriptions_include_the_status_rule(self) -> None:
+        plugin = SimpleNamespace(_tool_active=lambda *_: True, _web_browser_tool_active=lambda: False)
+        tools = {tool.name: tool for tool in HelperToolsPlugin._build_tools(plugin)}
+        for name in ("get_qq_profile", "get_qq_group_member_info"):
+            self.assertIn(USER_STATUS_RULE, tools[name].description)
+        for name in ("get_qq_group_info", "get_qq_group_member_list"):
+            self.assertIn("状态", tools[name].description)

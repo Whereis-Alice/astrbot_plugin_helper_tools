@@ -22,7 +22,13 @@ from .helper_utils import (
     read_list,
     truncate,
 )
-from .onebot_compat import call_onebot, is_onebot_event
+from .onebot_compat import call_onebot, is_onebot_event, raise_for_payload
+from .qq_status import (
+    MEMBER_LIST_STATUS_NOTE,
+    QQUserStatus,
+    query_user_status,
+    strip_profile_status_fields,
+)
 
 QQ_AVATAR_TOOL_NAME = "get_qq_avatar"
 QQ_GROUP_MEMBER_TOOL_NAME = "get_qq_group_member_info"
@@ -225,6 +231,15 @@ def _unwrap_onebot_mapping(payload: Any) -> dict[str, Any] | None:
     return dict(payload)
 
 
+def _matches_requested_id(value: Any, requested: str) -> bool:
+    """Missing IDs are allowed, but an explicit different account is not."""
+
+    if value is None:
+        return True
+    text = clean_text(value)
+    return text.isdigit() and int(text) == int(requested)
+
+
 class QQService:
     def __init__(self, config: Any) -> None:
         self.config = config
@@ -425,13 +440,20 @@ class QQService:
                 user_id=int(target_id),
                 no_cache=True,
             )
+            raise_for_payload(info)
         except Exception as exc:
             return None, f"获取群成员信息失败: {exc}"
         info = _unwrap_onebot_mapping(info)
         if info is None:
             return None, "OneBot 返回的群成员信息不是字典。"
-        info.setdefault("group_id", resolved_group_id)
-        info.setdefault("user_id", target_id)
+        if not _matches_requested_id(info.get("user_id"), target_id):
+            return None, "群成员接口返回的 QQ 号与查询目标不一致。"
+        if not _matches_requested_id(info.get("group_id"), resolved_group_id):
+            return None, "群成员接口返回的群号与查询目标不一致。"
+        if info.get("group_id") is None:
+            info["group_id"] = resolved_group_id
+        if info.get("user_id") is None:
+            info["user_id"] = target_id
         return info, ""
 
     async def fetch_stranger_info(self, *, event: Any, qq_id: str) -> dict[str, Any]:
@@ -442,7 +464,10 @@ class QQService:
             user_id=int(qq_id),
             no_cache=True,
         )
-        return dict(info) if isinstance(info, dict) else {}
+        info = _unwrap_onebot_mapping(raise_for_payload(info)) or {}
+        if not _matches_requested_id(info.get("user_id"), qq_id):
+            raise ValueError("用户资料接口返回的 QQ 号与查询目标不一致。")
+        return info
 
     async def fetch_group_info_detail(
         self,
@@ -545,7 +570,9 @@ class QQService:
             return None, "当前 OneBot 适配器未提供 @全体成员配额。"
         return info, ""
 
-    def format_group_member_info(self, info: dict[str, Any]) -> str:
+    def format_group_member_info(
+        self, info: dict[str, Any], *, user_status: QQUserStatus | None = None
+    ) -> str:
         lines: list[str] = ["QQ群成员信息"]
         group_id = clean_text(info.get("group_id"))
         if group_id:
@@ -559,6 +586,7 @@ class QQService:
             _line("群专属头衔", info.get("title")),
         ]
         lines.extend(item for item in required_items if item)
+        lines.extend((user_status or QQUserStatus()).render())
         optional_items = [
             _line("性别", info.get("sex"), formatter=_format_sex),
             _line("年龄", info.get("age")),
@@ -579,7 +607,7 @@ class QQService:
         if self.include_raw_extra_fields():
             extras = {
                 k: v
-                for k, v in info.items()
+                for k, v in strip_profile_status_fields(info).items()
                 if k not in GROUP_MEMBER_KNOWN_FIELDS and not is_empty_value(v)
             }
             if extras:
@@ -616,7 +644,7 @@ class QQService:
         if self.include_raw_extra_fields():
             extras = {
                 key: value
-                for key, value in info.items()
+                for key, value in strip_profile_status_fields(info).items()
                 if key not in GROUP_MEMBER_KNOWN_FIELDS and not is_empty_value(value)
             }
             if extras:
@@ -652,6 +680,7 @@ class QQService:
         ]
         page = matched_members[offset : offset + limit]
         lines = ["QQ群成员列表", f"群号: {group_id}"]
+        lines.append(MEMBER_LIST_STATUS_NOTE)
         if group_name:
             lines.append(f"群名称: {group_name}")
         lines.append(f"OneBot 返回成员数: {len(members)}")
@@ -786,7 +815,7 @@ class QQService:
         if self.include_raw_extra_fields():
             extras = {
                 key: value
-                for key, value in info.items()
+                for key, value in strip_profile_status_fields(info).items()
                 if key not in GROUP_INFO_KNOWN_FIELDS and not is_empty_value(value)
             }
             if extras:
@@ -930,7 +959,10 @@ class QQService:
         if error:
             return error
         assert info is not None
-        return self.format_group_member_info(info)
+        target_id, _error = self.resolve_qq_id(event, qq_id)
+        assert target_id is not None
+        status = await query_user_status(require_onebot(event), target_id)
+        return self.format_group_member_info(info, user_status=status)
 
     async def get_profile_result(
         self,
@@ -964,7 +996,11 @@ class QQService:
             )
             member = info or {}
             group_info = await self.fetch_group_info(event=event, group_id=resolved_group_id)
-        text = self.format_profile(target_id=target_id, stranger=stranger, member=member, group_info=group_info)
+        status = await query_user_status(require_onebot(event), target_id)
+        text = self.format_profile(
+            target_id=target_id, stranger=stranger, member=member,
+            group_info=group_info, user_status=status,
+        )
         if not include_avatar:
             return text
         avatar_url = build_qq_avatar_url(target_id, self.avatar_default_size())
@@ -997,8 +1033,10 @@ class QQService:
         stranger: dict[str, Any],
         member: dict[str, Any],
         group_info: dict[str, Any],
+        user_status: QQUserStatus | None = None,
     ) -> str:
         lines = ["QQ 用户资料", f"QQ号: {target_id}"]
+        lines.extend((user_status or QQUserStatus()).render())
         group_name = first_non_empty(group_info.get("group_name"), group_info.get("group_name_raw"))
         if group_name:
             lines.append(f"所在群: {group_name} ({member.get('group_id')})")
@@ -1022,7 +1060,7 @@ class QQService:
             _line("个性标签", stranger.get("labels")),
         ]
         lines.extend(item for item in profile_items if item)
-        merged = {"stranger_info": stranger, "group_member_info": member}
+        merged = strip_profile_status_fields({"stranger_info": stranger, "group_member_info": member})
         if read_bool(cfg(self.config, "qq_profile", "include_raw_extra_fields", False), False):
             lines.append("")
             lines.append("原始字段")
