@@ -15,6 +15,7 @@ from .helper_utils import (
     format_timestamp,
     read_bool,
     read_int,
+    timestamp_has_expired,
     timestamp_in_future,
     truncate,
 )
@@ -569,9 +570,7 @@ class EnvironmentPerceptionService:
         title = clean_text(member.get("title"))
         if title:
             title_expire = member.get("title_expire_time")
-            title_expired = "title_expire_time" in member and not timestamp_in_future(
-                title_expire, now=current
-            )
+            title_expired = timestamp_has_expired(title_expire, now=current)
             if title_expired:
                 # 接口会保留已过期头衔的时间戳，此时按未持有头衔处理。
                 parts.append("你当前没有群专属头衔")
@@ -617,9 +616,7 @@ class EnvironmentPerceptionService:
         title = clean_text(member.get("title"))
         if title:
             title_expire = member.get("title_expire_time")
-            title_expired = "title_expire_time" in member and not timestamp_in_future(
-                title_expire, now=current
-            )
+            title_expired = timestamp_has_expired(title_expire, now=current)
             if title_expired:
                 # 接口会保留已过期头衔的时间戳，过期的头衔不再展示。
                 parts.append("群头衔=无")

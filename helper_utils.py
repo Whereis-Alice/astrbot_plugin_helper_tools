@@ -211,10 +211,9 @@ def format_timestamp(value: Any) -> str:
 def timestamp_in_future(value: Any, *, now: datetime | None = None) -> bool:
     """Return True only when ``value`` is a unix timestamp still in the future.
 
-    OneBot implementations reuse fields such as ``shut_up_timestamp`` and
-    ``title_expire_time`` for both active and finished states, and the
-    undocumented sentinel ``-1`` may mean "permanent". Comparing against the
-    current moment keeps stale or sentinel values from being shown as live.
+    OneBot implementations reuse fields such as ``shut_up_timestamp`` for
+    active and finished states. Non-positive values are sentinels, not Unix
+    timestamps.
     """
 
     try:
@@ -229,6 +228,28 @@ def timestamp_in_future(value: Any, *, now: datetime | None = None) -> bool:
     except (OSError, ValueError, OverflowError):
         return False
     return moment > current
+
+
+def timestamp_has_expired(value: Any, *, now: datetime | None = None) -> bool:
+    """Return True only when a positive Unix timestamp is at or before now.
+
+    For ``title_expire_time``, adapters use ``0`` when no expiry is available
+    and some use ``-1`` for a permanent title. Those sentinels must not erase
+    a title returned by the same member-info response.
+    """
+
+    try:
+        timestamp = int(value)
+    except (TypeError, ValueError):
+        return False
+    if timestamp <= 0:
+        return False
+    current = now if now is not None else datetime.now(tz=timezone.utc)
+    try:
+        moment = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    except (OSError, ValueError, OverflowError):
+        return False
+    return moment <= current
 
 
 def json_dumps(payload: Any) -> str:

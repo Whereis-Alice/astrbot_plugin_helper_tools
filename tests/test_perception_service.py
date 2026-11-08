@@ -285,6 +285,29 @@ class PerceptionServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("禁言到期=", permanent)
 
+    async def test_zero_or_permanent_title_expiry_does_not_hide_title(self) -> None:
+        now = datetime(2026, 11, 8, 9, 0, tzinfo=timezone.utc)
+
+        for expiry in (0, -1):
+            with self.subTest(expiry=expiry):
+                member = {"role": "admin", "title": "三级群主", "title_expire_time": expiry}
+                bot_identity = EnvironmentPerceptionService._format_bot_group_identity(
+                    member,
+                    now=now,
+                )
+                sender_profile = EnvironmentPerceptionService._format_sender_group_profile(
+                    "123456",
+                    {"user_id": 123456, **member},
+                    now=now,
+                )
+
+                self.assertIn("你的群专属头衔：三级群主", bot_identity)
+                self.assertNotIn("你当前没有群专属头衔", bot_identity)
+                self.assertNotIn("头衔有效至：", bot_identity)
+                self.assertIn("群头衔=三级群主", sender_profile)
+                self.assertNotIn("群头衔=无", sender_profile)
+                self.assertNotIn("头衔到期=", sender_profile)
+
     async def test_context_hides_expired_mute_end_to_end(self) -> None:
         expired_mute = int(
             datetime(2026, 5, 22, 8, 1, 57, tzinfo=timezone.utc).timestamp()
