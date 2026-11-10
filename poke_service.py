@@ -31,6 +31,7 @@ from .onebot_compat import (
     raise_for_payload,
 )
 from .onebot_compat import send_poke as onebot_send_poke
+from .platform_support import is_qq_official_event, is_qq_official_platform
 
 POKE_TOOL_NAME = "poke_qq_user"
 POKE_SYNTHETIC_COMMAND_EXTRA = "helper_tools_poke_synthetic_command"
@@ -303,6 +304,8 @@ class PokeService:
         return read_bool(cfg(self.config, "poke", "commands_enabled", True), True)
 
     def remember_bot(self, event: Any) -> None:
+        if is_qq_official_event(event):
+            return
         bot = getattr(event, "bot", None)
         if bot is not None:
             self._last_bot = bot
@@ -311,6 +314,8 @@ class PokeService:
         return is_poke_synthetic_command(event)
 
     async def handle_event(self, event: Any) -> PokeResponse:
+        if is_qq_official_event(event):
+            return PokeResponse()
         self.remember_bot(event)
         if not self.enabled() or self.is_synthetic_command(event):
             return PokeResponse()
@@ -520,6 +525,8 @@ class PokeService:
         return result.succeeded > 0
 
     async def handle_command(self, event: Any) -> str:
+        if is_qq_official_event(event):
+            return "QQ 官方机器人不提供 QQ 戳一戳接口。"
         if not self.enabled() or not self.commands_enabled():
             return "戳一戳命令当前未启用。"
         request = await self._parse_command_request(event)
@@ -617,6 +624,8 @@ class PokeService:
         )
 
     async def poke_from_tool(self, event: Any, user_id: Any, times: Any = 1) -> str:
+        if is_qq_official_event(event):
+            return "QQ 官方机器人不提供 QQ 戳一戳接口。"
         if not self.enabled() or not self.tool_enabled():
             return "戳一戳 LLM 工具当前未启用。"
         target_id = _numeric_id(user_id)
@@ -649,6 +658,8 @@ class PokeService:
         *,
         times: int,
     ) -> PokeSendResult:
+        if is_qq_official_event(event):
+            return PokeSendResult(attempted=0, succeeded=0, failed=0)
         bot = getattr(event, "bot", None)
         group_id = _numeric_id(_event_value(event, "get_group_id"))
         return await self._send_with_bot(bot, target_ids, group_id=group_id, times=times)
@@ -1199,7 +1210,8 @@ class PokeService:
         )
 
     async def _run_scheduled_pokes(self, reason: str = "schedule") -> None:
-        bot = self._last_bot or self._resolve_bot()
+        configured_id = clean_text(self._section("scheduler").get("platform_id"))
+        bot = self._resolve_bot() if configured_id else self._last_bot or self._resolve_bot()
         if bot is None:
             logger.warning("[HelperTools/Poke] scheduled poke skipped: no OneBot client")
             return
@@ -1272,6 +1284,8 @@ class PokeService:
                 logger.debug("[HelperTools/Poke] platform metadata lookup failed: %r", exc)
                 continue
             name = clean_text(getattr(metadata, "name", ""))
+            if is_qq_official_platform(name):
+                continue
             platform_id = clean_text(getattr(metadata, "id", ""))
             if configured_id:
                 if configured_id not in {name, platform_id}:

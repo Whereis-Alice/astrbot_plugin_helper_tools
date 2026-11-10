@@ -23,6 +23,7 @@ from .helper_utils import (
     read_list,
     resolve_existing_path,
 )
+from .platform_support import is_bot_mention
 
 try:
     from PIL import Image as PILImage
@@ -258,8 +259,10 @@ class RollPigService:
         self_id = self._event_id(event, "get_self_id")
         target_ids: list[str] = []
         for segment in messages or []:
+            if is_bot_mention(event, segment):
+                continue
             target_id = clean_text(getattr(segment, "qq", ""))
-            if target_id and target_id != self_id and target_id not in target_ids:
+            if target_id and target_id not in {self_id, "all"} and target_id not in target_ids:
                 target_ids.append(target_id)
         return target_ids
 

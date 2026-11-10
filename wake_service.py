@@ -24,6 +24,7 @@ from .helper_utils import (
     section,
 )
 from .onebot_compat import is_onebot_platform
+from .platform_support import is_bot_mention
 
 WAKE_MODE_CONTAINS = "contains"
 WAKE_MODE_PREFIX = "prefix"
@@ -380,10 +381,7 @@ class WakeService:
     def has_at_bot(self, event: Any) -> bool:
         if not self.at_wake_enabled():
             return False
-        bot_id = _event_self_id(event)
-        if not bot_id:
-            return False
-        return any(isinstance(seg, Comp.At) and clean_text(getattr(seg, "qq", "")) == bot_id for seg in _event_messages(event))
+        return any(is_bot_mention(event, seg) for seg in _event_messages(event))
 
     def has_reply_to_bot(self, event: Any) -> bool:
         bot_id = _event_self_id(event)
@@ -841,7 +839,7 @@ class WakeService:
             return "command"
         bot_id = _event_self_id(event)
         chain = _event_messages(event)
-        if bot_id and any(isinstance(seg, Comp.At) and clean_text(getattr(seg, "qq", "")) == bot_id for seg in chain):
+        if any(is_bot_mention(event, seg) for seg in chain):
             return "at"
         if bot_id and any(isinstance(seg, Comp.Reply) and clean_text(getattr(seg, "sender_id", "")) == bot_id for seg in chain):
             return "reply"
@@ -854,13 +852,10 @@ class WakeService:
 
     @staticmethod
     def _is_only_bot_mention(event: Any) -> bool:
-        bot_id = _event_self_id(event)
-        if not bot_id:
-            return False
         found_bot_mention = False
         for segment in _event_messages(event):
             if isinstance(segment, Comp.At):
-                if clean_text(getattr(segment, "qq", "")) == bot_id:
+                if is_bot_mention(event, segment):
                     found_bot_mention = True
                     continue
                 return False

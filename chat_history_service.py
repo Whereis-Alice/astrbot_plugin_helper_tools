@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import re
 import sqlite3
 import time
 from collections.abc import Iterable, Mapping
@@ -15,6 +17,11 @@ import astrbot.api.message_components as Comp
 
 from .helper_utils import cfg, clean_text, read_bool, read_int, read_list, truncate
 from .onebot_compat import get_group_msg_history, is_onebot_platform, unwrap_payload
+from .platform_support import (
+    is_official_channel,
+    is_qq_official_event,
+    is_qq_official_platform,
+)
 
 CHAT_HISTORY_TOOL_NAME = "search_current_group_chat_history"
 CHAT_HISTORY_TOOL_RESULT_MARKER = "[聊天记录检索结果]"
@@ -71,6 +78,14 @@ class HistoryScope:
     platform: str
     self_id: str
     group_id: str
+
+    @property
+    def sender_id_label(self) -> str:
+        return (
+            "用户ID（OpenID/频道用户ID）"
+            if is_qq_official_platform(self.platform)
+            else "QQ"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +147,12 @@ class ChatHistorySearchResult:
                 f"；本次补充 {self.backfill.inserted_count} 条。"
             ),
         ]
+        if is_qq_official_platform(self.scope.platform):
+            lines.append(
+                "覆盖范围：仅包含启用记录后官方平台实际推送且本插件已保存的消息；"
+                "可能只有 @ 机器人等事件，不能据此推断全群或频道的完整聊天，"
+                "也不支持补取未收到的历史。"
+            )
         if self.range_capped:
             lines.append("查询时间已按安全上限缩短，未读取更早的群聊记录。")
         if card_sent:
@@ -146,7 +167,7 @@ class ChatHistorySearchResult:
             sender = "机器人" if item.is_bot else "群成员"
             identity = f"{sender}：{item.sender_name or '未知昵称'}"
             if include_sender_qq and item.sender_id:
-                identity += f"（QQ {item.sender_id}）"
+                identity += f"（{self.scope.sender_id_label} {item.sender_id}）"
             body = truncate(item.content, 1_200)
             rendered = (
                 f"[{_format_timestamp(item.timestamp, timezone)}] {identity}\n{body}"
@@ -512,7 +533,9 @@ class ChatHistoryService:
         result_limit = self._normalize_limit(limit, settings.max_result_messages)
         result_offset = self._normalize_offset(offset)
         keywords = self._normalize_keywords(query)
-        sender_ids = self._normalize_sender_ids(sender_qqs)
+        sender_ids = self._normalize_sender_ids(
+            sender_qqs, official=is_qq_official_event(event)
+        )
         backfill = await self._backfill(
             event,
             scope,
@@ -548,6 +571,10 @@ class ChatHistoryService:
         *,
         target_start: int,
     ) -> BackfillStatus:
+        if is_qq_official_event(event):
+            return BackfillStatus(
+                stop_reason="QQ 官方平台仅检索已收到的本地消息，不进行 OneBot 历史补取"
+            )
         if not settings.onebot_backfill_enabled:
             return BackfillStatus(stop_reason="已关闭 OneBot 历史回填")
         bot = getattr(event, "bot", None)
@@ -660,14 +687,25 @@ class ChatHistoryService:
             return None
         group_id = self._event_value(event, "get_group_id")
         self_id = self._event_value(event, "get_self_id")
-        if not group_id or not self_id:
+        official = is_qq_official_event(event)
+        instance_id = self._event_value(event, "get_platform_id") if official else ""
+        if not group_id or (not instance_id if official else not self_id):
             return None
         if group_id in settings.blocked_group_ids:
             return None
         if settings.allowed_group_ids and group_id not in settings.allowed_group_ids:
             return None
+        # Official self_id can vary between a placeholder and an actual mention.
+        # Use the configured adapter instance and scene for a stable, isolated store.
+        key = (
+            json.dumps(
+                [platform, instance_id, "channel" if is_official_channel(event) else "group", group_id]
+            )
+            if official
+            else f"{platform or 'qq'}:{self_id}:{group_id}"
+        )
         return HistoryScope(
-            key=f"{platform or 'qq'}:{self_id}:{group_id}",
+            key=key,
             platform=platform or "qq",
             self_id=self_id,
             group_id=group_id,
@@ -867,12 +905,18 @@ class ChatHistoryService:
         return tuple(result)
 
     @staticmethod
-    def _normalize_sender_ids(value: Any) -> tuple[str, ...]:
+    def _normalize_sender_ids(value: Any, *, official: bool = False) -> tuple[str, ...]:
         values = value if isinstance(value, (list, tuple, set)) else [value]
         result: list[str] = []
         for raw in values:
             item = clean_text(raw)
-            if item.isdigit() and item not in result:
+            valid = (
+                bool(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", item))
+                if official else item.isdigit()
+            )
+            if official and item and not valid:
+                raise ChatHistoryError("用户ID 筛选格式不正确，请使用当前平台的 OpenID / 频道用户ID。")
+            if valid and item not in result:
                 result.append(item)
             if len(result) >= 20:
                 break

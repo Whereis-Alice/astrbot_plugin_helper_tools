@@ -23,6 +23,7 @@ from .helper_utils import (
     truncate,
 )
 from .onebot_compat import call_onebot, is_onebot_event, raise_for_payload
+from .platform_support import is_qq_official_event
 from .qq_status import (
     MEMBER_LIST_STATUS_NOTE,
     QQUserStatus,
@@ -158,11 +159,13 @@ def extract_at_ids(event: Any) -> list[str]:
 
 
 def require_onebot(event: Any) -> Any:
-    """取出事件上的 OneBot 调用入口。
+    """Return a OneBot entry point; an official botpy client is not OneBot."""
 
-    判定条件仍然只是 ``event.bot`` 是否存在（不额外收紧），但在平台名
-    明显不属于 OneBot v11 系时给出更精确的提示，方便用户排查。
-    """
+    if is_qq_official_event(event):
+        raise RuntimeError(
+            "QQ 官方机器人不提供该 OneBot 功能的接口；"
+            "官方 OpenID、频道用户ID 不能当作 QQ 号使用。"
+        )
 
     bot = getattr(event, "bot", None)
     if bot is not None:
@@ -387,6 +390,8 @@ class QQService:
             return normalized, ""
         if clean_text(qq_id):
             return None, "QQ 号格式不正确，请提供 5 到 12 位数字。"
+        if is_qq_official_event(event):
+            return None, "QQ 官方机器人的用户ID 不是 QQ 号，请显式提供真实 QQ 号。"
         at_ids = extract_at_ids(event)
         if at_ids:
             return at_ids[0], ""
@@ -401,6 +406,8 @@ class QQService:
             if text.isdigit():
                 return text, ""
             return None, "群号格式不正确，请提供纯数字群号。"
+        if is_qq_official_event(event):
+            return None, "QQ 官方机器人的群 OpenID / 频道ID 不是 QQ 群号。"
         current_group = _event_group_id(event)
         if current_group:
             return current_group, ""

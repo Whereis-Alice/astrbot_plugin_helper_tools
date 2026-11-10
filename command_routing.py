@@ -12,6 +12,7 @@ from astrbot.core.star.filter.command import CommandFilter
 from astrbot.core.star.star_handler import star_handlers_registry
 
 from .helper_utils import clean_text, read_list
+from .platform_support import is_bot_mention
 from .poke_service import is_poke_synthetic_command
 
 
@@ -40,16 +41,16 @@ def _bot_id(event: Any) -> str:
 def _addressed_elsewhere(event: Any) -> bool:
     if _is_private_chat(event):
         return False
-    self_id = _bot_id(event)
     for component in _message_components(event):
         if isinstance(component, Comp.Reply):
             continue
         if isinstance(component, Comp.Plain) and not clean_text(component.text):
             continue
-        return isinstance(component, Comp.At) and clean_text(component.qq) not in {
-            self_id,
-            "all",
-        }
+        return (
+            isinstance(component, Comp.At)
+            and clean_text(component.qq) != "all"
+            and not is_bot_mention(event, component)
+        )
     return False
 
 
@@ -57,12 +58,11 @@ def _directly_addressed(event: Any) -> bool:
     if _is_private_chat(event):
         return True
     self_id = _bot_id(event)
-    if not self_id:
-        return False
     return any(
-        (isinstance(component, Comp.At) and clean_text(component.qq) == self_id)
+        is_bot_mention(event, component)
         or (
-            isinstance(component, Comp.Reply)
+            bool(self_id)
+            and isinstance(component, Comp.Reply)
             and clean_text(component.sender_id) == self_id
         )
         for component in _message_components(event)

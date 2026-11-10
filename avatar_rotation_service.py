@@ -17,6 +17,7 @@ from .onebot_compat import (
     onebot_error_info,
     set_bot_avatar,
 )
+from .platform_support import is_qq_official_event, is_qq_official_platform
 
 DEFAULT_AVATAR_POOL_DIR = "avatar_pool"
 DEFAULT_CRON_EXPRESSION = "0 8 * * *"
@@ -292,6 +293,8 @@ class AvatarRotationService:
         await asyncio.to_thread(self.save_state, payload)
 
     def _resolve_bot(self, event: Any | None = None) -> Any | None:
+        if event is not None and is_qq_official_event(event):
+            return None
         if event is not None and is_onebot_event(event):
             bot = getattr(event, "bot", None)
             if bot is not None:
@@ -305,6 +308,8 @@ class AvatarRotationService:
             except Exception:
                 continue
             name = clean_text(getattr(meta, "name", ""))
+            if is_qq_official_platform(name):
+                continue
             platform_id = clean_text(getattr(meta, "id", ""))
             if configured_platform_id:
                 if configured_platform_id not in {platform_id, name}:

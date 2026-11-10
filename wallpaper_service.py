@@ -36,7 +36,7 @@ from .onebot_compat import (
     unwrap_payload,
 )
 from .onebot_compat import get_msg as onebot_get_msg
-
+from .platform_support import is_qq_official_event
 
 DEFAULT_IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".gif"]
 SEND_MODE_TOGETHER = "together"
@@ -623,6 +623,8 @@ class WallpaperService:
         return ids
 
     async def image_refs_from_onebot_message(self, event: Any, message_id: str) -> list[ImageRef]:
+        if is_qq_official_event(event):
+            return []
         bot = getattr(event, "bot", None)
         if bot is None or not message_id:
             return []
@@ -706,7 +708,7 @@ class WallpaperService:
                 return data, _guess_extension(value, content_type=content_type)
 
         bot = getattr(event, "bot", None)
-        if bot is not None and ref.file:
+        if bot is not None and ref.file and not is_qq_official_event(event):
             # action 与参数键名交给兼容层：LLOneBot 的 get_image 返回
             # file / url / file_size / file_name，没有 go-cqhttp 的 filename / size。
             try:

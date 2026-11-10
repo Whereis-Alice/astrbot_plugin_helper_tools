@@ -16,6 +16,7 @@ from astrbot.api import logger
 
 from .helper_utils import cfg, clean_text, read_bool, read_float, read_int
 from .onebot_compat import get_msg as onebot_get_msg
+from .platform_support import is_qq_official_event
 
 BOT_REPLY_IMAGE_MARKER = (
     "[引用图片来源规则：以每张图片前的发送者标注为准。"
@@ -376,6 +377,8 @@ class ReplyMediaGuard:
         event: Any,
         reply: Any,
     ) -> _QuotedMessageInfo | None:
+        if is_qq_official_event(event):
+            return None
         message_id = clean_text(getattr(reply, "id", ""))
         bot = getattr(event, "bot", None)
         if not message_id or bot is None:

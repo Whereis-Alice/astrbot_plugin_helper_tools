@@ -224,6 +224,7 @@ class ChatHistoryCardRenderer:
                         message,
                         timezone=timezone,
                         include_sender_qq=include_sender_qq,
+                        sender_id_label=result.scope.sender_id_label,
                     ),
                     "content": content,
                 }
@@ -247,11 +248,12 @@ def _card_meta(
     *,
     timezone: ZoneInfo,
     include_sender_qq: bool,
+    sender_id_label: str = "QQ",
 ) -> str:
     role = "机器人" if message.is_bot else "群成员"
     identity = f"{role}：{message.sender_name or '未知昵称'}"
     if include_sender_qq and message.sender_id:
-        identity += f"（QQ {message.sender_id}）"
+        identity += f"（{sender_id_label} {message.sender_id}）"
     when = datetime_from_timestamp(message.timestamp, timezone)
     return f"{when} | {identity}"
 
