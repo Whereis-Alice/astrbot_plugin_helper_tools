@@ -28,6 +28,8 @@ from .qq_features import extract_at_ids, normalize_qq_id
 
 QQ_LIKE_TOOL_NAME = "send_qq_profile_like"
 QQ_LIKE_PERSONA_CONTEXT_PREFIX = "[HelperTools QQ profile-like result]"
+MAX_LIKES_PER_REQUEST = 50
+LIKES_PER_BATCH = 10
 _QQ_MENTION_RE = re.compile(r"@(\d{5,12})")
 
 #: 兼容层未覆盖的平台名兜底集合（只放宽、不收紧判定）。
@@ -61,6 +63,7 @@ class _TargetLikeResult:
     relation: str
     status: str
     times: int = 0
+    requested_times: int = 0
 
 
 class QQProfileLikeService:
@@ -111,19 +114,22 @@ class QQProfileLikeService:
         if prefixed is not None:
             return (
                 QQLikeMessageMatch(prefixed, False)
-                if self._match_targets(event, prefixed) else None
+                if self._match_targets(event, prefixed)
+                else None
             )
         addressed = addressed_command_text(event, prefixes)
         if addressed is not None:
             return (
                 QQLikeMessageMatch(addressed, True)
-                if self._match_targets(event, addressed) else None
+                if self._match_targets(event, addressed)
+                else None
             )
         # Only the configured self-like phrases are automatic bare triggers.
         # Mentions and replies addressed elsewhere keep the command routing rules.
         getter = getattr(event, "get_messages", None)
         messages = (
-            getter() if callable(getter)
+            getter()
+            if callable(getter)
             else getattr(getattr(event, "message_obj", None), "message", [])
         )
         if any(
@@ -172,27 +178,21 @@ class QQProfileLikeService:
             )
 
         friend_ids = await self._friend_ids(event, bot)
-        times = self._likes_per_target()
         results = [
             await self._like_target(
                 bot,
                 target_id=target_id,
                 is_sender=target_id == sender_id,
-                relation=(
-                    "friend"
-                    if friend_ids is not None and target_id in friend_ids
-                    else "stranger"
-                    if friend_ids is not None
-                    else "unknown"
-                ),
-                times=times,
+                relation=self._relation(friend_ids, target_id),
+                times=self._likes_per_target(self._relation(friend_ids, target_id)),
             )
             for target_id in targets
         ]
         reply = self._format_reply(results)
         persona_context = (
             self._persona_context(results)
-            if use_persona_reply and self.persona_reply_enabled() else ""
+            if use_persona_reply and self.persona_reply_enabled()
+            else ""
         )
         return QQLikeHandleResult(
             handled=True,
@@ -217,15 +217,13 @@ class QQProfileLikeService:
         bot = getattr(event, "bot", None)
         if bot is None:
             return "当前消息平台不支持 QQ 名片点赞。"
-        max_times = self._likes_per_target()
-        actual_times = read_int(times, max_times, minimum=1, maximum=max_times)
         friend_ids = await self._friend_ids(event, bot)
-        relation = (
-            "friend"
-            if friend_ids is not None and target_id in friend_ids
-            else "stranger"
-            if friend_ids is not None
-            else "unknown"
+        relation = self._relation(friend_ids, target_id)
+        actual_times = read_int(
+            times,
+            self._likes_per_target(relation),
+            minimum=1,
+            maximum=MAX_LIKES_PER_REQUEST,
         )
         result = await self._like_target(
             bot,
@@ -238,7 +236,11 @@ class QQProfileLikeService:
 
     def take_persona_context(self, event: Any) -> str:
         getter = getattr(event, "get_extra", None)
-        context = clean_text(getter("_helper_tools_qq_like_persona_context", "") if callable(getter) else "")
+        context = clean_text(
+            getter("_helper_tools_qq_like_persona_context", "")
+            if callable(getter)
+            else ""
+        )
         if context:
             setter = getattr(event, "set_extra", None)
             if callable(setter):
@@ -309,7 +311,9 @@ class QQProfileLikeService:
             )
             if clean_text(prefix)
         ]
-        if not prefixes or not any(normalized.startswith(prefix) for prefix in prefixes):
+        if not prefixes or not any(
+            normalized.startswith(prefix) for prefix in prefixes
+        ):
             return []
 
         self_id = self._self_id(event)
@@ -370,37 +374,50 @@ class QQProfileLikeService:
         relation: str,
         times: int,
     ) -> _TargetLikeResult:
-        try:
-            response = await send_like(bot, user_id=int(target_id), times=times)
-        except Exception as exc:  # noqa: BLE001 - OneBot adapters use varied errors
-            # aiocqhttp 的 ActionFailed 的 str() 里没有 wording/message，
-            # 交给兼容层提取才能拿到协议端返回的真实原因。
-            _retcode, detail = onebot_error_info(exc)
-            return _TargetLikeResult(
-                target_id,
-                is_sender,
-                relation,
-                self._classify_failure(clean_text(detail) or clean_text(exc), exc),
-            )
-
-        failure = self._response_failure(response)
-        if failure:
-            return _TargetLikeResult(
-                target_id,
-                is_sender,
-                relation,
-                self._classify_failure(failure),
-            )
+        accepted = 0
+        while accepted < times:
+            batch = min(LIKES_PER_BATCH, times - accepted)
+            try:
+                response = await send_like(bot, user_id=int(target_id), times=batch)
+            except Exception as exc:  # noqa: BLE001 - OneBot adapters use varied errors
+                # ActionFailed often hides the actual reason in .result.
+                _retcode, detail = onebot_error_info(exc)
+                return _TargetLikeResult(
+                    target_id,
+                    is_sender,
+                    relation,
+                    self._classify_failure(clean_text(detail) or clean_text(exc), exc),
+                    accepted,
+                    times,
+                )
+            failure = self._response_failure(response)
+            if failure:
+                return _TargetLikeResult(
+                    target_id,
+                    is_sender,
+                    relation,
+                    self._classify_failure(failure),
+                    accepted,
+                    times,
+                )
+            accepted += batch
         # OneBot's send_like action only acknowledges that the adapter accepted
         # the request. It has no API for checking whether the target actually
         # received the likes. QQ may silently drop stranger-like requests.
         status = "unverified" if relation in {"stranger", "unknown"} else "success"
-        return _TargetLikeResult(target_id, is_sender, relation, status, times)
+        return _TargetLikeResult(
+            target_id, is_sender, relation, status, accepted, times
+        )
 
     def _format_reply(self, results: list[_TargetLikeResult]) -> str:
         lines: list[str] = []
         for result in results:
             target = "你" if result.is_sender else f"QQ {result.target_id}"
+            if result.times and result.status not in {"success", "unverified"}:
+                lines.append(
+                    f"本次计划 {result.requested_times} 个赞，已向 QQ 提交给{target}的 "
+                    f"{result.times} 个赞请求；后续批次失败，已停止，实际到账请以资料卡为准。"
+                )
             if result.status == "success":
                 lines.append(f"已向 QQ 提交给{target}的 {result.times} 个赞请求。")
             elif result.status == "unverified":
@@ -411,9 +428,7 @@ class QQProfileLikeService:
                 )
             elif result.status == "permission":
                 if result.relation == "stranger":
-                    lines.append(
-                        f"无法给{target}点赞：对方可能关闭了陌生人点赞权限。"
-                    )
+                    lines.append(f"无法给{target}点赞：对方可能关闭了陌生人点赞权限。")
                 else:
                     lines.append(f"无法给{target}点赞：QQ 权限限制了这次操作。")
             elif result.status == "limit":
@@ -431,6 +446,11 @@ class QQProfileLikeService:
         details = []
         for result in results:
             target = "当前用户" if result.is_sender else f"QQ {result.target_id}"
+            if result.times and result.status not in {"success", "unverified"}:
+                details.append(
+                    f"{target}：计划 {result.requested_times} 个赞，前 {result.times} 个赞请求"
+                    "已被 OneBot 接受，后续批次失败并停止；无法核验实际到账"
+                )
             if result.status == "success":
                 details.append(f"{target}：OneBot 已接受 {result.times} 个赞请求")
             elif result.status == "unverified":
@@ -488,12 +508,25 @@ class QQProfileLikeService:
                 time.monotonic() + seconds
             )
 
-    def _likes_per_target(self) -> int:
+    @staticmethod
+    def _relation(friend_ids: set[str] | None, target_id: str) -> str:
+        if friend_ids is None:
+            return "unknown"
+        return "friend" if target_id in friend_ids else "stranger"
+
+    def _likes_per_target(self, relation: str = "friend") -> int:
+        # Keep the existing friend setting so old configurations still apply.
+        field = (
+            "stranger_likes_per_target"
+            if relation == "stranger"
+            else "likes_per_target"
+        )
+        default = 50 if relation == "stranger" else 10
         return read_int(
-            cfg(self.config, "qq_like", "likes_per_target", 10),
-            10,
+            cfg(self.config, "qq_like", field, default),
+            default,
             minimum=1,
-            maximum=10,
+            maximum=MAX_LIKES_PER_REQUEST,
         )
 
     def _max_targets_per_message(self) -> int:

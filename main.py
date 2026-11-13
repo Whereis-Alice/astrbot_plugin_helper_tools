@@ -99,7 +99,7 @@ from .web_browser_service import (
 from .webui_service import HelperToolsDashboard
 
 PLUGIN_ID = "astrbot_plugin_helper_tools"
-PLUGIN_VERSION = "2.5.0"
+PLUGIN_VERSION = "2.5.1"
 PLUGIN_DESC = "QQ / OneBot 辅助工具合集：防撤回、戳一戳、QQ 资料、壁纸、唤醒、网页与 X/Twitter 等能力。B 站与引用卡片解析已拆分为独立插件。"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_helper_tools"
 
@@ -620,8 +620,9 @@ class SendQQProfileLikeTool(FunctionTool[AstrAgentContext]):
                 },
                 "times": {
                     "type": "integer",
-                    "description": "点赞个数，默认取配置的每目标数量，并受其上限限制。",
+                    "description": "本次尝试的点赞个数，可自行选择 1 至 50，不受自动点赞默认次数限制；不填则按好友/陌生人配置。分批提交，QQ 拒绝时停止，不能保证实际到账。",
                     "minimum": 1,
+                    "maximum": 50,
                 },
             },
             "required": ["user_id"],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from astrbot_plugin_helper_tools.onebot_compat import reset_compat_caches
 from astrbot_plugin_helper_tools.qq_like_service import (
@@ -180,7 +181,8 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
         result = await service.handle_message(event, event.message_str)
 
         self.assertTrue(result.handled)
-        self.assertEqual(bot.likes, [(20001, 10)])
+        self.assertEqual(bot.likes, [(20001, 10)] * 5)
+        self.assertIn("50 个赞请求", result.reply)
         self.assertIn("无法核验是否到账", result.reply)
         self.assertNotIn("已给你点了", result.reply)
 
@@ -210,7 +212,9 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("陌生人", result.reply)
         self.assertIn("权限", result.reply)
 
-    async def test_cooldown_blocks_a_second_request_without_another_api_call(self) -> None:
+    async def test_cooldown_blocks_a_second_request_without_another_api_call(
+        self,
+    ) -> None:
         bot = FakeBot(friend_ids=["20001"])
         event = FakeEvent(text="赞我", bot=bot)
         service = QQProfileLikeService(self._config(cooldown_seconds=60))
@@ -240,12 +244,12 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("已达上限", result.reply)
         self.assertNotIn("已向 QQ 提交", result.reply)
 
-    async def test_persona_context_is_temporary_and_contains_only_result_facts(self) -> None:
+    async def test_persona_context_is_temporary_and_contains_only_result_facts(
+        self,
+    ) -> None:
         bot = FakeBot(friend_ids=["20001"])
         event = FakeEvent(text="赞我", bot=bot)
-        service = QQProfileLikeService(
-            self._config(persona_reply={"enabled": True})
-        )
+        service = QQProfileLikeService(self._config(persona_reply={"enabled": True}))
 
         result = await service.handle_message(event, event.message_str)
         attached = service.attach_persona_context(event, result.persona_context)
@@ -268,7 +272,14 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_other_onebot_platform_names_are_accepted(self) -> None:
         service = QQProfileLikeService(self._config())
-        for platform in ("aiocqhttp", "LLOneBot", "napcat", "lagrange", "go-cqhttp", ""):
+        for platform in (
+            "aiocqhttp",
+            "LLOneBot",
+            "napcat",
+            "lagrange",
+            "go-cqhttp",
+            "",
+        ):
             with self.subTest(platform=platform):
                 event = SimpleNamespace(get_platform_name=lambda name=platform: name)
                 self.assertTrue(service._is_qq_event(event))
@@ -286,7 +297,9 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.calls_of("get_friend_list"), [{}])
         self.assertEqual(bot.likes, [(20001, 10)])
 
-    async def test_llonebot_missing_send_like_is_classified_as_unsupported(self) -> None:
+    async def test_llonebot_missing_send_like_is_classified_as_unsupported(
+        self,
+    ) -> None:
         bot = LLOneBotBot(friend_ids=["20001"], supports_send_like=False)
         event = FakeEvent(text="赞我", bot=bot)
         service = QQProfileLikeService(self._config())
@@ -300,7 +313,9 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
         # ActionFailed 的 str() 只有 retcode，真实原因在 .result.wording 里。
         bot = LLOneBotBot(
             friend_ids=["20001"],
-            send_like_error=FakeActionFailed(1200, "点赞失败 今日同一好友点赞数已达上限"),
+            send_like_error=FakeActionFailed(
+                1200, "点赞失败 今日同一好友点赞数已达上限"
+            ),
         )
         event = FakeEvent(text="赞我", bot=bot)
         service = QQProfileLikeService(self._config())
@@ -329,7 +344,6 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
             "unsupported",
         )
 
-
     async def test_tool_requires_tool_switch_enabled(self) -> None:
         bot = FakeBot(friend_ids=["30001"])
         event = FakeEvent(text="", bot=bot)
@@ -340,17 +354,98 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("未启用", result)
         self.assertEqual(bot.likes, [])
 
-    async def test_tool_likes_target_and_caps_times(self) -> None:
+    async def test_tool_uses_explicit_count_independent_of_auto_amount(self) -> None:
         bot = FakeBot(friend_ids=["30001"])
         event = FakeEvent(text="", bot=bot)
         service = QQProfileLikeService(
             self._config(llm_tool_enabled=True, likes_per_target=5)
         )
 
-        result = await service.like_from_tool(event, "30001", 99)
+        result = await service.like_from_tool(event, "30001", 23)
 
-        self.assertEqual(bot.likes, [(30001, 5)])
+        self.assertEqual(bot.likes, [(30001, 10), (30001, 10), (30001, 3)])
         self.assertIn("QQ 30001", result)
+
+    async def test_configured_counts_select_each_targets_relation(self) -> None:
+        bot = FakeBot(friend_ids=["20002"])
+        event = FakeEvent(text="赞 @20002 @20003", bot=bot, mentions=["20002", "20003"])
+        service = QQProfileLikeService(
+            self._config(likes_per_target=7, stranger_likes_per_target=23)
+        )
+        await service.handle_message(event, event.message_str)
+        self.assertEqual(bot.likes, [(20002, 7), (20003, 10), (20003, 10), (20003, 3)])
+
+    async def test_unknown_relation_uses_friend_config_without_claiming_delivery(
+        self,
+    ) -> None:
+        for disabled in (True, False):
+            with self.subTest(disabled=disabled):
+                bot = FakeBot()
+                if not disabled:
+                    bot.get_friend_list = AsyncMock(
+                        side_effect=RuntimeError("unavailable")
+                    )
+                event = FakeEvent(text="赞我", bot=bot)
+                service = QQProfileLikeService(
+                    self._config(detect_friend_status=not disabled, likes_per_target=6)
+                )
+                result = await service.handle_message(event, event.message_str)
+                self.assertEqual(bot.likes, [(20001, 6)])
+                self.assertIn("无法核验", result.reply)
+
+    async def test_tool_defaults_strangers_and_bounds_total_requests(self) -> None:
+        for supplied, expected in ((None, 27), (999, 50), (0, 1)):
+            with self.subTest(supplied=supplied):
+                bot = LLOneBotBot()
+                service = QQProfileLikeService(
+                    self._config(
+                        llm_tool_enabled=True,
+                        likes_per_target=3,
+                        stranger_likes_per_target=27,
+                    )
+                )
+                result = await service.like_from_tool(
+                    FakeEvent(text="", bot=bot), "30001", supplied
+                )
+                self.assertEqual(sum(times for _, times in bot.likes), expected)
+                self.assertTrue(all(1 <= times <= 10 for _, times in bot.likes))
+                self.assertIn(f"{expected} 个赞请求", result)
+
+    async def test_partial_batch_failure_stops_and_keeps_accepted_count_in_persona(
+        self,
+    ) -> None:
+        for failure in (
+            FakeActionFailed(1200, "今日点赞次数已达上限"),
+            {"status": "failed", "retcode": 1200, "message": "今日点赞次数已达上限"},
+        ):
+            with self.subTest(failure=failure):
+                bot = FakeBot()
+                outcomes = [{}, {}, failure, {}, {}]
+                bot.send_like = AsyncMock(side_effect=outcomes)
+                event = FakeEvent(text="赞我", bot=bot)
+                service = QQProfileLikeService(
+                    self._config(persona_reply={"enabled": True})
+                )
+                result = await service.handle_message(event, event.message_str)
+                self.assertEqual(bot.send_like.await_count, 3)
+                self.assertIn("计划 50 个赞", result.reply)
+                self.assertIn("20 个赞请求", result.reply)
+                self.assertIn("已停止", result.reply)
+                self.assertIn("已达上限", result.reply)
+                self.assertIn("前 20 个赞请求", result.persona_context)
+                self.assertIn("无法核验实际到账", result.persona_context)
+
+    async def test_stranger_permission_failure_is_not_retried(self) -> None:
+        bot = FakeBot()
+        bot.send_like = AsyncMock(
+            side_effect=FakeActionFailed(1200, "陌生人点赞权限关闭")
+        )
+        event = FakeEvent(text="赞我", bot=bot)
+        service = QQProfileLikeService(self._config())
+        result = await service.handle_message(event, event.message_str)
+        self.assertEqual(bot.send_like.await_count, 1)
+        self.assertIn("权限", result.reply)
+        self.assertNotIn("已向 QQ 提交", result.reply)
 
     async def test_tool_defaults_times_to_configured_amount(self) -> None:
         bot = FakeBot(friend_ids=["30001"])
@@ -372,7 +467,9 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("机器人自己", await service.like_from_tool(event, "10001"))
         self.assertEqual(bot.likes, [])
 
-    def test_like_mode_matches_original_text_and_never_sends_during_matching(self) -> None:
+    def test_like_mode_matches_original_text_and_never_sends_during_matching(
+        self,
+    ) -> None:
         service = QQProfileLikeService(self._config(persona_reply={"enabled": True}))
         bot = FakeBot(friend_ids=["20001"])
         for original, rewritten, prefixes, expected in (
@@ -390,7 +487,9 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
                 event.is_at_or_wake_command = True
                 match = service.match_message(event, prefixes)
                 self.assertEqual(
-                    (match.text, match.use_persona_reply) if match is not None else None,
+                    (match.text, match.use_persona_reply)
+                    if match is not None
+                    else None,
                     expected,
                 )
                 self.assertEqual(event.message_str, rewritten)
@@ -407,7 +506,9 @@ class QQProfileLikeServiceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(service.match_message(event, ["/"]))
         self.assertEqual(bot.likes, [])
 
-    async def test_automatic_reply_never_builds_persona_facts_even_when_enabled(self) -> None:
+    async def test_automatic_reply_never_builds_persona_facts_even_when_enabled(
+        self,
+    ) -> None:
         for failure in (None, RuntimeError("今日点赞额度已达上限")):
             with self.subTest(failure=failure):
                 bot = FakeBot(friend_ids=["20001"], failure=failure)

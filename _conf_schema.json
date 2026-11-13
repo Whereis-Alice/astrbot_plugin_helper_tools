@@ -2117,11 +2117,19 @@
       },
       "likes_per_target": {
         "type": "int",
-        "description": "每个目标本次点赞数量",
+        "description": "好友自动点赞次数",
         "default": 10,
         "min": 1,
-        "max": 10,
-        "hint": "OneBot 单次 send_like 通常最多 10 个。原插件连续请求 5 次容易触发陌生人额度或风控，这里每次只请求一次；接口返回正常也不代表陌生人一定实际收到。"
+        "max": 50,
+        "hint": "赞我及点赞 @ 用户时，已确认好友默认尝试 10 下；关系查询失败或关闭时也使用此次数。保留原 likes_per_target 配置。每批最多 10 下，遇到拒绝即停止。LLM 工具明确指定次数时使用其参数，不受本项限制。"
+      },
+      "stranger_likes_per_target": {
+        "type": "int",
+        "description": "陌生人自动点赞次数",
+        "default": 50,
+        "min": 1,
+        "max": 50,
+        "hint": "已查询好友列表且目标不在列表中时默认尝试 50 下，分成最多 5 批，每批最多 10 下；遇到额度、权限或接口错误就停止。请求被接受也不代表实际到账。LLM 工具明确指定次数时使用其参数。"
       },
       "max_targets_per_message": {
         "type": "int",
@@ -2140,9 +2148,9 @@
       },
       "detect_friend_status": {
         "type": "bool",
-        "description": "查询好友关系以改善失败提示",
+        "description": "查询好友关系以选择次数和说明结果",
         "default": true,
-        "hint": "会调用 OneBot get_friend_list 并短暂缓存。关闭后仍可点赞，但无法区分好友和陌生人，因此不会把请求提交说成实际到账。"
+        "hint": "会调用 OneBot get_friend_list 并短暂缓存。开启后按好友/陌生人设置选择自动次数；关闭或查询失败时关系未知，使用好友自动次数，不会把请求提交说成实际到账。"
       },
       "friend_status_cache_seconds": {
         "type": "int",
