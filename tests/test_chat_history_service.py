@@ -120,6 +120,21 @@ class HistoryEvent:
 
 
 class ChatHistoryServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_old_cache_entry_does_not_claim_uninterrupted_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            service = ChatHistoryService({"chat_history": {"enabled": True}}, Path(directory))
+            now = int(time.time())
+            event = HistoryEvent(text="较早的缓存", timestamp=now - 7200, bot=HistoryBot([]))
+            try:
+                await service.capture_event(event)
+                result = await service.search(event, hours=1)
+                self.assertIn("完整性未核验", result.backfill.stop_reason)
+                rendered = result.render_for_model(timezone=service.timezone(), max_chars=4000, include_sender_qq=False)
+                self.assertIn("不代表中间时段完整", rendered)
+                self.assertIn("不代表已读取媒体内容", rendered)
+            finally:
+                service.close()
+
     async def test_captures_and_searches_only_the_current_group(self) -> None:
         config = {
             "chat_history": {

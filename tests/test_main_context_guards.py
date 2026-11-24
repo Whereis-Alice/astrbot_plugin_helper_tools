@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import astrbot.api.message_components as Comp
 from astrbot.core.agent.message import ImageURLPart, Message, TextPart
 
+from astrbot_plugin_helper_tools.chat_history_auto_recall import AUTO_RECALL_MARKER
 from astrbot_plugin_helper_tools.chat_history_service import (
     CHAT_HISTORY_TOOL_RESULT_MARKER,
 )
@@ -179,6 +180,11 @@ class MainContextGuardTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(marked, 1)
         self.assertTrue(getattr(message.content[0], "_no_save", False))
+        self.assertTrue(getattr(message, "_no_save", False))
+
+    async def test_auto_recall_evidence_is_removed_from_future_tool_context(self) -> None:
+        message = Message(role="tool", content=[TextPart(text=f"{AUTO_RECALL_MARKER}\n临时群聊资料")])
+        self.assertEqual(_mark_temporary_tool_results(SimpleNamespace(messages=[message])), 1)
         self.assertTrue(getattr(message, "_no_save", False))
 
 

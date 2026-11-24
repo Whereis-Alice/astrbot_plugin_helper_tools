@@ -859,6 +859,28 @@
         "default": true,
         "hint": "模型可按关键词、时间、发送者和分页检索当前群记录。工具不能跨群查询，也不能查询私聊。"
       },
+      "auto_recall_enabled": {
+        "type": "bool",
+        "description": "明确要求回顾群聊时先检索再回复",
+        "default": true,
+        "hint": "群聊历史模块与 LLM 工具开启后生效。识别昨天、指定时段等明确总结请求，在遵循唤醒规则后自动检索当前群；时间不明确时询问范围。普通聊天不会因此唤醒。"
+      },
+      "auto_recall_max_messages": {
+        "type": "int",
+        "description": "自动回顾最多读取的消息数",
+        "default": 240,
+        "min": 1,
+        "max": 1000,
+        "hint": "超过单页数量时自动读本地后续页，OneBot 只回填一次；达到上限会告知模型结果不完整。"
+      },
+      "auto_recall_max_chars": {
+        "type": "int",
+        "description": "自动回顾提供给模型的文字量上限",
+        "default": 18000,
+        "min": 1000,
+        "max": 60000,
+        "hint": "限制本轮历史资料量。未展示的消息明确标记，不能被当成完整群聊。历史资料只参与当前回复。"
+      },
       "capture_incoming_messages": {
         "type": "bool",
         "description": "记录插件收到的当前群消息",

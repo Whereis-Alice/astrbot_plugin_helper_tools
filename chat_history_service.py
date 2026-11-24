@@ -7,7 +7,7 @@ import re
 import sqlite3
 import time
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -152,6 +152,12 @@ class ChatHistorySearchResult:
                 "覆盖范围：仅包含启用记录后官方平台实际推送且本插件已保存的消息；"
                 "可能只有 @ 机器人等事件，不能据此推断全群或频道的完整聊天，"
                 "也不支持补取未收到的历史。"
+            )
+        else:
+            lines.append(
+                "覆盖说明：本地记录与有限页数的回填可能存在离线、遗漏或截断；"
+                "起点之前存在缓存不代表中间时段完整。仅依据实际展示的记录总结，"
+                "图片、语音等占位符不代表已读取媒体内容。"
             )
         if self.range_capped:
             lines.append("查询时间已按安全上限缩短，未读取更早的群聊记录。")
@@ -563,6 +569,33 @@ class ChatHistoryService:
             backfill=backfill,
         )
 
+    async def search_for_recall(
+        self, event: Any, *, query: Any = "", start: Any = "", end: Any = "",
+        max_messages: int = 240,
+    ) -> ChatHistorySearchResult:
+        """Backfill once, then read bounded local pages for an automatic recap."""
+        maximum = max(1, min(int(max_messages), 1_000))
+        settings = self.settings()
+        result = await self.search(
+            event, query=query, start=start, end=end,
+            limit=min(maximum, settings.max_result_messages),
+        )
+        messages = list(result.messages)
+        offset = len(messages)
+        while messages and offset < min(result.total_count, maximum):
+            page, _ = self.repository.query_messages(
+                scope=result.scope, start=result.query_start, end=result.query_end,
+                keywords=self._normalize_keywords(query), sender_ids=(),
+                limit=min(settings.max_result_messages, maximum - offset), offset=offset,
+            )
+            if not page:
+                break
+            messages.extend(page)
+            offset += len(page)
+        unique = {item.message_id: item for item in messages}
+        ordered = sorted(unique.values(), key=lambda item: (item.timestamp, item.message_seq or 0, item.message_id))
+        return replace(result, messages=tuple(ordered), result_limit=maximum)
+
     async def _backfill(
         self,
         event: Any,
@@ -603,7 +636,7 @@ class ChatHistoryService:
         cached_oldest = self.repository.oldest_timestamp(scope)
         if cached_oldest is not None and cached_oldest <= target_start:
             return BackfillStatus(
-                stop_reason="本地缓存已覆盖查询起点",
+                stop_reason="本地缓存含查询起点之前的记录，期间完整性未核验",
                 covered_from=cached_oldest,
             )
 
